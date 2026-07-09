@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fap"
+version = "1.0.0"
+description = "First Team Football Analysis Platform - modular, plugin-based analytics"
+requires-python = ">=3.10"
+dependencies = [
+    "streamlit>=1.32",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "matplotlib>=3.7",
+    "mplsoccer>=1.2",
+    "openpyxl>=3.1",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "mypy>=1.8", "ruff>=0.3"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.ruff]
+line-length = 110

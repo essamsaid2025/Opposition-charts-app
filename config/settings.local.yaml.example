@@ -1,0 +1,5 @@
+# Copy to settings.local.yaml for per-deployment overrides (gitignored).
+# auth:
+#   enabled: false
+# logging:
+#   level: "DEBUG"

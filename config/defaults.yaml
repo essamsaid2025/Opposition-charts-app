@@ -1,0 +1,23 @@
+# Shipped defaults. Do NOT edit per-deployment values here;
+# create config/settings.local.yaml instead (it overrides this file).
+app_name: "First Team Analysis Platform"
+default_theme: "opta_light"
+themes_dir: "assets/themes"
+
+cache:
+  backend: "disk"
+  directory: "user_data/cache"
+  max_entries: 256
+  ttl_seconds: 3600
+
+database:
+  path: "user_data/fap.sqlite3"
+
+auth:
+  enabled: true
+  provider: "local"
+  session_ttl_minutes: 480
+
+logging:
+  level: "INFO"
+  directory: "user_data/logs"

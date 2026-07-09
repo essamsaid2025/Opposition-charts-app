@@ -1,0 +1,20 @@
+id: opta_light
+name: "Opta Analyst Light"
+dark: false
+colors:
+  bg: "#ECECEC"
+  panel: "#F5F5F5"
+  pitch: "#ECECEC"
+  stripe: "#ECECEC"
+  text: "#201C2B"
+  muted: "#7A7584"
+  lines: "#9F9F9F"
+  grid: "#B8B8B8"
+  accent: "#6D28D9"
+  accent_2: "#D64045"
+  danger: "#D64045"
+  warning: "#B0B0B0"
+  success: "#22A06B"
+  grey: "#8F8F8F"
+  bar: "#6D28D9"
+heatmap_cmaps: ["Purples", "Greens", "Blues", "magma"]

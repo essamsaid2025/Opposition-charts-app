@@ -1,0 +1,19 @@
+id: sofa_light
+name: "Sofa Light"
+dark: false
+colors:
+  bg: "#F7F9FC"
+  panel: "#FFFFFF"
+  pitch: "#79C98A"
+  stripe: "#66C679"
+  text: "#111111"
+  muted: "#5A6572"
+  lines: "#FFFFFF"
+  grid: "#DDE3EA"
+  accent: "#2563EB"
+  accent_2: "#06B6D4"
+  danger: "#DC2626"
+  warning: "#D97706"
+  success: "#16A34A"
+  grey: "#6B7280"
+  bar: "#2563EB"
