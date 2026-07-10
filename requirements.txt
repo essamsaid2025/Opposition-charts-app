@@ -1,7 +1,4 @@
-streamlit>=1.32
-pandas>=2.0
-numpy>=1.24
-matplotlib>=3.7
-mplsoccer>=1.2
-openpyxl>=3.1
-PyYAML>=6.0
+# Install the fap package itself (src layout). Streamlit Community Cloud runs
+# `pip install -r requirements.txt` from the repo root, so `-e .` makes it
+# install this repo as a package; dependencies come from pyproject.toml.
+-e .

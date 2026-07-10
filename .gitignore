@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+user_data/
+config/settings.local.yaml
+.mypy_cache/
+.pytest_cache/
