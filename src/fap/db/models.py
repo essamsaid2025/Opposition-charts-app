@@ -13,6 +13,7 @@ class User:
     id: str
     username: str
     role: str = "analyst"
+    must_change_password: bool = False
 
 
 @dataclass(slots=True)

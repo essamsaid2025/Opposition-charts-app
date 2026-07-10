@@ -13,7 +13,15 @@ class Authenticator(Plugin):
     def authenticate(self, username: str, password: str) -> User | None: ...
 
     @abstractmethod
-    def create_user(self, username: str, password: str, role: str = "analyst") -> User: ...
+    def create_user(self, username: str, password: str, role: str = "analyst",
+                    must_change_password: bool = False) -> User: ...
+
+    @abstractmethod
+    def change_password(self, username: str, new_password: str) -> None:
+        """Set a new password and clear any must-change flag."""
+
+    @abstractmethod
+    def has_any_users(self) -> bool: ...
 
 
 auth_registry: PluginRegistry[Authenticator] = PluginRegistry("authenticator")

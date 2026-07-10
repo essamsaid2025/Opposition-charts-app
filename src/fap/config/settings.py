@@ -54,6 +54,7 @@ class LoggingSettings:
 @dataclass(frozen=True, slots=True)
 class AppSettings:
     app_name: str = "First Team Analysis Platform"
+    environment: str = "production"        # "development" bypasses login; anything else = production
     default_theme: str = "opta_light"
     themes_dir: str = "assets/themes"
     user_data_dir: str = "user_data"

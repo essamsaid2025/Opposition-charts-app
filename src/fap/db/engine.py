@@ -32,7 +32,10 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_projects_workspace ON projects(workspace_id);
     """),
-    # (2, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    (2, """
+        ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
+    """),
+    # (3, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

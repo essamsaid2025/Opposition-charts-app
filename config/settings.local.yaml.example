@@ -1,4 +1,7 @@
 # Copy to settings.local.yaml for per-deployment overrides (gitignored).
+# Enable Development Mode (no login screen, auto Developer user):
+# environment: "development"
+#
 # auth:
 #   enabled: false
 # logging:

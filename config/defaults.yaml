@@ -1,6 +1,9 @@
 # Shipped defaults. Do NOT edit per-deployment values here;
 # create config/settings.local.yaml instead (it overrides this file).
 app_name: "First Team Analysis Platform"
+
+# "production" (default) or "development" (bypasses login as a temp Developer)
+environment: "production"
 default_theme: "opta_light"
 themes_dir: "assets/themes"
 

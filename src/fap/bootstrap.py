@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fap.auth.base import Authenticator, auth_registry
+from fap.auth.workflow import ensure_bootstrap_admin
 from fap.cache import CacheManager
 from fap.config import AppSettings, load_settings
 from fap.core.events import EventBus
@@ -59,6 +60,8 @@ def init_app(root: Path | None = None) -> AppContext:
     cache = CacheManager(settings.cache)
 
     authenticator = auth_registry.get(settings.auth.provider)(db)  # type: ignore[call-arg]
+    if settings.auth.enabled:
+        ensure_bootstrap_admin(authenticator)
     projects = ProjectService(ProjectRepository(db), events)
     workspaces = WorkspaceService(WorkspaceRepository(db), events)
 

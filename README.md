@@ -1,7 +1,9 @@
 # First Team Football Analysis Platform (FAP)
 
 Production-grade, plugin-based football analytics platform.
-See `docs/ARCHITECTURE.md` for the full design.
+See `docs/ARCHITECTURE.md` for the full design and `docs/AUTHENTICATION.md`
+for development/production auth modes, the first-run admin account, and
+user management.
 
 ## Run
 
