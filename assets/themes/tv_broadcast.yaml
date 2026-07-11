@@ -1,0 +1,10 @@
+id: tv_broadcast
+name: "TV Broadcast"
+dark: true
+colors: {bg: "#06080F", panel: "#0D1220", pitch: "#0F7A3D", stripe: "#0E713A",
+  text: "#FFFFFF", muted: "#8E99B3", lines: "#F2F2F2", grid: "#1D2740",
+  accent: "#00E5FF", accent_2: "#FFD100", danger: "#FF3355", warning: "#FFD100",
+  success: "#38E07B", grey: "#8E99B3", bar: "#00E5FF"}
+heatmap_cmaps: ["plasma", "viridis", "cool"]
+tokens: {pitch_line_width: 2.0, marker_edge_width: 1.6, shadow_alpha: 0.4,
+  uppercase_titles: true, letter_spacing: 1.0, title_size: 24}

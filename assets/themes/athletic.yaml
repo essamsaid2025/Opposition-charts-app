@@ -1,0 +1,9 @@
+id: athletic
+name: "The Athletic"
+dark: true
+colors: {bg: "#0E1117", panel: "#111827", pitch: "#1F5F3B", stripe: "#236B43",
+  text: "#FFFFFF", muted: "#A0A7B4", lines: "#E6E6E6", grid: "#2A3240",
+  accent: "#38BDF8", accent_2: "#22C55E", danger: "#FF4D4D", warning: "#FFD400",
+  success: "#00FF6A", grey: "#A0A7B4", bar: "#38BDF8"}
+heatmap_cmaps: ["viridis", "magma", "cividis", "YlGnBu"]
+tokens: {uppercase_titles: true}

@@ -1,0 +1,9 @@
+id: presentation
+name: "Presentation"
+dark: false
+colors: {bg: "#FFFFFF", panel: "#F7F8FA", pitch: "#FFFFFF", stripe: "#FFFFFF",
+  text: "#14181F", muted: "#5A6472", lines: "#3A4452", grid: "#D7DCE3",
+  accent: "#2563EB", accent_2: "#DC2626", danger: "#DC2626", warning: "#D97706",
+  success: "#059669", grey: "#6B7280", bar: "#2563EB"}
+heatmap_cmaps: ["Blues", "Reds", "Greys"]
+tokens: {pitch_stripes: false, title_size: 26, margin: 0.06}

@@ -1,0 +1,8 @@
+id: hudl
+name: "Hudl"
+dark: false
+colors: {bg: "#FFFFFF", panel: "#F4F6F8", pitch: "#3D7A45", stripe: "#468A4F",
+  text: "#101820", muted: "#5C6770", lines: "#FFFFFF", grid: "#DCE1E6",
+  accent: "#FF6300", accent_2: "#1181F9", danger: "#E53935", warning: "#FFA000",
+  success: "#2E7D32", grey: "#78848E", bar: "#FF6300"}
+heatmap_cmaps: ["Oranges", "Blues", "YlOrRd"]

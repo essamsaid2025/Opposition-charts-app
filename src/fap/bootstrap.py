@@ -23,6 +23,10 @@ from fap.providers.base import DataProvider, provider_registry, load_builtin_pro
 from fap.state import StateManager
 from fap.themes import ThemeManager
 from fap.visuals.base import Visualization, visual_registry, load_builtin_visuals
+from fap.visuals.export import ExportEngine
+from fap.visuals.layers.base import Layer, layer_registry
+from fap.visuals.layout import LayoutEngine
+from fap.visuals.renderer import Renderer
 from fap.workspaces import WorkspaceService
 
 
@@ -43,6 +47,10 @@ class AppContext:
     metrics: PluginRegistry[Metric]
     providers: PluginRegistry[DataProvider]
     exporters: PluginRegistry[Exporter]
+    layers: PluginRegistry[Layer]
+    renderer: Renderer
+    layouts: LayoutEngine
+    export_engine: ExportEngine
 
 
 def init_app(root: Path | None = None) -> AppContext:
@@ -73,4 +81,6 @@ def init_app(root: Path | None = None) -> AppContext:
         projects=projects, workspaces=workspaces, importer=importer,
         visuals=visual_registry, metrics=metric_registry,
         providers=provider_registry, exporters=export_registry,
+        layers=layer_registry, renderer=Renderer(cache),
+        layouts=LayoutEngine(), export_engine=ExportEngine(),
     )

@@ -111,3 +111,47 @@ New export format: create `fap/exports/builtin/pdf_exporter.py`, implement
 - **Import wizard** (`fap.ui.pages.import_wizard`): 5 steps - source,
   preview + format detection, mapping (+templates), coordinates, import
   summary with progress, validation report and quality breakdown.
+
+## Professional Visualization Framework (Phase 5)
+
+Render pipeline (every visualization, no exceptions):
+
+    Visualization plugin -> Data -> Filters -> Theme/StyleTokens -> Layers
+    -> Annotations -> Legend -> Layout -> Export
+
+- **Layer system** (`fap.visuals.layers`): 31 independently reusable layer
+  plugins (new plugin family, `layer_registry`); a visualization is an
+  ordered list of configured layers. Styling resolves layer param > control
+  > theme token > framework default.
+- **Pitch engine** (`fap.visuals.pitch`): vendor pitch specs (UEFA/FIFA/
+  StatsBomb/Opta/Wyscout/Tracab/SkillCorner/Metrica/custom meters), views
+  (full/halves/thirds/penalty area/custom crop), horizontal/vertical with
+  automatic orientation. Data stays canonical; specs drive marking geometry.
+- **Layout engine** (`fap.visuals.layout`): single, two/four panel,
+  dashboard, split, comparison, report, presentation (16:9), responsive via
+  scale; extensible via `LayoutEngine.register`.
+- **Theme engine** (`fap.themes`): 14 shipped professional themes; themes
+  now carry a `tokens:` section overriding any style token;
+  `ThemeManager.create_custom()` = Custom Theme Creator (derive, persist to
+  user themes dir, register live).
+- **Style tokens** (`fap.visuals.tokens`): all fonts/spacing/markers/arrows/
+  legend/shadow/margins centralized; nothing hardcoded in layers.
+- **Generic controls** (`fap.visuals.controls`): shared control groups
+  composed per plugin; the existing generic widget renderer builds the UI.
+- **Annotation engine** (`fap.visuals.annotations`): serializable coach
+  annotations (text, callouts, boxes, circles, numbers, arrows, player/area
+  highlights, coach notes) with add/update/remove; persist in projects.
+- **Legend engine** (`fap.visuals.legend`): automatic collection from
+  layers, manual entries, grouping, ordering, hide/show, positions.
+- **Image engine** (`fap.visuals.images`): logos/photos/backgrounds,
+  PNG/JPEG with alpha, anchor/position/zoom; SVG icons via path-data layer.
+- **Typography** (`fap.visuals.typography`): families, weight/italic,
+  uppercase, letter spacing, alignment, wrapping, automatic scaling.
+- **Export engine** (`fap.visuals.export` + exporter plugins): PNG
+  (160/240/300/600 DPI presets), transparent PNG, SVG, PDF-ready, batch zip,
+  clipboard-ready bytes; identical for every visualization.
+- **Performance** (`fap.visuals.renderer`): layer signature + data-keyed
+  compute memo (unchanged layers reuse computed arrays) and a figure-byte
+  cache keyed on viz/controls/data/theme/annotations, so unchanged reruns
+  never re-render.
+- **Plugin SDK**: docs/PLUGIN_SDK.md - a new visualization is one file.

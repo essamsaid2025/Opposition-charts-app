@@ -1,0 +1,8 @@
+id: opta_dark
+name: "Opta Dark"
+dark: true
+colors: {bg: "#0E1117", panel: "#141A22", pitch: "#1F5F3B", stripe: "#245F3D",
+  text: "#FFFFFF", muted: "#A0A7B4", lines: "#E6E6E6", grid: "#2A3240",
+  accent: "#00C2FF", accent_2: "#60A5FA", danger: "#FF5A5F", warning: "#FACC15",
+  success: "#22C55E", grey: "#A0A7B4", bar: "#00C2FF"}
+heatmap_cmaps: ["viridis", "magma", "YlGnBu", "cividis"]

@@ -1,0 +1,7 @@
+id: dark
+name: "Dark"
+dark: true
+colors: {bg: "#101214", panel: "#17191C", pitch: "#14532D", stripe: "#166534",
+  text: "#F5F5F5", muted: "#9CA3AF", lines: "#E5E7EB", grid: "#2B2F36",
+  accent: "#60A5FA", accent_2: "#F472B6", danger: "#F87171", warning: "#FBBF24",
+  success: "#34D399", grey: "#9CA3AF", bar: "#60A5FA"}

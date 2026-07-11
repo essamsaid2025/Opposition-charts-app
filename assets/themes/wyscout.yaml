@@ -1,0 +1,8 @@
+id: wyscout
+name: "Wyscout"
+dark: false
+colors: {bg: "#F5F7FA", panel: "#FFFFFF", pitch: "#5FA46B", stripe: "#549C60",
+  text: "#1A1E24", muted: "#66707C", lines: "#FFFFFF", grid: "#DEE4EA",
+  accent: "#C8102E", accent_2: "#243F8F", danger: "#C8102E", warning: "#E5A100",
+  success: "#1F8A44", grey: "#66707C", bar: "#C8102E"}
+heatmap_cmaps: ["Reds", "Blues", "YlOrRd"]

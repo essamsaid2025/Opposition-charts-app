@@ -1,0 +1,9 @@
+id: club_theme
+name: "Club Theme (example)"
+dark: true
+colors: {bg: "#0B1E3C", panel: "#122A4F", pitch: "#0E5A34", stripe: "#0C5230",
+  text: "#FFFFFF", muted: "#9DB0CC", lines: "#F0F4FA", grid: "#1E3A63",
+  accent: "#E4B23A", accent_2: "#E44A4A", danger: "#E44A4A", warning: "#E4B23A",
+  success: "#39C46E", grey: "#9DB0CC", bar: "#E4B23A"}
+heatmap_cmaps: ["YlOrBr", "Blues"]
+tokens: {uppercase_titles: true, letter_spacing: 1.0}

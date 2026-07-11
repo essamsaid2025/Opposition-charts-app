@@ -30,7 +30,10 @@ user management.
                             coordinate plugins + detection, validation rules, quality score,
                             cleaning, filter engine, mapping templates, ImportService
     src/fap/metrics/        metric plugins
-    src/fap/visuals/        visualization plugins + PitchFactory (empty by design)
+    src/fap/visuals/        Visualization Framework: 31 layer plugins, pitch engine
+                            (specs/views/orientation), layout/legend/annotation/image/
+                            typography/export engines, style tokens, renderer with
+                            layer+figure caching. Plugin SDK: docs/PLUGIN_SDK.md
     src/fap/analytics/      insight-rule plugins + engine
     src/fap/reports/        report sections + builder
     src/fap/exports/        export-format plugins (png/csv built in)

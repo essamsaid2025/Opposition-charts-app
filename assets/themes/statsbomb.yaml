@@ -1,0 +1,9 @@
+id: statsbomb
+name: "StatsBomb"
+dark: true
+colors: {bg: "#22312B", panel: "#2A3C34", pitch: "#22312B", stripe: "#22312B",
+  text: "#EDEDED", muted: "#9DB2A9", lines: "#C7D5CC", grid: "#3A4F45",
+  accent: "#F5CB5C", accent_2: "#E45C5C", danger: "#E45C5C", warning: "#F5CB5C",
+  success: "#7AC97A", grey: "#9DB2A9", bar: "#F5CB5C"}
+heatmap_cmaps: ["YlOrRd", "magma", "viridis"]
+tokens: {pitch_stripes: false, uppercase_titles: true, letter_spacing: 1.0}

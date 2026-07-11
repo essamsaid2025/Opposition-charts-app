@@ -8,9 +8,9 @@ from fap.utils.text import slugify
 
 
 @export_registry.register
-class PngExporter(Exporter):
-    """PNG image. Payload meta: dpi (default 240), transparent (bool)."""
-    info = PluginInfo(id="png", name="PNG image", category="image")
+class SvgExporter(Exporter):
+    """Scalable vector export - resolution-independent for design tools."""
+    info = PluginInfo(id="svg", name="SVG vector", category="image")
 
     def can_export(self, payload: ExportPayload) -> bool:
         return payload.figure is not None
@@ -20,6 +20,6 @@ class PngExporter(Exporter):
         buf = BytesIO()
         transparent = bool(payload.meta.get("transparent", False))
         kwargs = {} if transparent else {"facecolor": payload.figure.get_facecolor()}
-        payload.figure.savefig(buf, format="png", dpi=int(payload.meta.get("dpi", 240)),
-                               transparent=transparent, bbox_inches="tight", **kwargs)
-        return ExportResult(buf.getvalue(), "image/png", f"{slugify(payload.title)}.png")
+        payload.figure.savefig(buf, format="svg", bbox_inches="tight",
+                               transparent=transparent, **kwargs)
+        return ExportResult(buf.getvalue(), "image/svg+xml", f"{slugify(payload.title)}.svg")

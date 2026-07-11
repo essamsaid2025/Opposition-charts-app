@@ -1,0 +1,7 @@
+id: light
+name: "Light"
+dark: false
+colors: {bg: "#FAFAFA", panel: "#FFFFFF", pitch: "#7BC888", stripe: "#6FBF7D",
+  text: "#171717", muted: "#6B7280", lines: "#FFFFFF", grid: "#E5E7EB",
+  accent: "#2563EB", accent_2: "#0891B2", danger: "#DC2626", warning: "#D97706",
+  success: "#16A34A", grey: "#6B7280", bar: "#2563EB"}
