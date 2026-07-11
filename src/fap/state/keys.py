@@ -15,6 +15,13 @@ ACTIVE_PROJECT_ID: StateKey[str] = StateKey("project", "active_id")
 # data
 DATASET_TOKEN: StateKey[str] = StateKey("data", "dataset_token")     # cache key of loaded data
 ACTIVE_FILTERS: StateKey[dict[str, Any]] = StateKey("data", "filters", default=None)
+IMPORT_RESULT: StateKey[Any] = StateKey("data", "import_result")     # last ImportResult
+CANONICAL_DATASET: StateKey[Any] = StateKey("data", "canonical_df")  # ready dataset for charts
+
+# import wizard
+WIZARD_STEP: StateKey[int] = StateKey("wizard", "step", default=1)
+WIZARD_FILE: StateKey[dict[str, Any]] = StateKey("wizard", "file")
+WIZARD_MAPPING: StateKey[dict[str, Any]] = StateKey("wizard", "mapping")
 
 # ui
 ACTIVE_THEME_ID: StateKey[str] = StateKey("ui", "theme_id")

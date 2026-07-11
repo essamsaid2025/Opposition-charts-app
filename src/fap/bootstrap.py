@@ -17,7 +17,7 @@ from fap.db.repositories import ProjectRepository, WorkspaceRepository
 from fap.exports.base import Exporter, export_registry, load_builtin_exporters
 from fap.logging_setup import configure_logging
 from fap.metrics.base import Metric, metric_registry, load_builtin_metrics
-from fap.pipeline import DataPipeline
+from fap.pipeline import DataPipeline, ImportService, TemplateRepository
 from fap.projects import ProjectService
 from fap.providers.base import DataProvider, provider_registry, load_builtin_providers
 from fap.state import StateManager
@@ -38,6 +38,7 @@ class AppContext:
     authenticator: Authenticator
     projects: ProjectService
     workspaces: WorkspaceService
+    importer: ImportService
     visuals: PluginRegistry[Visualization]
     metrics: PluginRegistry[Metric]
     providers: PluginRegistry[DataProvider]
@@ -64,11 +65,12 @@ def init_app(root: Path | None = None) -> AppContext:
         ensure_bootstrap_admin(authenticator)
     projects = ProjectService(ProjectRepository(db), events)
     workspaces = WorkspaceService(WorkspaceRepository(db), events)
+    importer = ImportService(cache, TemplateRepository(db))
 
     return AppContext(
         settings=settings, state=StateManager(), events=events, cache=cache, db=db,
         themes=themes, pipeline=DataPipeline(), authenticator=authenticator,
-        projects=projects, workspaces=workspaces,
+        projects=projects, workspaces=workspaces, importer=importer,
         visuals=visual_registry, metrics=metric_registry,
         providers=provider_registry, exporters=export_registry,
     )

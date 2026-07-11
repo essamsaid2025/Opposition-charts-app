@@ -65,3 +65,49 @@ implement `supports()` + `load()`, return `RawDataset` with a
 
 New export format: create `fap/exports/builtin/pdf_exporter.py`, implement
 `can_export()` + `export()`.
+
+## Universal Football Data Engine (Phase 4)
+
+    Raw file -> Provider plugin -> Column mapping (auto / template / manual)
+    -> Coordinate detection & normalization -> Cleaning -> Canonical event model
+    -> Validation -> Quality score -> cached Ready Dataset -> FilterSet
+
+- **Canonical schema** (`fap.pipeline.schema`): 30+ columns (match/season
+  context, player/team, timing, event detail, xG/pass metrics, booleans).
+  `end_x`/`end_y` are canonical; legacy `x2`/`y2` stay as synced aliases.
+- **Column detection** (`fap.pipeline.columns`): alias tables + fuzzy matching
+  per canonical field, per-field confidence, overall confidence gate that
+  opens the wizard's manual-mapping UI.
+- **Mapping templates** (`fap.pipeline.templates`, migration 3): saved
+  mappings keyed by a signature of the source columns; auto-reapplied when
+  the same file shape returns.
+- **Coordinate systems** (`fap.pipeline.coordinates`): plugins for 0-100,
+  120x80, StatsBomb, Opta, Wyscout, Metrica (0-1), 105x68 meters,
+  SkillCorner / Second Spectrum (centered meters), Tracab (centered cm),
+  plus `detect_coordinate_system()` heuristics over start AND end coords.
+- **Providers** (`fap.providers.builtin`): generic CSV/Excel (delimiter,
+  encoding, sheet and header auto-detected), StatsBomb JSON, Wyscout JSON,
+  Opta F24 XML, Hudl CSV, Sportscode XML, Metrica CSV, SkillCorner JSON,
+  Tracab CSV, Second Spectrum JSON/JSONL, Manual tagging. Vendor plugins
+  outrank generic catch-alls in auto-selection.
+- **Validation** (`fap.pipeline.validation`): rules are plugins
+  (validation_registry) - missing columns, duplicates, invalid/out-of-range
+  coordinates, impossible minutes/xG/distances, invalid periods, unknown
+  event names, missing timestamps, high null percentages - collected into a
+  ValidationReport with markdown rendering.
+- **Quality score** (`fap.pipeline.quality`): weighted 0-100 across
+  completeness, coordinate validity, player information, event consistency,
+  timeline consistency.
+- **Cleaning** (`fap.pipeline.cleaning`): whitespace/text normalization,
+  event-synonym and outcome maps, boolean normalization, duplicate removal.
+- **Filter engine** (`fap.pipeline.filters`): declarative, JSON-round-trip
+  FilterSet over competition/season/match/team/opponent/player/period/
+  minutes/event/outcome/body part/play pattern/set piece + custom
+  (column, op, value) predicates. Every future chart consumes filtered
+  canonical frames and implements no filtering of its own.
+- **Performance**: one DataFrame copy per import (steps mutate in place);
+  normalized ImportResults cached by content hash + options (200k-row file:
+  ~5s cold, ~17ms cached; filters ~37ms).
+- **Import wizard** (`fap.ui.pages.import_wizard`): 5 steps - source,
+  preview + format detection, mapping (+templates), coordinates, import
+  summary with progress, validation report and quality breakdown.

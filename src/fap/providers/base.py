@@ -19,13 +19,15 @@ class RawDataset:
 
 class DataProvider(Plugin):
     """Contract: recognize a source, load it, describe how its columns map to
-    the canonical schema. Providers never normalize - the pipeline does."""
+    the canonical schema. Providers never normalize - the pipeline does.
+    ``options`` carries wizard choices (sheet name, delimiter, encoding...)."""
 
     @abstractmethod
     def supports(self, filename: str) -> bool: ...
 
     @abstractmethod
-    def load(self, source: BinaryIO, filename: str) -> RawDataset: ...
+    def load(self, source: BinaryIO, filename: str,
+             options: dict[str, Any] | None = None) -> RawDataset: ...
 
 
 provider_registry: PluginRegistry[DataProvider] = PluginRegistry("provider")

@@ -37,9 +37,18 @@ def run(ctx: AppContext) -> None:
             _password_change_gate(ctx, user)
             return
 
-    _sidebar(ctx, theme_id)
+    page = _sidebar(ctx, theme_id)
+    if page == "Import Data":
+        from fap.ui.pages import import_wizard
+        import_wizard.render(ctx)
+        return
+
     app_header(ctx.settings.app_name,
                "Modular analysis platform - visuals, metrics, providers and exports are plugins.")
+    dataset = ctx.state.get(keys.CANONICAL_DATASET)
+    if dataset is not None:
+        note_box(f"Canonical dataset loaded: <b>{len(dataset):,} events</b> ready for "
+                 f"future visualizations. Use <b>Import Data</b> to load another file.")
     note_box(
         f"Architecture online. Registered plugins - visuals: {len(ctx.visuals)}, "
         f"metrics: {len(ctx.metrics)}, providers: {len(ctx.providers)}, "
@@ -48,7 +57,7 @@ def run(ctx: AppContext) -> None:
 
 
 # ---------------------------------------------------------------- sidebar
-def _sidebar(ctx: AppContext, theme_id: str) -> None:
+def _sidebar(ctx: AppContext, theme_id: str) -> str:
     with st.sidebar:
         user = ctx.state.get(keys.CURRENT_USER) or {}
         if user.get("dev_mode"):
@@ -58,10 +67,12 @@ def _sidebar(ctx: AppContext, theme_id: str) -> None:
             if st.button("Sign out"):
                 ctx.state.delete(keys.CURRENT_USER)
                 st.rerun()
+        page = st.radio("Navigation", ["Home", "Import Data"], index=0)
         chosen = st.selectbox("Theme", ctx.themes.ids(), index=ctx.themes.ids().index(theme_id))
         if chosen != theme_id:
             ctx.state.set(keys.ACTIVE_THEME_ID, chosen)
             st.rerun()
+    return page
 
 
 # ---------------------------------------------------------------- gates

@@ -26,7 +26,9 @@ user management.
     src/fap/db/             SQLite engine, migrations, repositories, models
     src/fap/auth/           pluggable authentication (local built in)
     src/fap/providers/      data provider plugins (csv/excel built in)
-    src/fap/pipeline/       canonical schema, coordinate plugins, transforms, filters
+    src/fap/pipeline/       Universal Data Engine: canonical schema, column detection,
+                            coordinate plugins + detection, validation rules, quality score,
+                            cleaning, filter engine, mapping templates, ImportService
     src/fap/metrics/        metric plugins
     src/fap/visuals/        visualization plugins + PitchFactory (empty by design)
     src/fap/analytics/      insight-rule plugins + engine

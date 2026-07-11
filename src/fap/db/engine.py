@@ -35,7 +35,17 @@ MIGRATIONS: list[tuple[int, str]] = [
     (2, """
         ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0;
     """),
-    # (3, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    (3, """
+        CREATE TABLE IF NOT EXISTS mapping_templates (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL,
+            provider_id TEXT NOT NULL DEFAULT '',
+            signature TEXT NOT NULL,
+            mapping TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_templates_signature ON mapping_templates(signature);
+    """),
+    # (4, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 
