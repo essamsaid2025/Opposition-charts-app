@@ -70,8 +70,9 @@ class Renderer:
                 self._draw_layer(layer, lctx, df)
             except Exception:
                 logger.exception("Layer %s failed; skipping", layer.info.id)
-        PitchFactory().apply_view(ax, view=lctx.view,
-                                  crop=controls.get("crop"), vertical=lctx.vertical)
+        if getattr(viz, "pitch_based", True):
+            PitchFactory().apply_view(ax, view=lctx.view,
+                                      crop=controls.get("crop"), vertical=lctx.vertical)
 
         self._titles(fig, ctx, tokens, controls)
         return fig
@@ -124,6 +125,10 @@ class Renderer:
             layers.append(AnnotationLayer(annotations=ann))
         if controls.get("watermark"):
             layers.append(WatermarkLayer(text=controls["watermark"]))
+        selection = ctx.meta.get("selection")
+        if selection is not None and getattr(viz, "pitch_based", True):
+            from fap.visuals.interaction import selection_layers
+            layers.extend(selection_layers(selection, lctx.df, ctx.theme))
         if not any(isinstance(l, LegendLayer) for l in layers):
             layers.append(LegendLayer())
         return sorted(layers, key=lambda l: l.zorder)

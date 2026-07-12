@@ -155,3 +155,34 @@ Render pipeline (every visualization, no exceptions):
   cache keyed on viz/controls/data/theme/annotations, so unchanged reruns
   never re-render.
 - **Plugin SDK**: docs/PLUGIN_SDK.md - a new visualization is one file.
+
+## Match Analysis Visualization Library (Phase 6)
+
+125+ independent visualization plugins across Passing, Progression,
+Attacking, Defensive, Goalkeeper, Team, Build-up, Transitions, Possession and
+Zones - each declared through plugin builders (`fap.visuals.maps._builders`:
+arrow_map / scatter_map / density_map / zone_map / chart) over shared football
+semantics in `fap.visuals.analysis` (progressive/switch/line-breaking
+definitions, zone geometry, Karun Singh xT grid, pass networks, sequences,
+turnovers, counter-press windows). Zero duplicated rendering code: builders
+declare selectors + styling; the Phase-5 framework does everything else.
+
+Engine extensions shipped with the library (all additive):
+- FilterSet: position, score state (winning/drawing/losing, derived per match
+  by the pipeline), home/away venue, pressure state.
+- Interactivity architecture (`fap.visuals.interaction`): serializable
+  SelectionModel + automatic cross-highlighting in the Renderer via
+  RenderContext.meta["selection"]; brushing/animation slot into the same
+  contract.
+- Report integration: the `visuals` ReportSection renders any list of
+  visualization plugins into report figures - every visualization is
+  report-ready automatically.
+- Analysis page (`fap.ui.pages.analysis`): category-grouped picker,
+  auto-generated filters and controls, framework rendering, PNG/SVG/PDF
+  export at selectable DPI - zero per-visualization UI code.
+
+Arrow maps sample beyond a configurable `max_events` (default 1500) for
+legibility and speed; density/scatter/network paths are vectorized
+(100k-row renders stay within single-digit seconds; figure-byte cache makes
+unchanged reruns instant). Set-piece and tactical modules are intentionally
+out of scope for this phase.

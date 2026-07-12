@@ -74,6 +74,20 @@ CONTROL_GROUPS: dict[str, tuple[Control, ...]] = {
         Control("logo_zoom", "Logo size", "slider", default=0.12,
                 min_value=0.04, max_value=0.4, step=0.01),
     ),
+    "colors": (
+        Control("primary_color", "Primary color", "color", default=None),
+        Control("secondary_color", "Secondary color", "color", default=None),
+        Control("fail_color", "Unsuccessful color", "color", default=None),
+    ),
+    "grid": (
+        Control("show_grid", "Show grid", "checkbox", default=False),
+        Control("show_zone_overlay", "Show zone overlay", "checkbox", default=True),
+    ),
+    "export": (
+        Control("export_dpi", "Export DPI", "select", default="standard",
+                options=("screen", "standard", "print", "ultra")),
+        Control("transparent_bg", "Transparent background", "checkbox", default=False),
+    ),
     "layout": (
         Control("fig_scale", "Figure scale", "slider", default=1.0,
                 min_value=0.6, max_value=1.6, step=0.05),

@@ -24,7 +24,7 @@ TEXT: tuple[str, ...] = (
     "team", "opponent", "player", "receiver", "position",
     "event_type", "sub_event", "outcome", "shot_result",
     "body_part", "play_pattern", "set_piece", "pass_height",
-    "phase", "direction", "zone", "sequence_id", "notes",
+    "phase", "direction", "zone", "sequence_id", "notes", "venue", "score_state",
 )
 
 BOOLEAN: tuple[str, ...] = ("under_pressure", "pressure", "assist", "key_pass")

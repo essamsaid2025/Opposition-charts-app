@@ -92,7 +92,7 @@ def _step2_preview(ctx: AppContext) -> None:
     try:
         raw = _load_raw(ctx, file, options)
         st.caption(f"{len(raw.frame):,} rows x {len(raw.frame.columns)} columns")
-        st.dataframe(raw.frame.head(25), use_container_width=True)
+        st.dataframe(raw.frame.head(25), width="stretch")
     except FAPError as exc:
         st.error(str(exc))
         if st.button("Back"):
@@ -151,7 +151,7 @@ def _step3_mapping(ctx: AppContext) -> None:
             [{"source column": s, "canonical field": c,
               "confidence": f"{detected.confidence.get(c, 1.0):.0%}"}
              for s, c in mapping.items()])
-        st.dataframe(preview, use_container_width=True, height=280)
+        st.dataframe(preview, width="stretch", height=280)
         if detected.unmapped_sources:
             st.caption("Unmapped source columns (kept as extra data): "
                        + ", ".join(detected.unmapped_sources))
@@ -257,7 +257,7 @@ def _step5_import(ctx: AppContext) -> None:
         for action in result.cleaning_log:
             st.markdown(f"- {action}")
     with st.expander("Canonical dataset preview"):
-        st.dataframe(result.frame.head(50), use_container_width=True)
+        st.dataframe(result.frame.head(50), width="stretch")
 
     st.success("Dataset is normalized and ready. Every future visualization will "
                "consume this canonical model.")

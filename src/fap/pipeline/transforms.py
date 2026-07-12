@@ -64,3 +64,30 @@ def derive_plot_coords(df: pd.DataFrame) -> pd.DataFrame:
     df["shot_distance"] = np.sqrt((100 - df["x"]) ** 2 + (50 - df["y"]) ** 2)
     df["x2"], df["y2"] = df["end_x"], df["end_y"]     # keep legacy aliases in sync
     return df
+
+
+def derive_score_state(df: pd.DataFrame) -> pd.DataFrame:
+    """Running score state from the row team's perspective, per match.
+    Rows before any goal are 'drawing'; matches without goal info stay 'drawing'."""
+    df["score_state"] = "drawing"
+    goals = df[(df["event_type"].str.lower().eq("shot"))
+               & (df["shot_result"].str.lower().eq("goal"))]
+    if goals.empty or df["team"].str.strip().eq("").all():
+        return df
+    order = df["time_min"].fillna(0) + df["period"].fillna(1) * 1000
+    for match_id, idx in df.groupby(df["match_id"].astype(str)).groups.items():
+        sub = df.loc[idx]
+        sub_order = order.loc[idx]
+        g = goals[goals["match_id"].astype(str) == match_id]
+        if g.empty:
+            continue
+        g_order = order.loc[g.index]
+        for row_i in idx:
+            scored = g[(g_order < sub_order.loc[row_i])]
+            if scored.empty:
+                continue
+            own = int((scored["team"] == sub.loc[row_i, "team"]).sum())
+            other = len(scored) - own
+            df.loc[row_i, "score_state"] = ("winning" if own > other
+                                            else "losing" if own < other else "drawing")
+    return df

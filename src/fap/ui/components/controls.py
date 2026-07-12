@@ -21,7 +21,16 @@ def render_controls(controls: Sequence[Control], saved: dict[str, Any] | None = 
             values[control.key] = st.checkbox(control.label, value=bool(default), key=widget_key,
                                               help=control.help or None)
         elif control.kind == "color":
-            values[control.key] = st.color_picker(control.label, value=str(default), key=widget_key)
+            if default is None:
+                # theme-driven color: only override when the user opts in,
+                # otherwise return None so the theme role applies
+                enabled = st.checkbox(f"Custom {control.label.lower()}",
+                                      value=False, key=f"{widget_key}::on")
+                values[control.key] = st.color_picker(
+                    control.label, value="#2563EB", key=widget_key) if enabled else None
+            else:
+                values[control.key] = st.color_picker(control.label,
+                                                      value=str(default), key=widget_key)
         elif control.kind in ("slider", "int_slider"):
             cast = int if control.kind == "int_slider" else float
             values[control.key] = st.slider(

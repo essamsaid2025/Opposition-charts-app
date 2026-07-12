@@ -42,6 +42,10 @@ def run(ctx: AppContext) -> None:
         from fap.ui.pages import import_wizard
         import_wizard.render(ctx)
         return
+    if page == "Analysis":
+        from fap.ui.pages import analysis
+        analysis.render(ctx)
+        return
 
     app_header(ctx.settings.app_name,
                "Modular analysis platform - visuals, metrics, providers and exports are plugins.")
@@ -67,7 +71,7 @@ def _sidebar(ctx: AppContext, theme_id: str) -> str:
             if st.button("Sign out"):
                 ctx.state.delete(keys.CURRENT_USER)
                 st.rerun()
-        page = st.radio("Navigation", ["Home", "Import Data"], index=0)
+        page = st.radio("Navigation", ["Home", "Import Data", "Analysis"], index=0)
         chosen = st.selectbox("Theme", ctx.themes.ids(), index=ctx.themes.ids().index(theme_id))
         if chosen != theme_id:
             ctx.state.set(keys.ACTIVE_THEME_ID, chosen)

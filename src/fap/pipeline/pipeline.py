@@ -25,6 +25,7 @@ class DataPipeline:
             transforms.derive_movement,
             transforms.derive_zones,
             transforms.derive_time,
+            transforms.derive_score_state,
             transforms.derive_plot_coords,
             *extra_steps,
         )

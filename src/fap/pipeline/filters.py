@@ -17,7 +17,7 @@ import pandas as pd
 _SUCCESS = ("successful", "success", "complete", "won")
 _TUPLE_FIELDS = ("event_types", "phases", "players", "minute_range", "competitions",
                  "seasons", "periods", "outcomes", "body_parts", "play_patterns",
-                 "set_pieces", "custom")
+                 "set_pieces", "positions", "score_states", "venues", "custom")
 
 
 def _lower_in(series: pd.Series, values: tuple[str, ...]) -> pd.Series:
@@ -40,6 +40,10 @@ class FilterSet:
     body_parts: tuple[str, ...] = ()
     play_patterns: tuple[str, ...] = ()
     set_pieces: tuple[str, ...] = ()
+    positions: tuple[str, ...] = ()
+    score_states: tuple[str, ...] = ()        # winning | drawing | losing
+    venues: tuple[str, ...] = ()              # home | away
+    pressure_state: str = "any"               # any | under_pressure | no_pressure
     # when
     periods: tuple[int, ...] = ()
     minute_range: tuple[float, float] = (0.0, 120.0)
@@ -59,7 +63,9 @@ class FilterSet:
         for values, col in ((self.competitions, "competition"), (self.seasons, "season"),
                             (self.event_types, "event_type"), (self.phases, "phase"),
                             (self.outcomes, "outcome"), (self.body_parts, "body_part"),
-                            (self.play_patterns, "play_pattern"), (self.set_pieces, "set_piece")):
+                            (self.play_patterns, "play_pattern"), (self.set_pieces, "set_piece"),
+                            (self.positions, "position"), (self.score_states, "score_state"),
+                            (self.venues, "venue")):
             if values:
                 mask &= _lower_in(df[col], tuple(values))
         if self.players:
@@ -70,6 +76,10 @@ class FilterSet:
         mask &= (df["time_min"] >= lo) & (df["time_min"] <= hi)
         if self.only_successful:
             mask &= df["outcome"].str.lower().isin(_SUCCESS)
+        if self.pressure_state == "under_pressure":
+            mask &= df["under_pressure"].astype(bool)
+        elif self.pressure_state == "no_pressure":
+            mask &= ~df["under_pressure"].astype(bool)
         for col, op, value in self.custom:
             mask &= _custom_mask(df, col, op, value)
         return df[mask]
