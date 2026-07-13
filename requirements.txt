@@ -1,4 +1,6 @@
-# Install the fap package itself (src layout). Streamlit Community Cloud runs
-# `pip install -r requirements.txt` from the repo root, so `-e .` makes it
-# install this repo as a package; dependencies come from pyproject.toml.
--e .
+streamlit
+pandas
+matplotlib
+numpy
+openpyxl
+mplsoccer

@@ -1,6 +1,10 @@
 __pycache__/
-*.pyc
-user_data/
-config/settings.local.yaml
-.mypy_cache/
+*.py[cod]
 .pytest_cache/
+.venv/
+venv/
+*.log
+nohup.out
+.DS_Store
+.idea/
+.vscode/
