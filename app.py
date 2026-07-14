@@ -211,6 +211,166 @@ def validate_data(df: pd.DataFrame) -> List[str]:
     return [f"Missing required columns: {', '.join(missing)}"] if missing else []
 
 
+# ============================================================================
+# PROVIDER-INDEPENDENT COLUMN MAPPING ENGINE (runs BEFORE validate_data)
+# Maps StatsBomb / Wyscout / Opta / Hudl / Sportscode / custom-tagging column
+# names to the app's canonical fields, with an interactive preview + fallback
+# mapping dialog. No visualization code is touched by this layer.
+# ============================================================================
+COLUMN_ALIASES: Dict[str, List[str]] = {
+    "event_type": ["event_type", "event", "type", "eventname", "event_name",
+                   "primary_event", "action", "event_action", "eventaction",
+                   "eventtype", "action_type", "actiontype", "code"],
+    "x": ["x", "start_x", "location_x", "x_start", "startx", "locationx",
+          "x_location", "x_coord", "xcoord", "coord_x", "pos_x", "origin_x", "x1"],
+    "y": ["y", "start_y", "location_y", "y_start", "starty", "locationy",
+          "y_location", "y_coord", "ycoord", "coord_y", "pos_y", "origin_y", "y1"],
+    "x2": ["x2", "end_x", "target_x", "destination_x", "endx", "x_end",
+           "dest_x", "x_dest", "pass_end_x", "location_x_end", "to_x"],
+    "y2": ["y2", "end_y", "target_y", "destination_y", "endy", "y_end",
+           "dest_y", "y_dest", "pass_end_y", "location_y_end", "to_y"],
+}
+REQUIRED_CANONICAL = ["event_type", "x", "y"]
+OPTIONAL_CANONICAL = ["x2", "y2"]
+CANONICAL_LABELS = {"event_type": "Event type", "x": "X (start)", "y": "Y (start)",
+                    "x2": "X (end)", "y2": "Y (end)"}
+
+
+def _norm_key(name: str) -> str:
+    """Comparison key: lowercase, alphanumerics only, so 'Start X', 'start_x',
+    'startX' and 'startx' all compare equal."""
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def alias_candidates(df: pd.DataFrame) -> Dict[str, List[str]]:
+    """For each canonical field, every uploaded column that matches one of its
+    aliases (exact canonical name first). Used for best-match selection + logging."""
+    present = {_norm_key(c): c for c in df.columns}
+    out: Dict[str, List[str]] = {}
+    for canon, aliases in COLUMN_ALIASES.items():
+        cands: List[str] = []
+        for key in [canon] + aliases:
+            src = present.get(_norm_key(key))
+            if src is not None and src not in cands:
+                cands.append(src)
+        if cands:
+            out[canon] = cands
+    return out
+
+
+def auto_map_columns(df: pd.DataFrame) -> Dict[str, str]:
+    """Best-match auto detection. Returns {canonical: source_column}.
+    A literal canonical name always wins; otherwise the earliest-declared alias
+    wins. A source column is never assigned to two canonical fields."""
+    cands = alias_candidates(df)
+    mapping: Dict[str, str] = {}
+    used: set = set()
+    # exact canonical names first (highest confidence)
+    for canon in COLUMN_ALIASES:
+        for c in cands.get(canon, []):
+            if _norm_key(c) == _norm_key(canon):
+                mapping[canon] = c
+                used.add(c)
+                break
+    # then best remaining alias, skipping already-used columns
+    for canon in COLUMN_ALIASES:
+        if canon in mapping:
+            continue
+        for c in cands.get(canon, []):
+            if c not in used:
+                mapping[canon] = c
+                used.add(c)
+                break
+    return mapping
+
+
+def mapping_log(df: pd.DataFrame, mapping: Dict[str, str]) -> List[str]:
+    """Human-readable notes for cases where several aliases were present and a
+    best match had to be chosen (requirement: 'use the best match and log it')."""
+    cands = alias_candidates(df)
+    logs: List[str] = []
+    for canon, chosen in mapping.items():
+        others = [c for c in cands.get(canon, []) if c != chosen]
+        if others:
+            logs.append(f"{CANONICAL_LABELS.get(canon, canon)}: using '{chosen}' "
+                        f"(also matched: {', '.join(others)})")
+    return logs
+
+
+def resolve_column_mapping(df: pd.DataFrame,
+                           manual: Optional[Dict[str, str]] = None
+                           ) -> Tuple[Dict[str, str], List[str]]:
+    """Auto detection combined with a user/session manual map (manual wins).
+    Returns (mapping {canonical: source}, unresolved_required_canonicals)."""
+    mapping = auto_map_columns(df)
+    for canon, src in (manual or {}).items():
+        if src and src in df.columns:
+            for other in [k for k, v in mapping.items() if v == src and k != canon]:
+                del mapping[other]            # free the source from any auto claim
+            mapping[canon] = src
+    unresolved = [c for c in REQUIRED_CANONICAL if c not in mapping]
+    return mapping, unresolved
+
+
+def apply_column_mapping(df: pd.DataFrame, mapping: Dict[str, str]) -> pd.DataFrame:
+    """Rename detected/selected source columns to their canonical names."""
+    rename = {src: canon for canon, src in mapping.items()
+              if src in df.columns and src != canon and canon not in df.columns}
+    return df.rename(columns=rename) if rename else df
+
+
+def mapping_preview_table(df: pd.DataFrame, mapping: Dict[str, str]) -> pd.DataFrame:
+    """Original column -> mapped canonical field, for every uploaded column."""
+    inv = {src: canon for canon, src in mapping.items()}
+    rows = [{"Original column": col,
+             "Mapped to": CANONICAL_LABELS.get(inv[col], inv[col]) if col in inv else "—"}
+            for col in df.columns]
+    return pd.DataFrame(rows, columns=["Original column", "Mapped to"])
+
+
+def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[str]) -> None:
+    """Interactive preview + mapping dialog shown before import. Lets the user
+    review and correct which uploaded column feeds each required/optional field,
+    then confirm. Choices are remembered in session_state until the app restarts."""
+    st.markdown("### Column mapping preview")
+    st.caption("Review how your uploaded columns map to the required fields, adjust "
+               "anything that's wrong, then confirm to import. This is remembered "
+               "for the session.")
+    for msg in logs:
+        st.caption("• " + msg)
+
+    options = ["— none —"] + list(map(str, df.columns))
+    chosen: Dict[str, Optional[str]] = {}
+    cols_ui = st.columns(2)
+    for i, canon in enumerate(REQUIRED_CANONICAL + OPTIONAL_CANONICAL):
+        required = canon in REQUIRED_CANONICAL
+        detected = mapping.get(canon)
+        idx = options.index(detected) if detected in options else 0
+        with cols_ui[i % 2]:
+            sel = st.selectbox(
+                f"{CANONICAL_LABELS[canon]}{' *' if required else '  (optional)'}",
+                options, index=idx, key=f"premap_{canon}")
+        chosen[canon] = None if sel == "— none —" else sel
+
+    live = apply_column_mapping(df, {c: s for c, s in chosen.items() if s})
+    st.dataframe(mapping_preview_table(df, {c: s for c, s in chosen.items() if s}),
+                 width="stretch", height=min(360, 60 + 32 * len(df.columns)))
+
+    missing = [CANONICAL_LABELS[c] for c in REQUIRED_CANONICAL if not chosen.get(c)]
+    if missing:
+        st.warning("Required fields still unmapped: " + ", ".join(missing) +
+                   ". Pick the matching uploaded column above to continue.")
+    if st.button("Confirm mapping & import", type="primary", disabled=bool(missing)):
+        cm = st.session_state.setdefault("col_map", {})
+        for canon, src in chosen.items():
+            if src:
+                cm[canon] = src
+            else:
+                cm.pop(canon, None)
+        st.session_state["_import_confirmed"] = st.session_state.get("_mapping_file")
+        st.rerun()
+
+
 def normalize_coordinates(df: pd.DataFrame, mode: str) -> pd.DataFrame:
     df = df.copy()
     if mode == "120 x 80":
@@ -1903,7 +2063,10 @@ def run_app():
     if uploaded is None:
         st.markdown("""
         <div class='note-box'>
-            Upload the dummy data CSV/Excel to start. Minimum required columns: <b>event_type, x, y</b>.
+            Upload a CSV or Excel export from any provider (StatsBomb, Wyscout, Opta,
+            Hudl, Sportscode or custom tagging). Required fields are <b>event type, x, y</b> —
+            provider column names are detected automatically, and a preview lets you map
+            anything that isn't matched. No manual renaming needed.
             Recommended: <b>team, opponent, match_id, phase, player, receiver, x2, y2, outcome, shot_result,
             body_part, minute, second, period, sequence_id</b>.
         </div>
@@ -1912,19 +2075,40 @@ def run_app():
 
     try:
         cleaned = clean_columns(read_uploaded_file(uploaded))
-        # Validate against the *real* uploaded columns, before ensure_columns()
-        # fills defaults - otherwise a file missing event_type/x/y would pass
-        # silently and every event-type filter would return nothing.
-        problems = validate_data(cleaned)
-        if problems:
-            st.error(" | ".join(problems))
-            st.stop()
+    except Exception as e:
+        st.error(f"Could not read file: {e}")
+        st.stop()
+
+    # New file -> reset the per-file import confirmation (mapping itself persists
+    # in session_state until the app restarts, per requirement 5).
+    if st.session_state.get("_mapping_file") != uploaded.name:
+        st.session_state["_mapping_file"] = uploaded.name
+        st.session_state["_import_confirmed"] = None
+        for _c in REQUIRED_CANONICAL + OPTIONAL_CANONICAL:
+            st.session_state.pop(f"premap_{_c}", None)
+
+    # Provider-independent mapping BEFORE validation: auto-detect aliases, show an
+    # interactive preview (Original -> Mapped) and let the user correct/complete it.
+    # Validation only fails after automatic AND manual mapping both fail.
+    mapping, unresolved = resolve_column_mapping(cleaned, st.session_state.get("col_map"))
+    if st.session_state.get("_import_confirmed") != uploaded.name:
+        render_import_preview(cleaned, mapping, mapping_log(cleaned, mapping))
+        st.stop()
+
+    cleaned = apply_column_mapping(cleaned, mapping)
+    problems = validate_data(cleaned)
+    if problems:
+        st.session_state["_import_confirmed"] = None      # re-open the mapping dialog
+        st.error(" | ".join(problems))
+        st.stop()
+
+    try:
         raw = ensure_columns(cleaned)
         df = normalize_coordinates(raw, coord_mode)
         df = flip_attacking_direction(df, attack_direction)
         df = add_derived_columns(df)
     except Exception as e:
-        st.error(f"Could not read file: {e}")
+        st.error(f"Could not process file: {e}")
         st.stop()
 
     # Filters (v3 preserved)
