@@ -838,10 +838,11 @@ def finalize_fig(fig, title: str, subtitle: str, ctx: Dict):
     return fig
 
 
-def fig_to_bytes(fig, fmt: str = "png", dpi: int = 240) -> bytes:
+def fig_to_bytes(fig, fmt: str = "png", dpi: int = 240, transparent: bool = False) -> bytes:
     buf = BytesIO()
     fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches="tight", pad_inches=0.25,
-                facecolor=fig.get_facecolor())
+                transparent=transparent,
+                facecolor=("none" if transparent else fig.get_facecolor()))
     buf.seek(0)
     return buf.getvalue()
 
@@ -1896,6 +1897,8 @@ def run_app():
         with st.expander("Export", expanded=False):
             exp_fmt = st.selectbox("Format", ["PNG", "SVG", "PDF"], index=0)
             exp_dpi = st.slider("DPI", 100, 400, 240, step=20)
+            exp_transparent = st.checkbox("Transparent background", value=False,
+                                          help="Export with no background fill (PNG/SVG/PDF).")
 
     if uploaded is None:
         st.markdown("""
@@ -1908,11 +1911,15 @@ def run_app():
         st.stop()
 
     try:
-        raw = ensure_columns(read_uploaded_file(uploaded))
-        problems = validate_data(raw)
+        cleaned = clean_columns(read_uploaded_file(uploaded))
+        # Validate against the *real* uploaded columns, before ensure_columns()
+        # fills defaults - otherwise a file missing event_type/x/y would pass
+        # silently and every event-type filter would return nothing.
+        problems = validate_data(cleaned)
         if problems:
             st.error(" | ".join(problems))
             st.stop()
+        raw = ensure_columns(cleaned)
         df = normalize_coordinates(raw, coord_mode)
         df = flip_attacking_direction(df, attack_direction)
         df = add_derived_columns(df)
@@ -1923,6 +1930,12 @@ def run_app():
     # Filters (v3 preserved)
     with st.sidebar:
         st.markdown("### 5) Filters")
+        _FILTER_KEYS = ["f_team", "f_opp", "f_match", "f_event", "f_phase",
+                        "f_player", "f_success", "f_minute"]
+        if st.button("Reset filters", help="Clear all filters below"):
+            for _k in _FILTER_KEYS:
+                st.session_state.pop(_k, None)
+            st.rerun()
         team_options = ["All"] + sorted([x for x in df["team"].unique().tolist() if str(x).strip()])
         opp_options = ["All"] + sorted([x for x in df["opponent"].unique().tolist() if str(x).strip()])
         match_options = ["All"] + sorted([str(x) for x in df["match_id"].unique().tolist() if str(x).strip()])
@@ -1930,14 +1943,14 @@ def run_app():
         phase_options = sorted([x for x in df["phase"].str.lower().unique().tolist() if str(x).strip()])
         player_options = sorted([x for x in df["player"].unique().tolist() if str(x).strip()])
 
-        team_sel = st.selectbox("Team", team_options)
-        opp_sel = st.selectbox("Opponent", opp_options)
-        match_sel = st.selectbox("Match", match_options)
-        event_sel = st.multiselect("Event type filter", event_options, default=[])
-        phase_sel = st.multiselect("Phase filter", phase_options, default=[])
-        player_sel = st.multiselect("Player filter", player_options, default=[])
-        only_success = st.checkbox("Only successful outcome", value=False)
-        minute_range = st.slider("Minute range", 0, 120, (0, 95))
+        team_sel = st.selectbox("Team", team_options, key="f_team")
+        opp_sel = st.selectbox("Opponent", opp_options, key="f_opp")
+        match_sel = st.selectbox("Match", match_options, key="f_match")
+        event_sel = st.multiselect("Event type filter", event_options, default=[], key="f_event")
+        phase_sel = st.multiselect("Phase filter", phase_options, default=[], key="f_phase")
+        player_sel = st.multiselect("Player filter", player_options, default=[], key="f_player")
+        only_success = st.checkbox("Only successful outcome", value=False, key="f_success")
+        minute_range = st.slider("Minute range", 0, 120, (0, 95), key="f_minute")
         top_n = st.slider("Top N players", 3, 25, 10)
         zone_mode = st.selectbox("Zone percentage mode", ["Pitch Thirds", "Lanes"])
         start_end_event = st.selectbox("Start/End event", ["pass", "carry", "cross", "dribble"], index=0)
@@ -1998,6 +2011,28 @@ def run_app():
     f = f[(f["time_min"] >= minute_range[0]) & (f["time_min"] <= minute_range[1])]
     if only_success:
         f = f[f["outcome"].str.lower().isin(SUCCESS_WORDS)]
+
+    # Never let filters silently remove every event: tell the user what happened
+    # and how to recover, instead of drawing a blank pitch with no explanation.
+    if len(f) == 0:
+        if len(df) == 0:
+            st.warning("The uploaded dataset contains no events to display.")
+        else:
+            active = []
+            if team_sel != "All": active.append(f"team = {team_sel}")
+            if opp_sel != "All": active.append(f"opponent = {opp_sel}")
+            if match_sel != "All": active.append(f"match = {match_sel}")
+            if event_sel: active.append(f"event type ∈ {event_sel}")
+            if phase_sel: active.append(f"phase ∈ {phase_sel}")
+            if player_sel: active.append(f"player ∈ {player_sel}")
+            if only_success: active.append("only successful outcomes")
+            if tuple(minute_range) != (0, 95): active.append(f"minutes {minute_range[0]}–{minute_range[1]}")
+            detail = ("; ".join(active)) if active else "the current filter selection"
+            st.warning(
+                f"No events match {detail}. "
+                f"All {len(df):,} events were filtered out — use **Reset filters** "
+                f"in the sidebar to clear the selection."
+            )
 
     spec = PitchSpec(orientation=orientation, view=pitch_view, custom_crop=custom_crop,
                      mirror=mirror, flip_y=flip_y_opt, thirds_mode=thirds_mode,
@@ -2070,7 +2105,7 @@ def run_app():
         if fig is not None:
             st.pyplot(fig, use_container_width=True)
             fmt = exp_fmt.lower()
-            data = fig_to_bytes(fig, fmt=fmt, dpi=exp_dpi)
+            data = fig_to_bytes(fig, fmt=fmt, dpi=exp_dpi, transparent=exp_transparent)
             mime = {"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}[fmt]
             fname = f"{chart_type.lower().replace(' ', '_').replace('/', '_')}.{fmt}"
             st.download_button(f"Download chart as {exp_fmt}", data=data, file_name=fname, mime=mime)
