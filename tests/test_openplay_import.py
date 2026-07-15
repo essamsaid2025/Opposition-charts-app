@@ -147,3 +147,139 @@ def test_platform_import_reports_validation_and_quality():
                                  "0-100", "Data already left-to-right")
     assert 0 <= result.quality.overall <= 100
     assert result.validation is not None
+
+
+# ---------------------------------------------------------------- Phase 2B.2: unified mapping
+def test_open_play_has_no_alias_table_of_its_own():
+    """The platform is the only mapping engine. If this fails, a duplicate
+    alias list has crept back into Open Play."""
+    assert not hasattr(app, "COLUMN_ALIASES")
+
+
+def test_app_aliases_come_from_the_platform():
+    from fap.pipeline.columns import ALIASES
+    # Open Play's fields are expressed in the platform's canonical vocabulary
+    assert app._APP_TO_PLATFORM == {"event_type": "event_type", "x": "x", "y": "y",
+                                    "x2": "end_x", "y2": "end_y"}
+    for plat_field in app._APP_TO_PLATFORM.values():
+        assert plat_field in ALIASES
+
+
+def test_norm_key_is_the_platform_normalizer():
+    from fap.pipeline.columns import normalize_name
+    assert app._norm_key is normalize_name
+
+
+# --- legacy parity: the mapped columns must be identical to the pre-2B.2 engine ---
+LEGACY_HEADERS = [
+    ["event_type", "x", "y"],
+    ["event", "start_x", "start_y", "end_x", "end_y"],
+    ["primary_event", "location_x", "location_y", "destination_x", "destination_y"],
+    ["Event Name", "X Start", "Y Start", "target_x", "target_y"],
+    ["type", "x_coord", "y_coord", "x_end", "y_end"],
+    ["action", "pos_x", "pos_y", "pass_end_x", "pass_end_y"],
+]
+
+
+@pytest.mark.parametrize("headers", LEGACY_HEADERS)
+def test_legacy_headers_still_map_to_canonical(headers):
+    df = app.clean_columns(pd.DataFrame({h: [1, 2] for h in headers}))
+    mapping, unresolved = app.resolve_column_mapping(df)
+    assert unresolved == []
+    mapped = app.apply_column_mapping(df, mapping)
+    assert {"event_type", "x", "y"}.issubset(mapped.columns)
+    if len(headers) > 3:
+        assert {"x2", "y2"}.issubset(mapped.columns)
+
+
+def _frame(headers):
+    rows = {h: ([10, 80] if "x" in h.lower() else [40, 50]) for h in headers}
+    rows[headers[0]] = ["pass", "shot"]
+    return pd.DataFrame(rows)
+
+
+@pytest.mark.parametrize("fmt", ["csv", "xlsx", "json"])
+def test_legacy_csv_excel_json_produce_identical_mapped_columns(fmt):
+    """Same logical file in three formats -> identical mapped canonical columns."""
+    headers = ["event_type", "location_x", "location_y", "end_x", "end_y"]
+    src = _frame(headers)
+    if fmt == "csv":
+        data, name = src.to_csv(index=False).encode(), "legacy.csv"
+    elif fmt == "xlsx":
+        buf = io.BytesIO(); src.to_excel(buf, index=False)
+        data, name = buf.getvalue(), "legacy.xlsx"
+    else:
+        data, name = src.to_json(orient="records").encode(), "legacy.json"
+
+    cleaned = app.clean_columns(app.read_uploaded_file(_upload(data, name)))
+    mapping, unresolved = app.resolve_column_mapping(cleaned)
+    assert unresolved == []
+    mapped = app.apply_column_mapping(cleaned, mapping)
+    assert {"event_type", "x", "y", "x2", "y2"}.issubset(mapped.columns)
+
+    df = app.add_derived_columns(
+        app.platform_import(name, data, mapping, "0-100", "Data already left-to-right").frame)
+    assert list(df["x"]) == [10.0, 80.0]
+    assert list(df["event_type"]) == ["pass", "shot"]
+
+
+def test_mapping_confidence_high_for_clean_headers_skips_dialog():
+    df = app.clean_columns(pd.DataFrame({"event_type": ["pass"], "x": [1], "y": [2]}))
+    from fap.pipeline.columns import CONFIDENCE_THRESHOLD
+    assert app.mapping_confidence(df) >= CONFIDENCE_THRESHOLD
+
+
+def test_mapping_confidence_low_for_unmappable_headers_opens_dialog():
+    df = app.clean_columns(pd.DataFrame({"foo": [1], "bar": [2], "baz": [3]}))
+    from fap.pipeline.columns import CONFIDENCE_THRESHOLD
+    assert app.mapping_confidence(df) < CONFIDENCE_THRESHOLD
+
+
+def test_mapping_confidence_ignores_absent_optional_fields():
+    """A file with no player/team column must still import without the dialog."""
+    df = app.clean_columns(pd.DataFrame({"event_type": ["pass"], "x": [1], "y": [2]}))
+    assert app.mapping_confidence(df) == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------- template system
+def _isolated_service(tmp_path):
+    from fap.cache import CacheManager
+    from fap.config.settings import CacheSettings
+    from fap.db.engine import Database
+    from fap.pipeline.importer import ImportService
+    from fap.pipeline.templates import TemplateRepository
+    return ImportService(CacheManager(CacheSettings(backend="memory")),
+                         TemplateRepository(Database(tmp_path / "t.sqlite3")))
+
+
+def test_save_template_then_autoload_maps_unmappable_headers(tmp_path, monkeypatch):
+    """A saved template teaches the platform a shape it cannot guess: the next
+    file with the same columns maps itself, with no dialog."""
+    svc = _isolated_service(tmp_path)
+    monkeypatch.setattr(app, "import_service", lambda: svc)
+
+    df = app.clean_columns(pd.DataFrame({"gps_code": ["pass"], "cx": [10], "cy": [20]}))
+    assert app.mapping_confidence(df) < 1.0          # not guessable from aliases alone
+
+    manual = {"event_type": "gps_code", "x": "cx", "y": "cy"}
+    app.save_mapping_template("Custom GPS", df, manual, "gps.csv")
+
+    detected, template_used = app.platform_detect(df)
+    assert template_used == "Custom GPS"
+    assert app.auto_map_columns(df) == manual
+    assert app.mapping_confidence(df) == pytest.approx(1.0)
+
+
+def test_saved_template_stores_platform_canonical_names(tmp_path, monkeypatch):
+    """x2/y2 are Open Play's names; templates must persist the platform's."""
+    svc = _isolated_service(tmp_path)
+    monkeypatch.setattr(app, "import_service", lambda: svc)
+
+    df = app.clean_columns(pd.DataFrame({"a": ["pass"], "b": [1], "c": [2], "d": [3], "e": [4]}))
+    app.save_mapping_template("Third Party CSV", df,
+                              {"event_type": "a", "x": "b", "y": "c", "x2": "d", "y2": "e"},
+                              "third.csv")
+    stored = svc._templates.list_all()[0]
+    assert stored.name == "Third Party CSV"
+    assert stored.mapping == {"a": "event_type", "b": "x", "c": "y", "d": "end_x", "e": "end_y"}
+    assert stored.provider_id == "generic_csv"

@@ -38,6 +38,16 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def apply_mapping(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
+    """Rename source columns to canonical names. Mapping keys are matched against
+    cleaned column names, so callers may pass raw source names as they appeared
+    in the file. The one place a column mapping is turned into a rename."""
+    if not mapping:
+        return df
+    return df.rename(columns={str(k).strip().lower().replace(" ", "_"): v
+                              for k, v in mapping.items()})
+
+
 def coerce_schema(df: pd.DataFrame) -> pd.DataFrame:
     """One controlled copy; every column of the canonical contract exists and
     has the right dtype afterwards."""

@@ -20,6 +20,7 @@ import pandas as pd
 
 from fap.cache import CacheManager
 from fap.core.exceptions import ProviderError
+from fap.pipeline import schema
 from fap.pipeline.cleaning import clean
 from fap.pipeline.columns import ColumnMapping, detect_columns
 from fap.pipeline.coordinates import detect_coordinate_system
@@ -117,6 +118,12 @@ class ImportService:
         validation = self._validator.run(frame)
         quality = score(frame)
 
+        # what the file actually supplied vs what the schema filled in, so the
+        # UI can tell the user which fields are real and which are placeholders
+        provided = set(schema.apply_mapping(schema.clean_columns(raw.frame), final_mapping).columns)
+        generated = [c for c in schema.CANONICAL if c in frame.columns and c not in provided]
+        missing_required = [c for c in schema.REQUIRED if c not in provided]
+
         result = ImportResult(
             frame=frame, provider_id=provider.info.id,
             mapping=final_mapping, mapping_confidence=detected.overall_confidence,
@@ -124,6 +131,12 @@ class ImportService:
             validation=validation, quality=quality, cleaning_log=cleaning_log,
             template_used=template_used,
             summary={
+                "provider": provider.info.id,
+                "provider_name": provider.info.name,
+                "mapping_confidence": round(detected.overall_confidence, 3),
+                "generated_fields": generated,
+                "missing_required": missing_required,
+                "template_used": template_used,
                 "rows": int(len(frame)),
                 "matches": int(frame["match_id"].astype(str).str.strip().replace("", pd.NA).nunique()),
                 "players": int(frame["player"].astype(str).str.strip().replace("", pd.NA).nunique()),

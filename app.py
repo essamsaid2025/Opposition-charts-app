@@ -45,6 +45,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
 from fap.bootstrap import init_import_service          # noqa: E402
 from fap.core.exceptions import FAPError               # noqa: E402
+from fap.pipeline.columns import (                     # noqa: E402
+    CONFIDENCE_THRESHOLD,
+    alias_candidates as platform_alias_candidates,
+    detect_columns,
+    normalize_name,
+)
 from fap.pipeline.importer import ImportResult, ImportService  # noqa: E402
 
 # -----------------------------
@@ -261,76 +267,74 @@ def validate_data(df: pd.DataFrame) -> List[str]:
 
 
 # ============================================================================
-# PROVIDER-INDEPENDENT COLUMN MAPPING ENGINE (runs BEFORE validate_data)
-# Maps StatsBomb / Wyscout / Opta / Hudl / Sportscode / custom-tagging column
-# names to the app's canonical fields, with an interactive preview + fallback
-# mapping dialog. No visualization code is touched by this layer.
+# COLUMN MAPPING - Open Play consumes the platform's mapping engine.
+# The alias table, the normalizer, candidate ranking and detection all live in
+# fap.pipeline.columns; there is no second alias list here and there must never
+# be one again. Open Play only translates between its own field vocabulary
+# (x2/y2) and the platform's canonical schema (end_x/end_y), and drives the UI.
 # ============================================================================
-COLUMN_ALIASES: Dict[str, List[str]] = {
-    "event_type": ["event_type", "event", "type", "eventname", "event_name",
-                   "primary_event", "action", "event_action", "eventaction",
-                   "eventtype", "action_type", "actiontype", "code"],
-    "x": ["x", "start_x", "location_x", "x_start", "startx", "locationx",
-          "x_location", "x_coord", "xcoord", "coord_x", "pos_x", "origin_x", "x1"],
-    "y": ["y", "start_y", "location_y", "y_start", "starty", "locationy",
-          "y_location", "y_coord", "ycoord", "coord_y", "pos_y", "origin_y", "y1"],
-    "x2": ["x2", "end_x", "target_x", "destination_x", "endx", "x_end",
-           "dest_x", "x_dest", "pass_end_x", "location_x_end", "to_x"],
-    "y2": ["y2", "end_y", "target_y", "destination_y", "endy", "y_end",
-           "dest_y", "y_dest", "pass_end_y", "location_y_end", "to_y"],
-}
 REQUIRED_CANONICAL = ["event_type", "x", "y"]
 OPTIONAL_CANONICAL = ["x2", "y2"]
 CANONICAL_LABELS = {"event_type": "Event type", "x": "X (start)", "y": "Y (start)",
                     "x2": "X (end)", "y2": "Y (end)"}
 
+# Open Play's field names -> the platform's canonical schema. x2/y2 are the
+# schema's legacy aliases for end_x/end_y and are kept in sync by coerce_schema.
+_APP_TO_PLATFORM = {"event_type": "event_type", "x": "x", "y": "y",
+                    "x2": "end_x", "y2": "end_y"}
+_PLATFORM_TO_APP = {v: k for k, v in _APP_TO_PLATFORM.items()}
 
-def _norm_key(name: str) -> str:
-    """Comparison key: lowercase, alphanumerics only, so 'Start X', 'start_x',
-    'startX' and 'startx' all compare equal."""
-    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+# the platform's normalizer, re-exported under the historical Open Play name
+_norm_key = normalize_name
 
 
 def alias_candidates(df: pd.DataFrame) -> Dict[str, List[str]]:
-    """For each canonical field, every uploaded column that matches one of its
-    aliases (exact canonical name first). Used for best-match selection + logging."""
-    present = {_norm_key(c): c for c in df.columns}
-    out: Dict[str, List[str]] = {}
-    for canon, aliases in COLUMN_ALIASES.items():
-        cands: List[str] = []
-        for key in [canon] + aliases:
-            src = present.get(_norm_key(key))
-            if src is not None and src not in cands:
-                cands.append(src)
-        if cands:
-            out[canon] = cands
-    return out
+    """Platform alias candidates, expressed in Open Play's field names.
+    Best match first; used for the preview log and the mapping dialog."""
+    platform = platform_alias_candidates(df)
+    return {app_field: list(platform[plat_field])
+            for app_field, plat_field in _APP_TO_PLATFORM.items()
+            if platform.get(plat_field)}
+
+
+def platform_detect(df: pd.DataFrame) -> Tuple[object, Optional[str]]:
+    """Platform detection for this file shape: a saved mapping template wins,
+    otherwise the alias engine. Returns (ColumnMapping, template_name)."""
+    try:
+        return import_service().detect(df)
+    except FAPError:
+        # no template store available (e.g. read-only deployment) -> aliases only
+        return detect_columns(df), None
 
 
 def auto_map_columns(df: pd.DataFrame) -> Dict[str, str]:
-    """Best-match auto detection. Returns {canonical: source_column}.
-    A literal canonical name always wins; otherwise the earliest-declared alias
-    wins. A source column is never assigned to two canonical fields."""
-    cands = alias_candidates(df)
+    """Best-match auto detection via the platform. Returns {canonical: source}
+    for the fields Open Play maps; every rule behind it belongs to the platform."""
+    detected, _template = platform_detect(df)
     mapping: Dict[str, str] = {}
-    used: set = set()
-    # exact canonical names first (highest confidence)
-    for canon in COLUMN_ALIASES:
-        for c in cands.get(canon, []):
-            if _norm_key(c) == _norm_key(canon):
-                mapping[canon] = c
-                used.add(c)
-                break
-    # then best remaining alias, skipping already-used columns
-    for canon in COLUMN_ALIASES:
-        if canon in mapping:
-            continue
-        for c in cands.get(canon, []):
-            if c not in used:
-                mapping[canon] = c
-                used.add(c)
-                break
+    for source, plat_field in detected.mapping.items():
+        app_field = _PLATFORM_TO_APP.get(plat_field)
+        if app_field:
+            mapping[app_field] = source
     return mapping
+
+
+def mapping_confidence(df: pd.DataFrame) -> float:
+    """Platform confidence for the fields Open Play requires. Below the
+    platform's CONFIDENCE_THRESHOLD the mapping dialog opens."""
+    detected, _template = platform_detect(df)
+    return detected.confidence_for([_APP_TO_PLATFORM[c] for c in REQUIRED_CANONICAL])
+
+
+def save_mapping_template(name: str, df: pd.DataFrame, mapping: Dict[str, str],
+                          filename: str) -> None:
+    """Persist the confirmed mapping through the platform TemplateRepository so
+    the next file with this column shape maps itself."""
+    svc = import_service()
+    source_to_canonical = {src: _APP_TO_PLATFORM[canon]
+                           for canon, src in mapping.items() if src}
+    svc.save_template(name, svc.pick_provider(filename).info.id,
+                      [str(c) for c in df.columns], source_to_canonical)
 
 
 def mapping_log(df: pd.DataFrame, mapping: Dict[str, str]) -> List[str]:
@@ -377,14 +381,21 @@ def mapping_preview_table(df: pd.DataFrame, mapping: Dict[str, str]) -> pd.DataF
     return pd.DataFrame(rows, columns=["Original column", "Mapped to"])
 
 
-def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[str]) -> None:
+def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[str],
+                          confidence: float = 1.0, filename: str = "") -> None:
     """Interactive preview + mapping dialog shown before import. Lets the user
     review and correct which uploaded column feeds each required/optional field,
-    then confirm. Choices are remembered in session_state until the app restarts."""
+    then confirm. Choices are remembered in session_state until the app restarts,
+    and can be saved as a reusable mapping template."""
     st.markdown("### Column mapping preview")
     st.caption("Review how your uploaded columns map to the required fields, adjust "
                "anything that's wrong, then confirm to import. This is remembered "
                "for the session.")
+    _detected, template_used = platform_detect(df)
+    if template_used:
+        st.success(f"Loaded saved mapping template: **{template_used}**")
+    st.caption(f"Automatic detection confidence: **{confidence:.0%}** "
+               f"(dialog opens below {CONFIDENCE_THRESHOLD:.0%})")
     for msg in logs:
         st.caption("• " + msg)
 
@@ -409,6 +420,12 @@ def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[
     if missing:
         st.warning("Required fields still unmapped: " + ", ".join(missing) +
                    ". Pick the matching uploaded column above to continue.")
+
+    # Save this mapping for every future file with the same column shape.
+    tpl_name = st.text_input("Save as mapping template (optional)", value="",
+                             placeholder="e.g. My Club, Hudl Export, Custom GPS",
+                             key="premap_template_name")
+
     if st.button("Confirm mapping & import", type="primary", disabled=bool(missing)):
         cm = st.session_state.setdefault("col_map", {})
         for canon, src in chosen.items():
@@ -416,8 +433,53 @@ def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[
                 cm[canon] = src
             else:
                 cm.pop(canon, None)
+        if tpl_name.strip():
+            try:
+                save_mapping_template(tpl_name.strip(), df,
+                                      {c: s for c, s in chosen.items() if s}, filename)
+                st.toast(f"Saved mapping template '{tpl_name.strip()}'")
+            except Exception as exc:                      # never block an import
+                st.warning(f"Could not save template: {exc}")
         st.session_state["_import_confirmed"] = st.session_state.get("_mapping_file")
+        st.session_state["_force_mapping"] = False
         st.rerun()
+
+
+def render_import_summary(result: ImportResult, source_df: pd.DataFrame) -> None:
+    """What the platform did with this file: detected provider, mapping
+    confidence, fields the file supplied vs fields the schema generated, and
+    anything required that is still missing."""
+    summary = result.summary
+    generated = summary.get("generated_fields", [])
+    missing = summary.get("missing_required", [])
+    label = summary.get("provider_name") or result.provider_id
+
+    with st.expander("Import summary", expanded=bool(missing)):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Detected provider", label)
+        c2.metric("Mapping confidence", f"{result.mapping_confidence:.0%}")
+        c3.metric("Coordinates", f"{result.coord_system} ({result.coord_confidence:.0%})")
+        c4.metric("Data quality", f"{result.quality.overall:.0f}/100")
+
+        if result.template_used:
+            st.caption(f"Mapping template applied: **{result.template_used}**")
+        if result.cache_hit:
+            st.caption("Loaded from the import cache.")
+
+        st.caption("**Mapped from your file:** " +
+                   (", ".join(f"`{c}`" for c in sorted(result.mapping.values())) or "—"))
+        if generated:
+            st.caption("**Generated (not in your file, filled by the schema):** " +
+                       ", ".join(f"`{c}`" for c in generated))
+        if missing:
+            st.error("Missing required fields: " + ", ".join(f"`{c}`" for c in missing))
+        if result.cleaning_log:
+            st.caption("**Cleaning:** " + "; ".join(result.cleaning_log))
+
+        if st.button("Review / edit column mapping"):
+            st.session_state["_force_mapping"] = True
+            st.session_state["_import_confirmed"] = None
+            st.rerun()
 
 
 def normalize_coordinates(df: pd.DataFrame, mode: str) -> pd.DataFrame:
@@ -2135,15 +2197,21 @@ def run_app():
     if st.session_state.get("_mapping_file") != uploaded.name:
         st.session_state["_mapping_file"] = uploaded.name
         st.session_state["_import_confirmed"] = None
+        st.session_state["_force_mapping"] = False
         for _c in REQUIRED_CANONICAL + OPTIONAL_CANONICAL:
             st.session_state.pop(f"premap_{_c}", None)
 
-    # Provider-independent mapping BEFORE validation: auto-detect aliases, show an
-    # interactive preview (Original -> Mapped) and let the user correct/complete it.
-    # Validation only fails after automatic AND manual mapping both fail.
+    # Mapping comes from the platform (aliases + saved templates). The dialog is
+    # only shown when the platform is not confident enough, when a required field
+    # is unresolved, or when the user asks to review it - a clean provider export
+    # now imports straight through.
     mapping, unresolved = resolve_column_mapping(cleaned, st.session_state.get("col_map"))
-    if st.session_state.get("_import_confirmed") != uploaded.name:
-        render_import_preview(cleaned, mapping, mapping_log(cleaned, mapping))
+    confidence = mapping_confidence(cleaned)
+    needs_review = bool(unresolved) or confidence < CONFIDENCE_THRESHOLD
+    if (needs_review or st.session_state.get("_force_mapping")) \
+            and st.session_state.get("_import_confirmed") != uploaded.name:
+        render_import_preview(cleaned, mapping, mapping_log(cleaned, mapping),
+                              confidence=confidence, filename=uploaded.name)
         st.stop()
 
     cleaned = apply_column_mapping(cleaned, mapping)
@@ -2163,6 +2231,8 @@ def run_app():
     except Exception as e:
         st.error(f"Could not process file: {e}")
         st.stop()
+
+    render_import_summary(result, cleaned)
 
     # Filters (v3 preserved)
     with st.sidebar:
