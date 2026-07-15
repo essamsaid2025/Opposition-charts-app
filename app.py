@@ -43,8 +43,9 @@ except Exception:
 # importable exactly the way the test-suite bootstrap already does.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from fap.bootstrap import init_import_service          # noqa: E402
+from fap.bootstrap import PlatformContext, init_platform   # noqa: E402
 from fap.core.exceptions import FAPError               # noqa: E402
+from fap.core.version import platform_version          # noqa: E402
 from fap.pipeline.columns import (                     # noqa: E402
     CONFIDENCE_THRESHOLD,
     alias_candidates as platform_alias_candidates,
@@ -191,11 +192,29 @@ COORD_SYSTEM_IDS: Dict[str, str] = {"0-100": "0-100", "120 x 80": "120x80"}
 
 
 @st.cache_resource(show_spinner=False)
+def _platform_context(version: str) -> PlatformContext:
+    """Cached platform, keyed by the platform's own version.
+
+    `version` is unused in the body on purpose: it is the cache key. Streamlit
+    invalidates a cached resource only when *this function's* body changes, so
+    without the key a code update would keep serving a context whose services
+    were built from the previous modules (that is exactly what broke Phase
+    2B.2 in production). Fingerprint changes -> new key -> services rebuilt
+    against the modules just loaded. No reboot, no constant to bump.
+    """
+    return init_platform(Path(__file__).resolve().parent)
+
+
+def platform() -> PlatformContext:
+    """The platform this rerun should use. Cheap: one stat per fap module."""
+    return _platform_context(platform_version())
+
+
 def import_service() -> ImportService:
     """The platform import engine: provider registry, mapping templates,
-    coordinate normalization, cleaning and validation. Built once per process
-    via the platform composition root - Open Play constructs nothing itself."""
-    return init_import_service(Path(__file__).resolve().parent)
+    coordinate normalization, cleaning and validation. Resolved through the
+    platform bootstrap - Open Play constructs nothing itself."""
+    return platform().importer
 
 
 def read_uploaded_file(uploaded_file) -> pd.DataFrame:

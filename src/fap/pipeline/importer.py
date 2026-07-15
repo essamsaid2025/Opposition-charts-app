@@ -51,11 +51,14 @@ class ImportResult:
 
 class ImportService:
     def __init__(self, cache: CacheManager, templates: TemplateRepository,
-                 pipeline: DataPipeline | None = None) -> None:
+                 pipeline: DataPipeline | None = None,
+                 validator: ValidationEngine | None = None) -> None:
+        # Collaborators are injected by the bootstrap; the `or` fallbacks keep
+        # the historical signature working for direct construction in tests.
         self._cache = cache
         self._templates = templates
         self._pipeline = pipeline or DataPipeline()
-        self._validator = ValidationEngine()
+        self._validator = validator or ValidationEngine()
 
     # ------------------------------------------------------------ helpers
     def pick_provider(self, filename: str, provider_id: str | None = None) -> DataProvider:
