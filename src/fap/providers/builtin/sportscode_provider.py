@@ -8,6 +8,7 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
@@ -15,6 +16,15 @@ class SportscodeProvider(DataProvider):
     info = PluginInfo(id="sportscode", name="Hudl Sportscode timeline (XML)", category="vendor",
                       description="Sportscode instance exports; codes become event types, "
                                   "labels become player/team/notes.")
+
+    signature = ProviderSignature(
+        supported_extensions=(".xml",),
+        filename_patterns=("sportscode", "timeline"),
+        json_patterns=("ALL_INSTANCES", "instance"),
+        provider_identifiers=("ALL_INSTANCES", "sportscode"),
+        optional_columns=("code", "start", "end"),
+        schema_version="sportscode-timeline",
+    )
 
     def supports(self, filename: str) -> bool:
         low = filename.lower()

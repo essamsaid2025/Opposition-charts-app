@@ -8,6 +8,7 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 TYPE_NAMES: dict[int, str] = {
     1: "pass", 2: "offside pass", 3: "dribble", 4: "foul", 5: "out", 6: "corner",
@@ -23,6 +24,15 @@ _END_X_Q, _END_Y_Q = "140", "141"
 class OptaF24Provider(DataProvider):
     info = PluginInfo(id="opta_f24", name="Opta F24 events (XML)", category="vendor",
                       description="Opta / Stats Perform F24 match event feeds.")
+
+    signature = ProviderSignature(
+        supported_extensions=(".xml",),
+        filename_patterns=("opta", "f24"),
+        json_patterns=("Games", "Game", "Event"),
+        provider_identifiers=("qualifier_id", "type_id"),
+        optional_columns=("period_id", "team_id", "player_id", "outcome"),
+        schema_version="opta-f24",
+    )
 
     def supports(self, filename: str) -> bool:
         low = filename.lower()

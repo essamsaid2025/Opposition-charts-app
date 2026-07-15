@@ -33,6 +33,8 @@ from fap.pipeline import DataPipeline, ImportService, TemplateRepository
 from fap.pipeline.validation import ValidationEngine
 from fap.projects import ProjectService
 from fap.providers.base import DataProvider, provider_registry, load_builtin_providers
+from fap.providers.custom import CustomProviderRepository
+from fap.providers.intelligence import ProviderIntelligence
 from fap.state import StateManager
 from fap.themes import ThemeManager
 from fap.visuals.base import Visualization, visual_registry, load_builtin_visuals
@@ -104,6 +106,14 @@ class PlatformContext:
         return self.services.get("pipeline")
 
     @property
+    def custom_providers(self) -> CustomProviderRepository:
+        return self.services.get("custom_providers")
+
+    @property
+    def intelligence(self) -> ProviderIntelligence:
+        return self.services.get("intelligence")
+
+    @property
     def importer(self) -> ImportService:
         return self.services.get("importer")
 
@@ -124,16 +134,23 @@ def init_platform(root: Path | None = None, *,
         load_builtin_providers()   # idempotent - registries dedupe by class identity
         return provider_registry
 
+    def _intelligence(reg: ServiceRegistry) -> ProviderIntelligence:
+        return ProviderIntelligence(reg.get("providers"))
+
     def _importer(reg: ServiceRegistry) -> ImportService:
         reg.get("providers")       # discovery must precede any provider lookup
         return ImportService(reg.get("cache"), reg.get("templates"),
-                             pipeline=reg.get("pipeline"), validator=reg.get("validation"))
+                             pipeline=reg.get("pipeline"), validator=reg.get("validation"),
+                             intelligence=reg.get("intelligence"),
+                             custom_providers=reg.get("custom_providers"))
 
     services.register("settings", lambda _: settings)
     services.register("cache", lambda _: CacheManager(settings.cache))
     services.register("db", lambda _: Database(settings.database.path))
     services.register("templates", lambda reg: TemplateRepository(reg.get("db")))
+    services.register("custom_providers", lambda reg: CustomProviderRepository(reg.get("db")))
     services.register("providers", _providers)
+    services.register("intelligence", _intelligence)
     services.register("validation", lambda _: ValidationEngine())
     services.register("pipeline", lambda _: DataPipeline())
     services.register("importer", _importer)

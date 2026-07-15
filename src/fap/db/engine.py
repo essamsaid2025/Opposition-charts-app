@@ -45,7 +45,15 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_templates_signature ON mapping_templates(signature);
     """),
-    # (4, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    (4, """
+        CREATE TABLE IF NOT EXISTS custom_providers (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL,
+            base_provider_id TEXT NOT NULL,
+            signature TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """),
+    # (5, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

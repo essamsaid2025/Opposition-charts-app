@@ -21,6 +21,7 @@ from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
 from fap.providers.detection import detect_format
+from fap.providers.signature import ProviderSignature
 
 _MAX_SEARCH_DEPTH = 3
 
@@ -112,6 +113,10 @@ class JsonProvider(DataProvider):
         id="generic_json", name="JSON / custom events export", category="file",
         description="Any JSON: list of objects, nested event array or dictionary root; "
                     "JSON Lines supported and nested fields flattened automatically.",
+    )
+    signature = ProviderSignature(
+        supported_extensions=(".json", ".jsonl", ".ndjson"),
+        generic=True, priority=-100, schema_version="generic",
     )
 
     def supports(self, filename: str) -> bool:

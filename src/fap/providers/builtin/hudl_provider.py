@@ -5,6 +5,7 @@ from typing import Any, BinaryIO
 from fap.core.plugin import PluginInfo
 from fap.providers.base import RawDataset, provider_registry
 from fap.providers.builtin.csv_provider import CsvProvider
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
@@ -13,6 +14,13 @@ class HudlProvider(CsvProvider):
     mapping step handle Hudl's naming."""
     info = PluginInfo(id="hudl", name="Hudl export (CSV)", category="vendor",
                       description="Hudl match/event CSV exports.")
+
+    signature = ProviderSignature(
+        supported_extensions=(".csv",),
+        filename_patterns=("hudl",),
+        optional_columns=("Row", "Timeline", "Instance", "Code", "Notes"),
+        schema_version="hudl-csv",
+    )
 
     def supports(self, filename: str) -> bool:
         return "hudl" in filename.lower() and filename.lower().endswith(".csv")

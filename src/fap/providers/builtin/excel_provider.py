@@ -9,12 +9,17 @@ from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
 from fap.providers.detection import detect_format
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
 class ExcelProvider(DataProvider):
     info = PluginInfo(id="generic_excel", name="Excel / custom spreadsheet", category="file",
                       description="Any .xlsx/.xls workbook; sheet selectable in the wizard.")
+    signature = ProviderSignature(
+        supported_extensions=(".xlsx", ".xls"),
+        generic=True, priority=-100, schema_version="generic",
+    )
 
     def supports(self, filename: str) -> bool:
         return filename.lower().endswith((".xlsx", ".xls"))

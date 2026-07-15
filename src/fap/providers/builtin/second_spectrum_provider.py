@@ -8,6 +8,7 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
@@ -15,6 +16,13 @@ class SecondSpectrumProvider(DataProvider):
     info = PluginInfo(id="second_spectrum_events", name="Second Spectrum events (JSON/JSONL)",
                       category="vendor",
                       description="Second Spectrum event exports (centered meters).")
+
+    signature = ProviderSignature(
+        supported_extensions=(".json", ".jsonl", ".ndjson"),
+        filename_patterns=("secondspectrum", "second_spectrum"),
+        provider_identifiers=("secondSpectrum", "gameEventId", "wallClock"),
+        schema_version="secondspectrum-v1",
+    )
 
     def supports(self, filename: str) -> bool:
         low = filename.lower()

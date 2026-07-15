@@ -7,6 +7,7 @@ from typing import Any, BinaryIO
 import pandas as pd
 
 from fap.core.plugin import Plugin, PluginInfo, PluginRegistry
+from fap.providers.signature import ProviderSignature
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +21,15 @@ class RawDataset:
 class DataProvider(Plugin):
     """Contract: recognize a source, load it, describe how its columns map to
     the canonical schema. Providers never normalize - the pipeline does.
-    ``options`` carries wizard choices (sheet name, delimiter, encoding...)."""
+    ``options`` carries wizard choices (sheet name, delimiter, encoding...).
+
+    ``signature`` is optional recognition evidence for the intelligence engine
+    (fap.providers.intelligence). A provider without one is still detected the
+    way it always was, by ``supports(filename)``; declaring one lets the engine
+    recognize the format from its content when the filename says nothing.
+    """
+
+    signature: ProviderSignature | None = None
 
     @abstractmethod
     def supports(self, filename: str) -> bool: ...

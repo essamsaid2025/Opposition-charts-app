@@ -9,12 +9,17 @@ from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
 from fap.providers.detection import detect_format
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
 class CsvProvider(DataProvider):
     info = PluginInfo(id="generic_csv", name="CSV / custom spreadsheet", category="file",
                       description="Any CSV: delimiter, encoding and header row auto-detected.")
+    signature = ProviderSignature(
+        supported_extensions=(".csv", ".txt", ".tsv"),
+        generic=True, priority=-100, schema_version="generic",
+    )
 
     def supports(self, filename: str) -> bool:
         return filename.lower().endswith((".csv", ".txt", ".tsv"))

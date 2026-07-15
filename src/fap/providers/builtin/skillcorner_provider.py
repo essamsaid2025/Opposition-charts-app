@@ -8,12 +8,20 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
 class SkillCornerProvider(DataProvider):
     info = PluginInfo(id="skillcorner_events", name="SkillCorner events (JSON)", category="vendor",
                       description="SkillCorner event/dynamic-events exports (centered meters).")
+
+    signature = ProviderSignature(
+        supported_extensions=(".json",),
+        filename_patterns=("skillcorner",),
+        provider_identifiers=("skillcorner", "trackable_object", "player_data"),
+        schema_version="skillcorner-v1",
+    )
 
     def supports(self, filename: str) -> bool:
         return "skillcorner" in filename.lower() and filename.lower().endswith(".json")

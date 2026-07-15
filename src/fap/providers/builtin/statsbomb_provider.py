@@ -8,6 +8,7 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 
 def _get(d: dict, *path: str, default: Any = None) -> Any:
@@ -22,6 +23,17 @@ def _get(d: dict, *path: str, default: Any = None) -> Any:
 class StatsBombProvider(DataProvider):
     info = PluginInfo(id="statsbomb", name="StatsBomb events (JSON)", category="vendor",
                       description="StatsBomb open-data / API event files.")
+    signature = ProviderSignature(
+        supported_extensions=(".json",),
+        filename_patterns=("statsbomb", "sb_events"),
+        json_patterns=("possession_team", "play_pattern"),
+        nested_object_patterns=("type.name", "pass.end_location", "possession_team.name",
+                                "play_pattern.name"),
+        provider_identifiers=("statsbomb_xg", "possession_team", "play_pattern",
+                              "under_pressure"),
+        optional_columns=("location", "minute", "second", "period", "possession"),
+        schema_version="statsbomb-v4",
+    )
 
     def supports(self, filename: str) -> bool:
         return "statsbomb" in filename.lower() and filename.lower().endswith(".json")

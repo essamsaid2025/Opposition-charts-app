@@ -29,6 +29,8 @@ from fap.pipeline.quality import QualityScore, score
 from fap.pipeline.templates import TemplateRepository
 from fap.pipeline.validation import ValidationEngine, ValidationReport
 from fap.providers.base import DataProvider, provider_registry
+from fap.providers.custom import CUSTOM_PREFIX, CustomProviderRepository, temporary_custom_provider
+from fap.providers.intelligence import DetectionReport, ProviderIntelligence
 
 logger = logging.getLogger(__name__)
 
@@ -47,18 +49,23 @@ class ImportResult:
     template_used: str | None = None
     cache_hit: bool = False
     summary: dict[str, Any] = field(default_factory=dict)
+    detection: DetectionReport | None = None      # how the provider was recognized
 
 
 class ImportService:
     def __init__(self, cache: CacheManager, templates: TemplateRepository,
                  pipeline: DataPipeline | None = None,
-                 validator: ValidationEngine | None = None) -> None:
+                 validator: ValidationEngine | None = None,
+                 intelligence: ProviderIntelligence | None = None,
+                 custom_providers: CustomProviderRepository | None = None) -> None:
         # Collaborators are injected by the bootstrap; the `or` fallbacks keep
         # the historical signature working for direct construction in tests.
         self._cache = cache
         self._templates = templates
         self._pipeline = pipeline or DataPipeline()
         self._validator = validator or ValidationEngine()
+        self._intelligence = intelligence or ProviderIntelligence()
+        self._customs = custom_providers
 
     # ------------------------------------------------------------ helpers
     def pick_provider(self, filename: str, provider_id: str | None = None) -> DataProvider:
@@ -71,6 +78,38 @@ class ImportService:
             if instance.supports(filename):
                 return instance
         raise ProviderError(f"No provider recognizes {filename!r} - choose one explicitly.")
+
+    def detect_provider(self, data: bytes, filename: str) -> DetectionReport:
+        """Recognize the provider from the file's content, not just its name.
+
+        Combines every signal the signatures declare - name, workbook metadata,
+        sheet names, JSON shape, columns, fingerprints - into a weighted score.
+        Saved club exports are scored alongside the built-in vendors.
+        """
+        intelligence = self._intelligence
+        if self._customs is not None:
+            extra = self._customs.signatures()
+            if extra:
+                intelligence = ProviderIntelligence(extra_signatures=extra)
+        return intelligence.detect(data, filename)
+
+    def _resolve_provider(self, report: DetectionReport,
+                          filename: str) -> tuple[DataProvider, str]:
+        """Detected provider, else the historical filename-based choice.
+
+        The fallback is what keeps every pre-intelligence import identical: a
+        file no signature recognizes is picked exactly as it was before.
+        """
+        best = report.best
+        if best is not None and not best.generic:
+            if best.provider_id.startswith(CUSTOM_PREFIX):
+                spec = self._customs.get(best.provider_id) if self._customs else None
+                if spec is not None:
+                    return provider_registry.create(spec.base_provider_id), spec.id
+            elif best.provider_id in provider_registry:
+                return provider_registry.create(best.provider_id), best.provider_id
+        provider = self.pick_provider(filename)
+        return provider, provider.info.id
 
     def detect(self, raw_frame: pd.DataFrame) -> tuple[ColumnMapping, str | None]:
         """Auto column detection, preferring a saved template for this shape."""
@@ -88,8 +127,13 @@ class ImportService:
                     mapping: dict[str, str] | None = None, coord_system: str | None = None,
                     flip_direction: bool = False, options: dict[str, Any] | None = None,
                     use_cache: bool = True) -> ImportResult:
-        provider = self.pick_provider(filename, provider_id)
-        cache_key = self._cache_key(data, provider.info.id, mapping, coord_system,
+        detection: DetectionReport | None = None
+        if provider_id:
+            provider, reported_id = self.pick_provider(filename, provider_id), provider_id
+        else:
+            detection = self.detect_provider(data, filename)
+            provider, reported_id = self._resolve_provider(detection, filename)
+        cache_key = self._cache_key(data, reported_id, mapping, coord_system,
                                     flip_direction, options)
         if use_cache:
             hit = self._cache.get(cache_key)
@@ -127,18 +171,35 @@ class ImportService:
         generated = [c for c in schema.CANONICAL if c in frame.columns and c not in provided]
         missing_required = [c for c in schema.REQUIRED if c not in provided]
 
+        best = detection.best if detection else None
+        event_schema = [str(e) for e in frame["event_type"].replace("", pd.NA)
+                        .dropna().value_counts().head(12).index]
+
         result = ImportResult(
-            frame=frame, provider_id=provider.info.id,
+            frame=frame, provider_id=reported_id,
             mapping=final_mapping, mapping_confidence=detected.overall_confidence,
             coord_system=system, coord_confidence=conf,
             validation=validation, quality=quality, cleaning_log=cleaning_log,
-            template_used=template_used,
+            template_used=template_used, detection=detection,
             summary={
-                "provider": provider.info.id,
-                "provider_name": provider.info.name,
+                "provider": reported_id,
+                "provider_name": best.provider_name if best else provider.info.name,
+                "provider_confidence": round(best.confidence, 3) if best else None,
+                "provider_version": (best.schema_version if best and best.schema_version
+                                     else getattr(provider.signature, "schema_version", "")),
+                "provider_reasoning": detection.reasoning if detection else "explicitly selected",
+                "matched_rules": [str(e) for e in best.matched_rules] if best else [],
+                "failed_rules": [str(e) for e in best.failed_rules] if best else [],
+                "ambiguous": bool(detection.ambiguous) if detection else False,
+                "unknown_schema": bool(detection.unknown_schema) if detection else False,
+                "alternatives": [f"{m.provider_name} ({m.confidence:.0%})"
+                                 for m in (detection.candidates[1:4] if detection else [])],
                 "mapping_confidence": round(detected.overall_confidence, 3),
                 "generated_fields": generated,
                 "missing_required": missing_required,
+                "unknown_fields": list(detected.unmapped_sources),
+                "warnings": [str(i) for i in getattr(validation, "issues", [])][:12],
+                "event_schema": event_schema,
                 "template_used": template_used,
                 "rows": int(len(frame)),
                 "matches": int(frame["match_id"].astype(str).str.strip().replace("", pd.NA).nunique()),

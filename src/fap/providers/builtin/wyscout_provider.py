@@ -8,6 +8,7 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 _PERIODS = {"1H": 1, "2H": 2, "E1": 3, "E2": 4, "P": 5}
 _ACCURATE, _INACCURATE = 1801, 1802
@@ -17,6 +18,18 @@ _ACCURATE, _INACCURATE = 1801, 1802
 class WyscoutProvider(DataProvider):
     info = PluginInfo(id="wyscout", name="Wyscout events (JSON)", category="vendor",
                       description="Wyscout v2/v3 event exports.")
+
+    signature = ProviderSignature(
+        supported_extensions=(".json",),
+        filename_patterns=("wyscout",),
+        # deliberately NOT json_patterns=("events",): plenty of non-Wyscout
+        # exports wrap their records in an "events" key. Wyscout is recognized
+        # by its own field names and its positions[]/tags[] shape instead.
+        nested_object_patterns=("positions.x", "tags.id"),
+        provider_identifiers=("eventName", "matchPeriod", "eventSec", "subEventName"),
+        optional_columns=("eventName", "teamId", "playerId", "matchPeriod", "positions"),
+        schema_version="wyscout-v2",
+    )
 
     def supports(self, filename: str) -> bool:
         return "wyscout" in filename.lower() and filename.lower().endswith(".json")

@@ -5,6 +5,7 @@ from typing import Any, BinaryIO
 from fap.core.plugin import PluginInfo
 from fap.providers.base import RawDataset, provider_registry
 from fap.providers.builtin.csv_provider import CsvProvider
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
@@ -14,6 +15,12 @@ class ManualTaggingProvider(CsvProvider):
     info = PluginInfo(id="manual", name="Manual tagged data (CSV)", category="manual",
                       description="The club's own tagging convention; canonical column names "
                                   "or wizard mapping.")
+
+    signature = ProviderSignature(
+        supported_extensions=(".csv",),
+        filename_patterns=("manual",),
+        schema_version="manual-tagging",
+    )
 
     def supports(self, filename: str) -> bool:
         return "manual" in filename.lower() and filename.lower().endswith(".csv")

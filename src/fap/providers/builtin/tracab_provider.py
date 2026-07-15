@@ -7,12 +7,20 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 
 @provider_registry.register
 class TracabProvider(DataProvider):
     info = PluginInfo(id="tracab_events", name="Tracab event export (CSV)", category="vendor",
                       description="Tracab/ChyronHego event CSVs (centered centimeters).")
+
+    signature = ProviderSignature(
+        supported_extensions=(".csv",),
+        filename_patterns=("tracab",),
+        provider_identifiers=("tracab",),
+        schema_version="tracab-v1",
+    )
 
     def supports(self, filename: str) -> bool:
         return "tracab" in filename.lower() and filename.lower().endswith(".csv")

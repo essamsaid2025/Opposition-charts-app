@@ -60,6 +60,7 @@ from fap.pipeline.columns import (                     # noqa: E402
     normalize_name,
 )
 from fap.pipeline.importer import ImportResult, ImportService  # noqa: E402
+from fap.providers.custom import temporary_custom_provider     # noqa: E402
 
 # -----------------------------
 # Page config
@@ -472,40 +473,100 @@ def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[
 
 
 def render_import_summary(result: ImportResult, source_df: pd.DataFrame) -> None:
-    """What the platform did with this file: detected provider, mapping
-    confidence, fields the file supplied vs fields the schema generated, and
-    anything required that is still missing."""
+    """What the platform did with this file: which provider it recognized and
+    why, mapping confidence, the coordinate system, the event schema it found,
+    fields the file supplied vs fields the schema generated, and what is
+    missing, unknown or worth warning about."""
     summary = result.summary
     generated = summary.get("generated_fields", [])
     missing = summary.get("missing_required", [])
+    unknown = summary.get("unknown_fields", [])
+    warnings = summary.get("warnings", [])
     label = summary.get("provider_name") or result.provider_id
+    provider_conf = summary.get("provider_confidence")
+    version = summary.get("provider_version") or "—"
 
     with st.expander("Import summary", expanded=bool(missing)):
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Detected provider", label)
-        c2.metric("Mapping confidence", f"{result.mapping_confidence:.0%}")
+        c1.metric("Detected provider", label,
+                  help=summary.get("provider_reasoning", ""))
+        c2.metric("Provider confidence",
+                  f"{provider_conf:.0%}" if provider_conf is not None else "selected")
         c3.metric("Coordinates", f"{result.coord_system} ({result.coord_confidence:.0%})")
         c4.metric("Data quality", f"{result.quality.overall:.0f}/100")
 
+        c5, c6, c7, c8 = st.columns(4)
+        c5.metric("Provider version", version)
+        c6.metric("Mapping confidence", f"{result.mapping_confidence:.0%}")
+        c7.metric("Rows", f"{summary.get('rows', 0):,}")
+        c8.metric("Event types", summary.get("event_types", 0))
+
+        if summary.get("provider_reasoning"):
+            st.caption(f"**Why:** {summary['provider_reasoning']}")
+        if summary.get("ambiguous"):
+            st.warning("More than one provider explains this file about equally well: "
+                       + ", ".join(summary.get("alternatives", []))
+                       + ". Check the detected provider before trusting the import.")
+        if summary.get("unknown_schema"):
+            st.info("No known provider recognized this file, so it was read as a generic "
+                    "export. Save it as a club export below and it will be recognized "
+                    "automatically next time.")
         if result.template_used:
             st.caption(f"Mapping template applied: **{result.template_used}**")
         if result.cache_hit:
             st.caption("Loaded from the import cache.")
 
+        if summary.get("event_schema"):
+            st.caption("**Event schema detected:** "
+                       + ", ".join(f"`{e}`" for e in summary["event_schema"]))
         st.caption("**Mapped from your file:** " +
                    (", ".join(f"`{c}`" for c in sorted(result.mapping.values())) or "—"))
         if generated:
             st.caption("**Generated (not in your file, filled by the schema):** " +
                        ", ".join(f"`{c}`" for c in generated))
+        if unknown:
+            st.caption("**Unknown fields (kept, mapped to nothing):** " +
+                       ", ".join(f"`{c}`" for c in unknown[:15]))
         if missing:
             st.error("Missing required fields: " + ", ".join(f"`{c}`" for c in missing))
+        if warnings:
+            st.caption("**Warnings:** " + "; ".join(warnings[:6]))
         if result.cleaning_log:
             st.caption("**Cleaning:** " + "; ".join(result.cleaning_log))
+
+        with st.expander("Detection detail", expanded=False):
+            for rule in summary.get("matched_rules", []):
+                st.caption("✔ " + rule)
+            for rule in summary.get("failed_rules", []):
+                st.caption("✘ " + rule)
+            if summary.get("alternatives"):
+                st.caption("Runners-up: " + ", ".join(summary["alternatives"]))
+
+        render_custom_provider_save(result)
 
         if st.button("Review / edit column mapping"):
             st.session_state["_force_mapping"] = True
             st.session_state["_import_confirmed"] = None
             st.rerun()
+
+
+def render_custom_provider_save(result: ImportResult) -> None:
+    """Offer to remember an export the platform did not recognize, so the next
+    file with this shape is detected automatically."""
+    if result.detection is None or not result.detection.unknown_schema:
+        return
+    spec = temporary_custom_provider(result.detection.sample)
+    if spec is None:
+        return
+    name = st.text_input("Save this as a club export (optional)", value="",
+                         placeholder="e.g. My Club, Training Export, Third Party CSV",
+                         key="custom_provider_name")
+    if st.button("Remember this export format", disabled=not name.strip()):
+        try:
+            platform().custom_providers.save(spec, name.strip())
+            st.toast(f"Saved club export '{name.strip()}'")
+        except Exception as exc:                      # never block an import
+            st.warning(f"Could not save the export format: {exc}")
 
 
 def normalize_coordinates(df: pd.DataFrame, mode: str) -> pd.DataFrame:

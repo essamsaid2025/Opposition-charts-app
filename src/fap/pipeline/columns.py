@@ -7,12 +7,13 @@ proportionally. The wizard shows the manual mapping UI when confidence is low.
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Sequence
 
 import pandas as pd
+
+from fap.core.naming import normalize_name   # re-exported: the one normalizer
 
 ALIASES: dict[str, tuple[str, ...]] = {
     "x": ("x", "start_x", "from_x", "origin_x", "pos_x", "location_x", "x_start", "x1", "startx",
@@ -62,13 +63,6 @@ ALIASES: dict[str, tuple[str, ...]] = {
 # canonical fields weighted for the overall confidence figure
 _KEY_FIELDS = ("x", "y", "event_type", "player", "team")
 CONFIDENCE_THRESHOLD = 0.85   # below this the wizard opens manual mapping
-
-
-def normalize_name(name: str) -> str:
-    """Comparison key: lowercase, alphanumerics only - so 'Start X', 'start_x',
-    'startX' and 'startx' all compare equal. The one normalizer every caller
-    (platform and Open Play alike) must use."""
-    return re.sub(r"[^a-z0-9]", "", str(name).lower())
 
 
 _norm = normalize_name  # internal shorthand

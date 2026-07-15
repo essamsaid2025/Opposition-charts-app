@@ -7,6 +7,7 @@ import pandas as pd
 from fap.core.exceptions import ProviderError
 from fap.core.plugin import PluginInfo
 from fap.providers.base import DataProvider, RawDataset, provider_registry
+from fap.providers.signature import ProviderSignature
 
 _MAPPING = {
     "type": "event_type", "subtype": "sub_event", "team": "team",
@@ -20,6 +21,15 @@ _MAPPING = {
 class MetricaProvider(DataProvider):
     info = PluginInfo(id="metrica", name="Metrica Sports events (CSV)", category="vendor",
                       description="Metrica Sports sample-data event CSVs (0-1 coordinates).")
+
+    signature = ProviderSignature(
+        supported_extensions=(".csv",),
+        filename_patterns=("metrica",),
+        provider_identifiers=("Start Frame", "Start Time [s]", "End Frame"),
+        optional_columns=("Team", "Type", "Subtype", "Period", "From", "To",
+                          "Start X", "Start Y", "End X", "End Y"),
+        schema_version="metrica-v1",
+    )
 
     def supports(self, filename: str) -> bool:
         return "metrica" in filename.lower() and filename.lower().endswith(".csv")

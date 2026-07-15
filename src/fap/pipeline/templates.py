@@ -3,17 +3,12 @@ source columns. When the same file shape is imported again, the template is
 found and applied automatically."""
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from dataclasses import dataclass
 
+from fap.core.naming import column_signature   # re-exported: the one fingerprint
 from fap.db.engine import Database
-
-
-def column_signature(columns: list[str]) -> str:
-    normalized = sorted(str(c).strip().lower() for c in columns)
-    return hashlib.sha256("|".join(normalized).encode()).hexdigest()[:24]
 
 
 @dataclass(frozen=True, slots=True)
