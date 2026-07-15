@@ -43,9 +43,16 @@ except Exception:
 # importable exactly the way the test-suite bootstrap already does.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
+# A redeploy can re-run this script in a process that still holds the previous
+# deploy's fap modules; the imports below would then bind to superseded code.
+# Refresh the platform first - this is the only thing that may precede it.
+from fap.core.version import ensure_fresh_platform     # noqa: E402
+
+ensure_fresh_platform()
+
 from fap.bootstrap import PlatformContext, init_platform   # noqa: E402
 from fap.core.exceptions import FAPError               # noqa: E402
-from fap.core.version import platform_version          # noqa: E402
+from fap.core.version import platform_version          # noqa: E402  (re-imported post-refresh)
 from fap.pipeline.columns import (                     # noqa: E402
     CONFIDENCE_THRESHOLD,
     alias_candidates as platform_alias_candidates,

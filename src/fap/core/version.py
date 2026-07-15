@@ -18,10 +18,14 @@ from the platform itself - there is no constant for anyone to forget to bump.
 from __future__ import annotations
 
 import hashlib
+import importlib
+import sys
 from pathlib import Path
+from typing import MutableMapping
 
 from fap import __version__
 
+_PACKAGE = "fap"
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent   # .../src/fap
 
 
@@ -51,3 +55,53 @@ def source_fingerprint(root: Path | None = None) -> str:
 def platform_version(root: Path | None = None) -> str:
     """Cache key for platform services: package version + source fingerprint."""
     return f"{__version__}+{source_fingerprint(root)}"
+
+
+# ---------------------------------------------------------------- module freshness
+def platform_module_names(modules: MutableMapping[str, object] | None = None) -> list[str]:
+    """Every fap module currently imported."""
+    modules = sys.modules if modules is None else modules
+    return [n for n in list(modules) if n == _PACKAGE or n.startswith(_PACKAGE + ".")]
+
+
+def platform_is_stale(version: str, modules: MutableMapping[str, object] | None = None) -> bool:
+    """Do the imported fap modules predate the platform now on disk?
+
+    Answered from a marker stamped on the package at import time. No marker and
+    no package means nothing has been imported yet - nothing to be stale.
+    """
+    modules = sys.modules if modules is None else modules
+    package = modules.get(_PACKAGE)
+    if package is None:
+        return False
+    return getattr(package, "__platform_version__", None) != version
+
+
+def ensure_fresh_platform(root: Path | None = None) -> str:
+    """Guarantee the next ``import fap...`` reads the platform that is on disk.
+
+    A host may re-execute the application script inside a process that still
+    holds the *previous* deploy's modules in sys.modules - Streamlit does
+    exactly this. The script then imports a name the loaded module does not
+    have and dies before a single line of platform code runs, so no cache key
+    can save it: ``st.cache_resource`` never gets the chance to be consulted.
+
+    Dropping superseded fap modules makes the interpreter re-read them from
+    disk. Call this once, before importing anything else from fap:
+
+        from fap.core.version import ensure_fresh_platform
+        ensure_fresh_platform()
+        from fap.bootstrap import init_platform     # now guaranteed current
+
+    Safe to call on every rerun: when nothing changed it is one stat per module
+    and no imports are touched. It pairs with the versioned service cache -
+    fresh modules, then services rebuilt against them, both keyed by the same
+    fingerprint.
+    """
+    version = platform_version(root)
+    if platform_is_stale(version):
+        for name in platform_module_names():
+            del sys.modules[name]          # this module included; our frame keeps it alive
+    package = importlib.import_module(_PACKAGE)
+    package.__platform_version__ = version  # type: ignore[attr-defined]
+    return version

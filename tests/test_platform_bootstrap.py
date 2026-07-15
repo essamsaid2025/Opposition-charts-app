@@ -17,14 +17,23 @@ matplotlib.use("Agg")
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+import subprocess
+import textwrap
+import types
+
 import pytest
 
 import app
 from fap.bootstrap import PlatformContext, init_import_service, init_platform
 from fap.core.exceptions import ConfigurationError
 from fap.core.services import ServiceRegistry
-from fap.core.version import platform_version, source_fingerprint
+from fap.core.version import (
+    ensure_fresh_platform, platform_is_stale, platform_module_names,
+    platform_version, source_fingerprint,
+)
 from fap.pipeline.importer import ImportService
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------- version fingerprint
@@ -234,6 +243,87 @@ def test_streamlit_reload_after_implementation_change_rebuilds_services(monkeypa
 
     assert after is not before
     assert after.importer is not before_importer
+
+
+# ---------------------------------------------------------------- module freshness
+def test_platform_module_names_selects_only_the_platform():
+    fake = {"fap": 1, "fap.core": 2, "fap.core.version": 3, "fapzilla": 4, "pandas": 5}
+    assert sorted(platform_module_names(fake)) == ["fap", "fap.core", "fap.core.version"]
+
+
+def test_nothing_imported_means_nothing_stale():
+    assert platform_is_stale("1.0.0+aaaa", {}) is False
+
+
+def test_marker_matching_the_disk_version_is_fresh():
+    fake = {"fap": types.SimpleNamespace(__platform_version__="1.0.0+aaaa")}
+    assert platform_is_stale("1.0.0+aaaa", fake) is False
+
+
+def test_marker_from_a_previous_deploy_is_stale():
+    """The production case: modules loaded by the deploy before this one."""
+    fake = {"fap": types.SimpleNamespace(__platform_version__="1.0.0+old0")}
+    assert platform_is_stale("1.0.0+new1", fake) is True
+
+
+def test_unmarked_modules_are_treated_as_stale():
+    fake = {"fap": types.SimpleNamespace()}
+    assert platform_is_stale("1.0.0+aaaa", fake) is True
+
+
+def test_ensure_fresh_platform_is_a_noop_once_current():
+    """A rerun with no code change must not re-import anything."""
+    version = ensure_fresh_platform()
+    before = sys.modules.get("fap.bootstrap")
+    assert ensure_fresh_platform() == version
+    assert sys.modules.get("fap.bootstrap") is before      # not re-imported
+    assert sys.modules["fap"].__platform_version__ == version
+
+
+def test_stale_modules_are_dropped_so_a_redeploy_recovers_in_process():
+    """The Phase 2B.2.1 outage, reproduced end to end.
+
+    New app.py + the previous deploy's fap still in sys.modules = ImportError
+    before any platform code runs. Runs in a subprocess: a real purge here
+    would swap class identities under the rest of this session.
+    """
+    script = textwrap.dedent(f"""
+        import sys
+        sys.path.insert(0, r"{REPO / 'src'}")
+        from fap.core.version import ensure_fresh_platform
+        ensure_fresh_platform()
+        import fap, fap.bootstrap
+
+        # the loaded modules are now superseded by a new deploy on disk
+        del fap.bootstrap.PlatformContext
+        fap.__platform_version__ = "1.0.0+previousdeploy"
+
+        try:
+            from fap.bootstrap import PlatformContext
+            print("NO_ERROR")
+        except ImportError:
+            print("IMPORTERROR")
+
+        ensure_fresh_platform()                 # what app.py does first
+        from fap.bootstrap import PlatformContext, init_platform
+        print("RECOVERED")
+        print("MARKER_OK", sys.modules["fap"].__platform_version__ != "1.0.0+previousdeploy")
+    """)
+    env = {**os.environ, "FAP_TEST": "1", "MPLBACKEND": "Agg"}
+    out = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                         text=True, env=env, cwd=str(REPO))
+    assert "IMPORTERROR" in out.stdout, f"bug did not reproduce: {out.stdout}{out.stderr}"
+    assert "RECOVERED" in out.stdout, f"refresh did not recover: {out.stdout}{out.stderr}"
+    assert "MARKER_OK True" in out.stdout
+
+
+def test_app_refreshes_the_platform_before_importing_it():
+    """app.py must call ensure_fresh_platform() before any other fap import,
+    or a redeploy binds names from superseded modules."""
+    source = (REPO / "app.py").read_text(encoding="utf-8")
+    refresh = source.index("ensure_fresh_platform()")
+    first_use = source.index("from fap.bootstrap import")
+    assert refresh < first_use
 
 
 def test_cache_invalidation_is_driven_by_the_real_fingerprint(monkeypatch):
