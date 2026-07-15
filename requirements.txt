@@ -4,3 +4,8 @@ matplotlib
 numpy
 openpyxl
 mplsoccer
+# Open Play now imports through the fap platform in src/, which needs these.
+# Kept in sync with the dependency list in pyproject.toml.
+PyYAML
+scipy
+pillow

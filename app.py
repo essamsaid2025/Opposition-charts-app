@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import math
+import sys
 from io import BytesIO
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -36,6 +38,14 @@ try:
     HAS_MPLSOCCER = True
 except Exception:
     HAS_MPLSOCCER = False
+
+# The platform package lives in src/ and is not pip-installed; make `fap`
+# importable exactly the way the test-suite bootstrap already does.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from fap.bootstrap import init_import_service          # noqa: E402
+from fap.core.exceptions import FAPError               # noqa: E402
+from fap.pipeline.importer import ImportResult, ImportService  # noqa: E402
 
 # -----------------------------
 # Page config
@@ -171,13 +181,52 @@ W = PITCH_WIDTH  # shorthand
 # -----------------------------
 # Data helpers (v3 contract preserved)
 # -----------------------------
+COORD_SYSTEM_IDS: Dict[str, str] = {"0-100": "0-100", "120 x 80": "120x80"}
+
+
+@st.cache_resource(show_spinner=False)
+def import_service() -> ImportService:
+    """The platform import engine: provider registry, mapping templates,
+    coordinate normalization, cleaning and validation. Built once per process
+    via the platform composition root - Open Play constructs nothing itself."""
+    return init_import_service(Path(__file__).resolve().parent)
+
+
 def read_uploaded_file(uploaded_file) -> pd.DataFrame:
-    name = uploaded_file.name.lower()
-    if name.endswith(".csv"):
-        return pd.read_csv(uploaded_file)
-    if name.endswith((".xlsx", ".xls")):
-        return pd.read_excel(uploaded_file)
-    raise ValueError("Please upload CSV or Excel file.")
+    """Raw, un-normalized frame from the platform provider registry.
+
+    Contract unchanged (uploaded file -> DataFrame). The direct pd.read_csv /
+    pd.read_excel calls are gone: provider detection and file loading are the
+    platform's job, so every registered format - now including JSON - works
+    here without Open Play knowing about any of them.
+    """
+    name = getattr(uploaded_file, "name", "") or "upload.csv"
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+    data = uploaded_file.read()
+    try:
+        provider = import_service().pick_provider(name)
+    except FAPError as exc:
+        raise ValueError("Please upload a CSV, Excel or JSON file.") from exc
+    return provider.load(BytesIO(data), name).frame
+
+
+def platform_import(filename: str, data: bytes, mapping: Dict[str, str],
+                    coord_mode: str, attack_direction: str) -> ImportResult:
+    """Hand the confirmed Open Play mapping to the platform and let it do the
+    work: provider detection, loading, mapping, coordinate normalization,
+    cleaning, validation and quality scoring.
+
+    Open Play's mapping is {canonical: source}; ImportService wants the inverse.
+    """
+    return import_service().import_file(
+        data, filename,
+        mapping={src: canon for canon, src in mapping.items() if src},
+        coord_system=COORD_SYSTEM_IDS.get(coord_mode, "0-100"),
+        flip_direction=attack_direction.startswith("Team attacks right-to-left"),
+    )
 
 
 def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -1900,7 +1949,8 @@ def run_app():
 
     with st.sidebar:
         st.markdown("### 1) Upload Data")
-        uploaded = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls"])
+        uploaded = st.file_uploader("Upload CSV, Excel or JSON",
+                                    type=["csv", "xlsx", "xls", "json", "jsonl"])
         coord_mode = st.selectbox("Coordinate system", ["0-100", "120 x 80"], index=0)
         attack_direction = st.selectbox("Attacking direction", [
             "Data already left-to-right",
@@ -2063,7 +2113,7 @@ def run_app():
     if uploaded is None:
         st.markdown("""
         <div class='note-box'>
-            Upload a CSV or Excel export from any provider (StatsBomb, Wyscout, Opta,
+            Upload a CSV, Excel or JSON export from any provider (StatsBomb, Wyscout, Opta,
             Hudl, Sportscode or custom tagging). Required fields are <b>event type, x, y</b> —
             provider column names are detected automatically, and a preview lets you map
             anything that isn't matched. No manual renaming needed.
@@ -2074,6 +2124,7 @@ def run_app():
         st.stop()
 
     try:
+        file_bytes = uploaded.getvalue()
         cleaned = clean_columns(read_uploaded_file(uploaded))
     except Exception as e:
         st.error(f"Could not read file: {e}")
@@ -2102,11 +2153,13 @@ def run_app():
         st.error(" | ".join(problems))
         st.stop()
 
+    # The platform owns the import: provider detection, loading, mapping,
+    # coordinate normalization, cleaning, validation and quality scoring all
+    # happen inside ImportService. Open Play only orchestrates, then adds the
+    # derived columns its own charts contract on.
     try:
-        raw = ensure_columns(cleaned)
-        df = normalize_coordinates(raw, coord_mode)
-        df = flip_attacking_direction(df, attack_direction)
-        df = add_derived_columns(df)
+        result = platform_import(uploaded.name, file_bytes, mapping, coord_mode, attack_direction)
+        df = add_derived_columns(result.frame)
     except Exception as e:
         st.error(f"Could not process file: {e}")
         st.stop()

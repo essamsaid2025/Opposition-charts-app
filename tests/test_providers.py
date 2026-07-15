@@ -196,3 +196,72 @@ def test_explicit_provider_choice_overrides_autodetect(importer):
     csv = b"event_type,x,y\npass,10,20\n"
     result = importer.import_file(csv, "anything.csv", provider_id="manual")
     assert result.provider_id == "manual"
+
+
+# ---------------------------------------------------------------- generic json
+def test_json_list_of_objects(importer):
+    data = json.dumps([{"event_type": "pass", "x": 10, "y": 20, "player": "Ada"},
+                       {"event_type": "shot", "x": 90, "y": 50, "player": "Ada"}]).encode()
+    result = importer.import_file(data, "events.json")
+    assert result.provider_id == "generic_json"
+    assert len(result.frame) == 2
+    assert result.frame.loc[0, "event_type"] == "pass"
+
+
+def test_json_nested_event_array_is_found_and_flattened(importer):
+    data = json.dumps({
+        "match": {"id": 7, "competition": "Prem"},
+        "events": [{"type": "pass", "start": {"x": 10, "y": 20}, "player": {"name": "Ada"}},
+                   {"type": "shot", "start": {"x": 90, "y": 50}, "player": {"name": "Bo"}}],
+    }).encode()
+    raw = provider_registry.create("generic_json").load(BytesIO(data), "feed.json")
+    # nested objects flattened with parent_child names, unknown fields preserved
+    assert "start_x" in raw.frame.columns and "player_name" in raw.frame.columns
+    assert raw.meta["record_path"] == "events"
+    assert list(raw.frame["player_name"]) == ["Ada", "Bo"]
+
+
+def test_json_dictionary_root_of_records():
+    data = json.dumps({"e1": {"type": "pass", "x": 1, "y": 2},
+                       "e2": {"type": "shot", "x": 3, "y": 4}}).encode()
+    raw = provider_registry.create("generic_json").load(BytesIO(data), "d.json")
+    assert len(raw.frame) == 2 and set(raw.frame["type"]) == {"pass", "shot"}
+
+
+def test_json_single_object_root_is_one_row():
+    data = json.dumps({"type": "pass", "x": 1, "y": 2}).encode()
+    raw = provider_registry.create("generic_json").load(BytesIO(data), "one.json")
+    assert len(raw.frame) == 1
+
+
+def test_json_lines_supported():
+    data = b'{"event_type": "pass", "x": 1, "y": 2}\n{"event_type": "shot", "x": 3, "y": 4}\n'
+    raw = provider_registry.create("generic_json").load(BytesIO(data), "e.jsonl")
+    assert len(raw.frame) == 2
+
+
+def test_json_explicit_record_path_option():
+    data = json.dumps({"a": {"rows": [{"x": 1}, {"x": 2}]},
+                       "decoys": [{"x": 9}, {"x": 9}, {"x": 9}]}).encode()
+    raw = provider_registry.create("generic_json").load(
+        BytesIO(data), "p.json", options={"record_path": "a.rows"})
+    assert len(raw.frame) == 2 and list(raw.frame["x"]) == [1, 2]
+
+
+def test_json_invalid_raises_provider_error():
+    from fap.core.exceptions import ProviderError
+    with pytest.raises(ProviderError):
+        provider_registry.create("generic_json").load(BytesIO(b"{nope"), "bad.json")
+
+
+def test_generic_json_never_steals_vendor_json(importer):
+    """Vendor plugins outrank the category="file" catch-all."""
+    data = json.dumps(SB_EVENTS).encode()
+    assert importer.pick_provider("statsbomb_events.json").info.id == "statsbomb"
+    assert importer.pick_provider("wyscout_events.json").info.id == "wyscout"
+    assert importer.pick_provider("plain_events.json").info.id == "generic_json"
+    assert importer.import_file(data, "statsbomb_events.json").provider_id == "statsbomb"
+
+
+def test_generic_json_registered():
+    assert "generic_json" in set(provider_registry.ids())

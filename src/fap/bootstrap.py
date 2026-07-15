@@ -53,6 +53,23 @@ class AppContext:
     export_engine: ExportEngine
 
 
+def init_import_service(root: Path | None = None, *, settings: AppSettings | None = None,
+                        cache: CacheManager | None = None,
+                        db: Database | None = None) -> ImportService:
+    """The import engine and only the collaborators it needs.
+
+    Split out of init_app so a client that just imports files (the Open Play
+    module) gets provider discovery + ImportService without constructing auth,
+    themes or the visual engine - and without init_app's bootstrap-admin side
+    effect. init_app delegates here, so the wiring lives in exactly one place.
+    """
+    settings = settings or load_settings(root)
+    load_builtin_providers()  # idempotent - registries dedupe by class identity
+    cache = cache if cache is not None else CacheManager(settings.cache)
+    db = db if db is not None else Database(settings.database.path)
+    return ImportService(cache, TemplateRepository(db))
+
+
 def init_app(root: Path | None = None) -> AppContext:
     settings = load_settings(root)
     configure_logging(settings.logging)
@@ -73,7 +90,7 @@ def init_app(root: Path | None = None) -> AppContext:
         ensure_bootstrap_admin(authenticator)
     projects = ProjectService(ProjectRepository(db), events)
     workspaces = WorkspaceService(WorkspaceRepository(db), events)
-    importer = ImportService(cache, TemplateRepository(db))
+    importer = init_import_service(settings=settings, cache=cache, db=db)
 
     return AppContext(
         settings=settings, state=StateManager(), events=events, cache=cache, db=db,

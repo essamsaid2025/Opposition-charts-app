@@ -2,12 +2,16 @@
 means adding a file here + one line in the factory - nothing else changes."""
 from __future__ import annotations
 
+import hashlib
 import pickle
+import re
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+
+_UNSAFE_IN_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class CacheBackend(ABC):
@@ -61,7 +65,13 @@ class DiskCache(CacheBackend):
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        return self._dir / f"{key}.pkl"
+        """Cache keys are namespaced ("import::<hash>", "render::<hash>"), but ':'
+        is illegal in a Windows filename and '/' would escape the cache dir, so a
+        key can never be used as a filename verbatim. Map it to a safe stem and
+        keep it collision-free with a digest of the original key."""
+        stem = _UNSAFE_IN_FILENAME.sub("_", key)[:80]
+        digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+        return self._dir / f"{stem}.{digest}.pkl"
 
     def get(self, key: str) -> Any | None:
         path = self._path(key)
