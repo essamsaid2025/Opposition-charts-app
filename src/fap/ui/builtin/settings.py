@@ -16,7 +16,7 @@ _DEFAULTS = {"language": "English", "units": "Metric", "pitch": "100 x 68",
 class SettingsPage(Page):
     info = PluginInfo(id="settings", name="Settings", category="page")
     section = "Admin"
-    icon = "⚙️"
+    icon = "settings"
     order = 95
     min_role = Role.READ_ONLY           # personal settings for everyone
 

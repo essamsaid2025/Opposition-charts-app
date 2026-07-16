@@ -2409,7 +2409,8 @@ def main() -> None:
     replacement - which keeps backward compatibility.
     """
     from fap.ui.app_shell import render_shell
-    render_shell(open_play_renderer=run_app)
+    render_shell(open_play_renderer=run_app,
+                 platform_getter=platform, wm_getter=workspace_manager)
 
 
 import os as _os

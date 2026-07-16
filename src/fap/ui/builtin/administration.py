@@ -13,7 +13,7 @@ from fap.ui.page import Page, page_registry
 class AdministrationPage(Page):
     info = PluginInfo(id="administration", name="Administration", category="page")
     section = "Admin"
-    icon = "🛠️"
+    icon = "admin"
     order = 90
     min_role = Role.CLUB_ADMIN          # hidden from analysts / read-only
 

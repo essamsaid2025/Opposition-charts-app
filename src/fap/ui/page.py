@@ -30,7 +30,7 @@ class Page(Plugin):
     """One screen. ``min_role`` gates visibility; ``section``/``order`` place it
     in the navigation. ``render`` does the Streamlit work (heavy imports here)."""
     section: str = "Workspace"
-    icon: str = "•"
+    icon: str = ""
     order: int = 100
     min_role: Role = Role.READ_ONLY
 

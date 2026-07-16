@@ -150,3 +150,51 @@ def test_search_delegates_to_workspace_manager(tmp_path):
     hits = ctx.search("rival")
     assert any(h.type == "dataset" for h in hits)
     assert ctx.search("nothing-matches-xyz") == []
+
+
+# ---------------------------------------------------------------- Phase 5.1: theme & branding integration
+def test_shell_uses_theme_and_branding_not_import_app():
+    src = pathlib.Path("src/fap/ui/app_shell.py").read_text(encoding="utf-8")
+    # the shell must reuse the theme package, not recreate UI
+    assert "from fap import theme" in src
+    assert "theme.apply(" in src
+    # and it must NOT import app (circular): platform/wm are injected instead
+    for line in src.splitlines():
+        stripped = line.strip()
+        assert not (stripped == "import app" or stripped.startswith("from app "))
+    assert "platform_getter" in src and "wm_getter" in src
+
+
+def test_render_shell_accepts_injected_getters():
+    import inspect
+    from fap.ui.app_shell import render_shell
+    params = inspect.signature(render_shell).parameters
+    assert "platform_getter" in params and "wm_getter" in params
+    assert params["platform_getter"].kind == inspect.Parameter.KEYWORD_ONLY
+
+
+def test_every_page_icon_is_a_registry_name_no_emoji():
+    from fap.theme import has_icon
+    for page in all_pages():
+        assert page.icon == "" or has_icon(page.icon), f"{page.info.id}: {page.icon!r}"
+
+
+def test_no_emoji_in_shell_or_pages_source():
+    def has_emoji(text: str) -> bool:
+        return any(ord(ch) >= 0x1F000 or 0x2600 <= ord(ch) <= 0x27BF or ord(ch) in (0x2699, 0x26BD)
+                   for ch in text)
+    files = [pathlib.Path("src/fap/ui/app_shell.py")]
+    files += list(pathlib.Path("src/fap/ui/builtin").glob("*.py"))
+    for f in files:
+        assert not has_emoji(f.read_text(encoding="utf-8")), f"emoji in {f.name}"
+
+
+def test_main_wires_getters_into_render_shell():
+    src = pathlib.Path("app.py").read_text(encoding="utf-8")
+    assert "platform_getter=platform" in src and "wm_getter=workspace_manager" in src
+
+
+def test_shell_status_bar_and_header_use_components():
+    src = pathlib.Path("src/fap/ui/app_shell.py").read_text(encoding="utf-8")
+    assert "C.footer_html" in src and "C.breadcrumb_html" in src and "C.badge_html" in src
+    assert "icon(" in src            # icons drawn from the registry

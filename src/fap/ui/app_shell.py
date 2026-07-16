@@ -1,14 +1,15 @@
-"""The professional application shell (Phase 3C).
+"""The professional application shell (Phase 3C, Phase 5.1 integration).
 
 Top header · left navigation · main content · status bar. The shell owns the
-chrome and dispatches to the active Page; pages own their content. It wraps the
-existing platform (identity, workspaces, importer) and never touches the
-visualization engine - the Open Play screen is just another page whose renderer
-app.py injects.
+chrome and the professional theme (fap.theme); it dispatches to the active Page
+and never touches the visualization engine - the Open Play screen is just
+another page whose renderer app.py injects.
 
-Only ``render_shell`` and the private ``_render_*`` helpers touch Streamlit; the
-navigation model (fap.ui.page) is pure and unit-tested. This is a NEW shell,
-separate from the legacy fap.ui.shell (which is left untouched).
+The platform accessors are injected by app.py (no ``import app`` here, which
+would be circular because Streamlit runs app.py as ``__main__``). Only
+``render_shell`` and the ``_render_*`` helpers touch Streamlit; the navigation
+model (fap.ui.page) and the theme (fap.theme) are pure and unit-tested. This is
+a NEW shell, separate from the legacy fap.ui.shell (left untouched).
 """
 from __future__ import annotations
 
@@ -17,9 +18,12 @@ from typing import Any, Callable
 
 import streamlit as st
 
+from fap import theme
 from fap.core.version import platform_version
 from fap.identity import logout, require_login
 from fap.identity.models import User
+from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import (
     default_page_id, get_page, load_builtin_pages, register_renderer,
     visible_by_section, visible_pages,
@@ -28,6 +32,10 @@ from fap.ui.page import (
 _ACTIVE = "_active_page"
 _WORKSPACE = "_active_workspace"
 _PROJECT = "_active_project"
+
+# injected by app.py so the shell never imports app (circular)
+_platform_getter: "Callable[[], Any] | None" = None
+_wm_getter: "Callable[[], Any] | None" = None
 
 
 @dataclass(slots=True)
@@ -59,23 +67,34 @@ class ShellContext:
 
 
 # ---------------------------------------------------------------- entry point
-def render_shell(open_play_renderer: Callable[[], None] | None = None) -> None:
-    """Render the whole application: gate on identity, then header + nav +
-    active page + status bar. ``open_play_renderer`` is app.py's run_app,
-    injected as the Opponent Analysis page body (no circular import)."""
+def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
+                 platform_getter: "Callable[[], Any] | None" = None,
+                 wm_getter: "Callable[[], Any] | None" = None) -> None:
+    """Render the whole application: apply the theme, gate on identity, then
+    header + nav + active page + status bar. ``open_play_renderer`` is app.py's
+    run_app, injected as the Opponent Analysis page body; the platform/wm
+    getters are injected so the shell never imports app."""
+    global _platform_getter, _wm_getter
     if open_play_renderer is not None:
         register_renderer("opponent_analysis", open_play_renderer)
+    if platform_getter is not None:
+        _platform_getter = platform_getter
+    if wm_getter is not None:
+        _wm_getter = wm_getter
+
+    brand = _branding()
+    theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
 
     user = require_login()
     st.session_state["_in_shell"] = True
     load_builtin_pages()
 
-    platform, wm = _platform_and_wm()
+    platform, wm = _resolve_services()
     active = _resolve_active_page(user)
     ctx = ShellContext(user=user, platform=platform, wm=wm, active_page_id=active)
 
-    _render_header(ctx)
-    _render_sidebar(ctx)
+    _render_header(ctx, brand)
+    _render_sidebar(ctx, brand)
 
     page = get_page(active)
     if page is not None:
@@ -87,12 +106,17 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None) -> None:
 
 
 # ---------------------------------------------------------------- helpers
-def _platform_and_wm() -> tuple[Any, Any]:
+def _branding() -> theme.Branding:
     try:
-        import app                       # app.py owns the cached platform accessor
-        return app.platform(), app.workspace_manager()
+        return theme.load_branding(dict(st.secrets.get("branding", {}) or {}))
     except Exception:
-        return None, None
+        return theme.DEFAULT_BRANDING
+
+
+def _resolve_services() -> tuple[Any, Any]:
+    platform = _platform_getter() if _platform_getter else None
+    wm = _wm_getter() if _wm_getter else None
+    return platform, wm
 
 
 def _resolve_active_page(user: User) -> str:
@@ -109,31 +133,45 @@ def _org_context() -> dict[str, str]:
     return ctx if isinstance(ctx, dict) else {}
 
 
-def _render_header(ctx: ShellContext) -> None:
+def _active_page_meta(page_id: str):
+    return get_page(page_id)
+
+
+def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
     org = _org_context()
+    page = _active_page_meta(ctx.active_page_id)
+    crumbs = [brand.club_name if org.get("club") else "", org.get("season", ""),
+              org.get("competition", ""), org.get("opponent", "")]
+    crumbs = [c for c in crumbs if c] or [brand.organization_name]
+    if page is not None:
+        crumbs.append(page.info.name)
+
+    notifications = st.session_state.get("_notifications", [])
     left, right = st.columns([3, 1])
     with left:
-        crumbs = " › ".join(v for v in (
-            org.get("club", ""), org.get("season", ""), org.get("competition", ""),
-            org.get("opponent", "")) if v) or "No club selected"
-        st.markdown(f"#### {crumbs}")
-        project = st.session_state.get("_active_project_name", "")
-        if project:
-            st.caption(f"Project: {project}")
+        title = (f'<div class="fap-brand">{icon(page.icon, 20) if page else ""} '
+                 f'<b>{brand.platform_name}</b></div>')
+        st.markdown(title + C.breadcrumb_html(crumbs), unsafe_allow_html=True)
     with right:
-        notifications = st.session_state.get("_notifications", [])
-        st.markdown(f"🔔 {len(notifications)}  ·  **{ctx.user.name}**  \n{ctx.user.role_label}")
+        bell = f'{icon("bell", 16)} {len(notifications)}'
+        st.markdown(
+            f'<div class="fap-topbar">{bell} · {icon("user", 16)} '
+            f'<b>{ctx.user.name}</b> · {C.badge_html(ctx.user.role_label, "info")}</div>',
+            unsafe_allow_html=True)
     st.divider()
 
 
-def _render_sidebar(ctx: ShellContext) -> None:
+def _render_sidebar(ctx: ShellContext, brand: theme.Branding) -> None:
     with st.sidebar:
-        st.markdown("### ⚽ FAP Platform")
+        st.markdown(f'<div class="fap-brand">{icon("dashboard", 22)} '
+                    f'<b>{brand.platform_name}</b></div>', unsafe_allow_html=True)
+
         if ctx.wm is not None:
             _workspace_and_project_selectors(ctx)
 
-        query = st.text_input("🔎 Search", key="_global_search",
-                              placeholder="players, teams, datasets, projects…")
+        query = st.text_input("Search", key="_global_search",
+                              placeholder="players, teams, datasets, projects…",
+                              label_visibility="collapsed")
         if query.strip():
             _render_search_results(ctx, query)
 
@@ -177,23 +215,29 @@ def _render_search_results(ctx: ShellContext, query: str) -> None:
         return
     st.caption(f"{len(hits)} result(s)")
     for hit in hits[:12]:
-        st.write(f"• **{hit.name}** · _{hit.type}_" + (f" · {hit.context}" if hit.context else ""))
+        st.write(f"**{hit.name}** · _{hit.type}_" + (f" · {hit.context}" if hit.context else ""))
 
 
 def _render_navigation(ctx: ShellContext) -> None:
     for section, pages in visible_by_section(ctx.user.role).items():
-        st.caption(section.upper())
+        st.markdown(f'<div class="fap-nav-section">{section}</div>', unsafe_allow_html=True)
         for page in pages:
-            if st.button(f"{page.icon}  {page.info.name}", key=f"nav_{page.info.id}",
+            active = page.info.id == ctx.active_page_id
+            # Streamlit buttons render text only; the active page is highlighted
+            # via the primary style and the registry icon appears in the header.
+            if st.button(page.info.name, key=f"nav_{page.info.id}",
                          use_container_width=True,
-                         type="primary" if page.info.id == ctx.active_page_id else "secondary"):
+                         type="primary" if active else "secondary"):
                 ctx.goto(page.info.id)
 
 
 def _render_profile(ctx: ShellContext) -> None:
-    with st.expander(f"👤 {ctx.user.name}", expanded=False):
-        st.caption(f"{ctx.user.email}\n\n**{ctx.user.role_label}**"
-                   + (f" · {ctx.user.organization}" if ctx.user.organization else ""))
+    with st.expander("Account", expanded=False):
+        st.markdown(
+            f'{icon("user", 16)} **{ctx.user.name}**  \n{ctx.user.email}  \n'
+            f'{C.badge_html(ctx.user.role_label, "info")}'
+            + (f' · {ctx.user.organization}' if ctx.user.organization else ''),
+            unsafe_allow_html=True)
         if st.button("Settings", key="profile_settings", use_container_width=True):
             ctx.goto("settings")
         if st.button("Sign out", key="profile_signout", use_container_width=True):
@@ -202,7 +246,6 @@ def _render_profile(ctx: ShellContext) -> None:
 
 
 def _render_status_bar(ctx: ShellContext) -> None:
-    st.divider()
     provider = st.session_state.get("_status_provider", "—")
     dataset = st.session_state.get("_status_dataset", "—")
     ws_name = "—"
@@ -212,13 +255,13 @@ def _render_status_bar(ctx: ShellContext) -> None:
                             if w.id == ctx.workspace_id), "—")
     except Exception:
         pass
-    cols = st.columns(6)
-    cols[0].caption(f"Provider: **{provider}**")
-    cols[1].caption(f"Dataset: **{dataset}**")
-    cols[2].caption(f"Workspace: **{ws_name}**")
-    cols[3].caption(f"User: **{ctx.user.name}**")
-    cols[4].caption(f"Version: **{_short_version()}**")
-    cols[5].caption("Connection: **online** 🟢")
+    connection = C.badge_html("online", "success", icon_name="check")
+    st.markdown(
+        C.footer_html([
+            ("Provider", provider), ("Dataset", dataset), ("Workspace", ws_name),
+            ("User", ctx.user.name), ("Version", _short_version()),
+        ]).replace("</div>", f"<span>{connection}</span></div>"),
+        unsafe_allow_html=True)
 
 
 def _short_version() -> str:

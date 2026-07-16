@@ -26,21 +26,21 @@ class _Placeholder(Page):
 @page_registry.register
 class MatchAnalysisPage(_Placeholder):
     info = PluginInfo(id="match_analysis", name="Match Analysis", category="page")
-    section = "Analysis"; icon = "📊"; order = 10
+    section = "Analysis"; icon = "match"; order = 10
     _blurb = "Single-match breakdowns will build on the Open Play engine."
 
 
 @page_registry.register
 class SetPieceAnalysisPage(_Placeholder):
     info = PluginInfo(id="set_piece_analysis", name="Set Piece Analysis", category="page")
-    section = "Analysis"; icon = "🚩"; order = 20
+    section = "Analysis"; icon = "setpiece"; order = 20
     _blurb = "Corners, free kicks and throw-ins."
 
 
 @page_registry.register
 class ScoutingPage(_Placeholder):
     info = PluginInfo(id="scouting", name="Scouting", category="page")
-    section = "Analysis"; icon = "🔭"; order = 30
+    section = "Analysis"; icon = "scouting"; order = 30
     min_role = Role.SCOUT              # scouts and above
     _blurb = "Opposition and recruitment scouting."
 
@@ -48,12 +48,12 @@ class ScoutingPage(_Placeholder):
 @page_registry.register
 class PlayersPage(_Placeholder):
     info = PluginInfo(id="players", name="Players", category="page")
-    section = "Squad"; icon = "👟"; order = 10
+    section = "Squad"; icon = "players"; order = 10
     _blurb = "Per-player profiles across datasets."
 
 
 @page_registry.register
 class TeamsPage(_Placeholder):
     info = PluginInfo(id="teams", name="Teams", category="page")
-    section = "Squad"; icon = "👥"; order = 20
+    section = "Squad"; icon = "teams"; order = 20
     _blurb = "Team-level aggregates and comparisons."

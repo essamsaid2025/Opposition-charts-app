@@ -14,7 +14,7 @@ from fap.workspaces.models import PRESET_KINDS
 class TemplatesPage(Page):
     info = PluginInfo(id="templates", name="Templates", category="page")
     section = "Workspace"
-    icon = "🧩"
+    icon = "templates"
     order = 40
     min_role = Role.READ_ONLY
 

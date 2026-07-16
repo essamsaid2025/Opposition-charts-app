@@ -13,7 +13,7 @@ from fap.ui.page import Page, page_registry
 class ProjectsPage(Page):
     info = PluginInfo(id="projects", name="Projects", category="page")
     section = "Workspace"
-    icon = "📁"
+    icon = "projects"
     order = 10
     min_role = Role.READ_ONLY
 

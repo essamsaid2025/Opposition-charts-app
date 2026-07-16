@@ -12,7 +12,7 @@ from fap.ui.page import Page, page_registry
 class DashboardPage(Page):
     info = PluginInfo(id="dashboard", name="Dashboard", category="page")
     section = "Overview"
-    icon = "🏠"
+    icon = "dashboard"
     order = 0
     min_role = Role.READ_ONLY
 

@@ -17,7 +17,7 @@ from fap.ui.page import Page, get_renderer, page_registry
 class OpponentAnalysisPage(Page):
     info = PluginInfo(id="opponent_analysis", name="Opponent Analysis", category="page")
     section = "Analysis"
-    icon = "🎯"
+    icon = "analysis"
     order = 0
     min_role = Role.READ_ONLY
 

@@ -134,6 +134,11 @@ def _components() -> str:
   margin-top: var(--fap-space-4);
 }
 .fap-icon { vertical-align: middle; flex: 0 0 auto; }
+.fap-brand { display: flex; align-items: center; gap: var(--fap-space-2);
+  font-size: 1.05rem; font-weight: 750; color: var(--fap-text); margin-bottom: 4px; }
+.fap-topbar { display: flex; align-items: center; justify-content: flex-end;
+  gap: var(--fap-space-2); color: var(--fap-text-muted); font-size: 0.82rem; }
+.fap-section { display: flex; align-items: center; gap: var(--fap-space-2); }
 """
 
 
