@@ -28,11 +28,30 @@ from fap.pipeline.pipeline import DataPipeline
 from fap.pipeline.quality import QualityScore, score
 from fap.pipeline.templates import TemplateRepository
 from fap.pipeline.validation import ValidationEngine, ValidationReport
-from fap.providers.base import DataProvider, provider_registry
+from fap.providers.base import DataProvider, RawDataset, provider_registry
 from fap.providers.custom import CUSTOM_PREFIX, CustomProviderRepository, temporary_custom_provider
 from fap.providers.intelligence import DetectionReport, ProviderIntelligence
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class FilePreview:
+    """The provider decision and the raw frame it produces, without importing.
+
+    This is the front stage of ``import_file`` made observable: a caller that
+    needs to look at a file before committing to the full import (the mapping
+    preview, the wizard) consumes this instead of resolving a provider itself.
+    Because it comes from the same ``_detect_and_resolve`` the import uses, the
+    provider shown in the preview is the provider the import will use - there is
+    no second provider-selection path to drift out of sync.
+    """
+    provider_id: str
+    provider_name: str
+    frame: pd.DataFrame                       # raw, un-normalized (provider output)
+    raw: RawDataset
+    detection: DetectionReport | None = None
+    template_used: str | None = None
 
 
 @dataclass(slots=True)
@@ -93,6 +112,30 @@ class ImportService:
                 intelligence = ProviderIntelligence(extra_signatures=extra)
         return intelligence.detect(data, filename)
 
+    def _detect_and_resolve(self, data: bytes, filename: str,
+                            provider_id: str | None) -> tuple[DataProvider, str, DetectionReport | None]:
+        """The one provider-resolution path. Every consumer - import_file,
+        inspect, the wizard, Open Play's preview - resolves a provider here and
+        nowhere else, so the file is never recognized two different ways."""
+        if provider_id:
+            return self.pick_provider(filename, provider_id), provider_id, None
+        detection = self.detect_provider(data, filename)
+        provider, reported_id = self._resolve_provider(detection, filename)
+        return provider, reported_id, detection
+
+    def inspect(self, data: bytes, filename: str, *, provider_id: str | None = None,
+                options: dict[str, Any] | None = None) -> FilePreview:
+        """Resolve the provider and load the raw frame - the work ``import_file``
+        does before it normalizes. Lets a caller see the provider decision and
+        the raw columns (for a mapping preview) using the exact provider the
+        import will use, without running or duplicating the pipeline."""
+        provider, reported_id, detection = self._detect_and_resolve(data, filename, provider_id)
+        raw = provider.load(BytesIO(data), filename, options=options)
+        _detected, template_used = self.detect(raw.frame)
+        return FilePreview(provider_id=reported_id, provider_name=provider.info.name,
+                           frame=raw.frame, raw=raw, detection=detection,
+                           template_used=template_used)
+
     def _resolve_provider(self, report: DetectionReport,
                           filename: str) -> tuple[DataProvider, str]:
         """Detected provider, else the historical filename-based choice.
@@ -127,12 +170,7 @@ class ImportService:
                     mapping: dict[str, str] | None = None, coord_system: str | None = None,
                     flip_direction: bool = False, options: dict[str, Any] | None = None,
                     use_cache: bool = True) -> ImportResult:
-        detection: DetectionReport | None = None
-        if provider_id:
-            provider, reported_id = self.pick_provider(filename, provider_id), provider_id
-        else:
-            detection = self.detect_provider(data, filename)
-            provider, reported_id = self._resolve_provider(detection, filename)
+        provider, reported_id, detection = self._detect_and_resolve(data, filename, provider_id)
         cache_key = self._cache_key(data, reported_id, mapping, coord_system,
                                     flip_direction, options)
         if use_cache:

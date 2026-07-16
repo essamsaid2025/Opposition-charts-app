@@ -283,3 +283,60 @@ def test_saved_template_stores_platform_canonical_names(tmp_path, monkeypatch):
     assert stored.name == "Third Party CSV"
     assert stored.mapping == {"a": "event_type", "b": "x", "c": "y", "d": "end_x", "e": "end_y"}
     assert stored.provider_id == "generic_csv"
+
+
+# ------------------------------------------------ Phase 2B (preview/import unify)
+# A StatsBomb export a club uploads under a neutral name. Before the fix the
+# preview loaded it as generic JSON (columns `location`, `type_name`) and the
+# mapping dialog opened; the import meanwhile loaded it as StatsBomb. The two
+# paths must now resolve the SAME provider.
+SB_NEUTRAL = json.dumps([{
+    "type": {"name": "Pass"}, "team": {"name": "Barca"},
+    "player": {"name": f"P{i}"}, "minute": i, "second": 1, "period": 1,
+    "location": [40.0 + i, 30.0 + i],
+    "pass": {"end_location": [60.0 + i, 50.0], "statsbomb_xg": 0.1},
+} for i in range(20)]).encode()
+
+
+def test_preview_and_import_resolve_the_same_provider():
+    """The core Phase 2B fix: one provider-resolution path for both."""
+    svc = app.import_service()
+    preview = svc.inspect(SB_NEUTRAL, "events.json")
+    result = svc.import_file(SB_NEUTRAL, "events.json")
+    assert preview.provider_id == result.provider_id == "statsbomb"
+
+
+def test_read_uploaded_file_uses_intelligent_detection_not_filename():
+    """A renamed StatsBomb file yields x/y in the preview frame, not `location`."""
+    frame = app.clean_columns(app.read_uploaded_file(_upload(SB_NEUTRAL, "events.json")))
+    assert "x" in frame.columns and "y" in frame.columns
+    assert "location" not in frame.columns
+
+
+def test_renamed_vendor_file_imports_without_the_mapping_dialog():
+    """The exact UI symptom: no unresolved fields, confidence above threshold."""
+    from fap.pipeline.columns import CONFIDENCE_THRESHOLD
+    raw = app.clean_columns(app.read_uploaded_file(_upload(SB_NEUTRAL, "events.json")))
+    mapping, unresolved = app.resolve_column_mapping(raw)
+    assert unresolved == []
+    assert app.mapping_confidence(raw) >= CONFIDENCE_THRESHOLD
+
+
+def test_inspect_frame_matches_the_provider_the_import_loads():
+    """inspect's raw frame is exactly what the resolved provider produced."""
+    svc = app.import_service()
+    preview = svc.inspect(SB_NEUTRAL, "events.json")
+    from fap.providers.base import provider_registry
+    direct = provider_registry.create("statsbomb").load(io.BytesIO(SB_NEUTRAL), "events.json")
+    assert list(preview.frame.columns) == list(direct.frame.columns)
+    assert len(preview.frame) == len(direct.frame)
+
+
+def test_generic_file_preview_still_falls_back_identically():
+    """A file no signature recognizes resolves to the same generic provider in
+    both paths - backward compatibility for plain CSV/Excel/JSON."""
+    svc = app.import_service()
+    csv = b"foo,bar,baz\n1,2,3\n"
+    assert svc.inspect(csv, "mystery.csv").provider_id == "generic_csv"
+    plain = json.dumps([{"a": 1, "b": 2}]).encode()
+    assert svc.inspect(plain, "plain.json").provider_id == "generic_json"

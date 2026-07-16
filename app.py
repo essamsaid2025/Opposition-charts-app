@@ -226,12 +226,14 @@ def import_service() -> ImportService:
 
 
 def read_uploaded_file(uploaded_file) -> pd.DataFrame:
-    """Raw, un-normalized frame from the platform provider registry.
+    """Raw, un-normalized frame for the mapping preview.
 
-    Contract unchanged (uploaded file -> DataFrame). The direct pd.read_csv /
-    pd.read_excel calls are gone: provider detection and file loading are the
-    platform's job, so every registered format - now including JSON - works
-    here without Open Play knowing about any of them.
+    This is only a Streamlit-widget adapter now: it turns the uploaded file into
+    bytes and hands them to ``ImportService.inspect``. Provider detection and
+    file loading belong to the platform, and - crucially - inspect resolves the
+    provider through the SAME path ``import_file`` uses, so the preview sees the
+    exact provider the import will use (e.g. a StatsBomb export named
+    ``events.json`` is recognized as StatsBomb here, not as generic JSON).
     """
     name = getattr(uploaded_file, "name", "") or "upload.csv"
     try:
@@ -240,10 +242,9 @@ def read_uploaded_file(uploaded_file) -> pd.DataFrame:
         pass
     data = uploaded_file.read()
     try:
-        provider = import_service().pick_provider(name)
+        return import_service().inspect(data, name).frame
     except FAPError as exc:
         raise ValueError("Please upload a CSV, Excel or JSON file.") from exc
-    return provider.load(BytesIO(data), name).frame
 
 
 def platform_import(filename: str, data: bytes, mapping: Dict[str, str],
