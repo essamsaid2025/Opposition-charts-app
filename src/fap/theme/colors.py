@@ -62,14 +62,16 @@ class Palette:
         )
 
 
-# A professional, brand-neutral default (modern SaaS indigo/slate). No club is
-# hard-coded; swap these via configuration or the assets folder.
+# FC Masar / Right To Dream identity: executive, minimal - deep charcoal
+# neutrals with the club's amber-orange as the single brand accent. These are
+# the configurable DEFAULTS (overridable via [branding] config), not hard-coded
+# in any page or stylesheet.
 DEFAULT_PALETTE = Palette(
-    primary="#3B5BDB",
-    primary_hover="#324CC0",
+    primary="#E07B2B",          # FC Masar / RTD amber-orange
+    primary_hover="#C76A22",
     on_primary="#FFFFFF",
-    secondary="#0B7285",
-    accent="#7048E8",
+    secondary="#16181D",        # FC Masar shield black
+    accent="#F2A24E",           # Right To Dream lighter orange
     success="#2F9E44",
     warning="#E8590C",
     danger="#E03131",

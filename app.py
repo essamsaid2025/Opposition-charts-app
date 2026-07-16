@@ -86,9 +86,24 @@ from fap.openplay.config import (                              # noqa: E402
 # -----------------------------
 # Page config
 # -----------------------------
+# Page title + favicon come from the configured branding (FC Masar by default).
+def _page_config_branding() -> tuple[str, object]:
+    try:
+        from fap import theme
+        try:
+            cfg = dict(st.secrets.get("branding", {}) or {})
+        except Exception:
+            cfg = {}
+        brand = theme.load_branding(cfg)
+        return brand.platform_name, theme.require_asset(brand.favicon)  # Path; fails loud if missing
+    except Exception:
+        return "Football Analysis Platform", "⚽"
+
+
+_page_title, _page_icon = _page_config_branding()
 st.set_page_config(
-    page_title="Opponent Open Play Analysis",
-    page_icon="⚽",
+    page_title=_page_title,
+    page_icon=str(_page_icon),
     layout="wide",
     initial_sidebar_state="expanded",
 )

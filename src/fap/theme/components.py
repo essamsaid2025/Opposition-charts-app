@@ -8,9 +8,20 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence
 
+from fap.theme.branding import logo_data_uri
 from fap.theme.icons import icon
 
 _BADGE_KINDS = {"success", "warning", "danger", "info", "neutral"}
+
+
+def logo_html(path: str, *, height: int = 28, alt: str = "", cls: str = "fap-logo") -> str:
+    """An inline <img> for a brand logo, embedded as a data URI. Raises loudly
+    (FileNotFoundError) if the asset is missing - callers surface that visibly
+    rather than silently rendering generic branding."""
+    uri = logo_data_uri(path)
+    alt_attr = alt or "logo"
+    return (f'<img src="{uri}" alt="{alt_attr}" class="{cls}" '
+            f'style="height:{height}px;width:auto;" />')
 
 
 def kpi_card_html(label: str, value: str, *, delta: str | None = None,

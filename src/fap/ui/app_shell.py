@@ -85,6 +85,11 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     brand = _branding()
     theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
 
+    # Login page: not signed in -> show both brand logos centered above the
+    # sign-in controls (dev mode short-circuits current_user, so this is skipped).
+    from fap.identity import current_user
+    if current_user() is None:
+        _render_login_branding(brand)
     user = require_login()
     st.session_state["_in_shell"] = True
     load_builtin_pages()
@@ -109,8 +114,31 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
 def _branding() -> theme.Branding:
     try:
         return theme.load_branding(dict(st.secrets.get("branding", {}) or {}))
+    except FileNotFoundError:
+        raise                                  # missing asset must fail loudly
     except Exception:
         return theme.DEFAULT_BRANDING
+
+
+def _logo_pair_html(brand: theme.Branding, height: int) -> str:
+    """FC Masar × Right To Dream, side by side. Raises loudly on a missing asset
+    (never silently falls back to generic branding)."""
+    club = C.logo_html(brand.primary_logo, height=height, alt=brand.club_name)
+    org = C.logo_html(brand.secondary_logo, height=height, alt=brand.organization_name)
+    return f'<span class="fap-logos">{club}<span class="sep">·</span>{org}</span>'
+
+
+def _render_login_branding(brand: theme.Branding) -> None:
+    try:
+        logos = _logo_pair_html(brand, height=76)
+    except FileNotFoundError as exc:
+        st.error(f"Branding asset missing: {exc}")
+        return
+    st.markdown(
+        f'<div class="fap-login">{logos}'
+        f'<h2>{brand.platform_name}</h2>'
+        f'<div class="powered">{brand.tagline}</div></div>',
+        unsafe_allow_html=True)
 
 
 def _resolve_services() -> tuple[Any, Any]:
@@ -149,9 +177,17 @@ def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
     notifications = st.session_state.get("_notifications", [])
     left, right = st.columns([3, 1])
     with left:
-        title = (f'<div class="fap-brand">{icon(page.icon, 20) if page else ""} '
-                 f'<b>{brand.platform_name}</b></div>')
-        st.markdown(title + C.breadcrumb_html(crumbs), unsafe_allow_html=True)
+        try:
+            logos = _logo_pair_html(brand, height=34)
+        except FileNotFoundError as exc:
+            st.error(f"Branding asset missing: {exc}")
+            logos = ""
+        brandbar = (f'<div class="fap-brandbar">{logos}'
+                    f'<span class="titles"><b>{brand.platform_name}</b><br>'
+                    f'<span>{brand.club_name} · {brand.organization_name}</span></span></div>')
+        page_line = (f'<div class="fap-brand">{icon(page.icon, 18) if page else ""} '
+                     f'{C.breadcrumb_html(crumbs)}</div>')
+        st.markdown(brandbar + page_line, unsafe_allow_html=True)
     with right:
         bell = f'{icon("bell", 16)} {len(notifications)}'
         st.markdown(
@@ -163,8 +199,14 @@ def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
 
 def _render_sidebar(ctx: ShellContext, brand: theme.Branding) -> None:
     with st.sidebar:
-        st.markdown(f'<div class="fap-brand">{icon("dashboard", 22)} '
-                    f'<b>{brand.platform_name}</b></div>', unsafe_allow_html=True)
+        try:
+            logos = _logo_pair_html(brand, height=40)
+        except FileNotFoundError as exc:
+            st.error(f"Branding asset missing: {exc}")
+            logos = ""
+        st.markdown(f'<div class="fap-brandbar">{logos}</div>'
+                    f'<div class="fap-brand"><b>{brand.platform_name}</b></div>',
+                    unsafe_allow_html=True)
 
         if ctx.wm is not None:
             _workspace_and_project_selectors(ctx)

@@ -18,7 +18,8 @@ Typical use in the shell:
 """
 from fap.theme.branding import (
     DEFAULT_BRANDING, Branding, load_branding,
-    PLACEHOLDER_CLUB_LOGO, PLACEHOLDER_ORG_LOGO, PLACEHOLDER_PLATFORM_LOGO,
+    FC_MASAR_LOGO, RIGHT_TO_DREAM_LOGO,
+    asset_path, require_asset, logo_data_uri,
 )
 from fap.theme.colors import DEFAULT_PALETTE, Palette, Surface
 from fap.theme.typography import DEFAULT_TYPOGRAPHY, Typography
@@ -41,7 +42,8 @@ def resolve_mode(requested: str | None, brand: Branding | None = None) -> str:
 
 __all__ = [
     "Branding", "DEFAULT_BRANDING", "load_branding",
-    "PLACEHOLDER_PLATFORM_LOGO", "PLACEHOLDER_CLUB_LOGO", "PLACEHOLDER_ORG_LOGO",
+    "FC_MASAR_LOGO", "RIGHT_TO_DREAM_LOGO",
+    "asset_path", "require_asset", "logo_data_uri",
     "Palette", "Surface", "DEFAULT_PALETTE",
     "Typography", "DEFAULT_TYPOGRAPHY", "Spacing", "DEFAULT_SPACING",
     "icon", "icon_names", "has_icon",

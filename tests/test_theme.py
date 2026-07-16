@@ -14,20 +14,51 @@ import pytest
 import fap.theme as theme
 from fap.theme import (
     Branding, DEFAULT_BRANDING, DEFAULT_PALETTE, build_css, has_icon, icon,
-    icon_names, load_branding, resolve_mode,
+    icon_names, load_branding, logo_data_uri, require_asset, resolve_mode,
 )
-from fap.theme.components import badge_html, breadcrumb_html, footer_html, kpi_card_html
+from fap.theme.components import badge_html, breadcrumb_html, footer_html, kpi_card_html, logo_html
 
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src" / "fap" / "theme"
 
 
 # ---------------------------------------------------------------- branding / config
-def test_default_branding_is_neutral_no_real_club():
-    blob = " ".join([DEFAULT_BRANDING.platform_name, DEFAULT_BRANDING.organization_name,
-                     DEFAULT_BRANDING.club_name]).lower()
-    for banned in ("masar", "right to dream", "rtd"):
-        assert banned not in blob
-    assert DEFAULT_BRANDING.platform_name == "FAP Analytics"
+def test_default_branding_is_fc_masar_right_to_dream():
+    assert DEFAULT_BRANDING.platform_name == "Football Analysis Platform"
+    assert DEFAULT_BRANDING.club_name == "FC Masar"
+    assert DEFAULT_BRANDING.organization_name == "Right To Dream"
+    assert DEFAULT_BRANDING.tagline == "powered by Right To Dream"
+
+
+def test_default_logos_point_to_real_uploaded_assets():
+    club = pathlib.Path(DEFAULT_BRANDING.primary_logo)
+    org = pathlib.Path(DEFAULT_BRANDING.secondary_logo)
+    assert club.name == "fc_masar.png" and club.is_file() and club.stat().st_size > 1000
+    assert org.name == "right_to_dream.png" and org.is_file() and org.stat().st_size > 1000
+    # backward-compatible aliases resolve to the same real files
+    assert DEFAULT_BRANDING.club_logo == DEFAULT_BRANDING.primary_logo
+    assert DEFAULT_BRANDING.organization_logo == DEFAULT_BRANDING.secondary_logo
+
+
+def test_missing_asset_fails_loudly_no_silent_fallback():
+    with pytest.raises(FileNotFoundError):
+        require_asset("logos/does_not_exist.png")
+    with pytest.raises(FileNotFoundError):
+        logo_data_uri("logos/nope.png")
+    with pytest.raises(FileNotFoundError):
+        logo_html("logos/missing.png")
+
+
+def test_logo_data_uri_embeds_real_bytes():
+    uri = logo_data_uri(DEFAULT_BRANDING.primary_logo)
+    assert uri.startswith("data:image/png;base64,") and len(uri) > 1000
+    assert 'src="data:image/png;base64,' in logo_html(DEFAULT_BRANDING.secondary_logo, height=40)
+
+
+def test_brand_colors_reflect_identity_and_stay_overridable():
+    # default primary is the club amber-orange...
+    assert DEFAULT_BRANDING.palette.primary.upper() == "#E07B2B"
+    # ...but everything remains configurable
+    assert load_branding({"primary_color": "#123456"}).palette.primary == "#123456"
 
 
 def test_branding_is_configuration_driven():
@@ -48,10 +79,10 @@ def test_empty_config_returns_default():
     assert load_branding(None) is DEFAULT_BRANDING
 
 
-def test_placeholder_logo_assets_exist():
-    for path in (DEFAULT_BRANDING.platform_logo, DEFAULT_BRANDING.club_logo,
-                 DEFAULT_BRANDING.organization_logo):
-        assert pathlib.Path(path).exists() and path.endswith(".svg")
+def test_brand_logo_assets_exist_and_are_real_images():
+    for path in (DEFAULT_BRANDING.primary_logo, DEFAULT_BRANDING.secondary_logo):
+        p = pathlib.Path(path)
+        assert p.exists() and p.suffix == ".png" and p.stat().st_size > 1000
 
 
 # ---------------------------------------------------------------- css generation

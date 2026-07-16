@@ -139,6 +139,18 @@ def _components() -> str:
 .fap-topbar { display: flex; align-items: center; justify-content: flex-end;
   gap: var(--fap-space-2); color: var(--fap-text-muted); font-size: 0.82rem; }
 .fap-section { display: flex; align-items: center; gap: var(--fap-space-2); }
+.fap-logo { display: inline-block; vertical-align: middle; object-fit: contain; }
+.fap-logos { display: flex; align-items: center; gap: var(--fap-space-3); }
+.fap-logos .sep { color: var(--fap-text-subtle); font-weight: 400; }
+.fap-brandbar { display: flex; align-items: center; gap: var(--fap-space-3);
+  padding: 4px 0 10px; border-bottom: 1px solid var(--fap-border); margin-bottom: 10px; }
+.fap-brandbar .titles { line-height: 1.2; }
+.fap-brandbar .titles b { color: var(--fap-text); font-size: 0.98rem; }
+.fap-brandbar .titles span { color: var(--fap-text-muted); font-size: 0.72rem; }
+.fap-login { text-align: center; padding: 8px 0 4px; }
+.fap-login .fap-logos { justify-content: center; margin-bottom: 14px; }
+.fap-login h2 { margin: 6px 0 2px; }
+.fap-login .powered { color: var(--fap-text-muted); font-size: 0.85rem; }
 """
 
 
