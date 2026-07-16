@@ -112,12 +112,16 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
 
 # ---------------------------------------------------------------- helpers
 def _branding() -> theme.Branding:
+    # Reading secrets is soft: with no secrets.toml Streamlit raises
+    # StreamlitSecretNotFoundError (a FileNotFoundError subclass), which must NOT
+    # be treated as a missing-asset failure - fall back to the default brand.
+    # Missing *asset* files still fail loudly, but that happens at render time
+    # (logo_html), surfaced there as a visible error.
     try:
-        return theme.load_branding(dict(st.secrets.get("branding", {}) or {}))
-    except FileNotFoundError:
-        raise                                  # missing asset must fail loudly
+        cfg = dict(st.secrets.get("branding", {}) or {})
     except Exception:
-        return theme.DEFAULT_BRANDING
+        cfg = {}
+    return theme.load_branding(cfg)
 
 
 def _logo_pair_html(brand: theme.Branding, height: int) -> str:
@@ -175,26 +179,26 @@ def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
         crumbs.append(page.info.name)
 
     notifications = st.session_state.get("_notifications", [])
-    left, right = st.columns([3, 1])
-    with left:
-        try:
-            logos = _logo_pair_html(brand, height=34)
-        except FileNotFoundError as exc:
-            st.error(f"Branding asset missing: {exc}")
-            logos = ""
-        brandbar = (f'<div class="fap-brandbar">{logos}'
-                    f'<span class="titles"><b>{brand.platform_name}</b><br>'
-                    f'<span>{brand.club_name} · {brand.organization_name}</span></span></div>')
-        page_line = (f'<div class="fap-brand">{icon(page.icon, 18) if page else ""} '
-                     f'{C.breadcrumb_html(crumbs)}</div>')
-        st.markdown(brandbar + page_line, unsafe_allow_html=True)
-    with right:
-        bell = f'{icon("bell", 16)} {len(notifications)}'
-        st.markdown(
-            f'<div class="fap-topbar">{bell} · {icon("user", 16)} '
-            f'<b>{ctx.user.name}</b> · {C.badge_html(ctx.user.role_label, "info")}</div>',
-            unsafe_allow_html=True)
-    st.divider()
+    try:
+        logos = _logo_pair_html(brand, height=34)
+    except FileNotFoundError as exc:
+        st.error(f"Branding asset missing: {exc}")
+        logos = ""
+    page_glyph = icon(page.icon, 18) if page and page.icon else ""
+    # One sticky flex header owns the top and stays put on scroll: logos +
+    # breadcrumb on the left, notifications + user badge on the right.
+    st.markdown(
+        f'<header class="fap-shell-header">'
+        f'  <div class="left">{logos}'
+        f'    <div class="titles"><b>{brand.platform_name}</b>'
+        f'      <span class="crumbs">{page_glyph} {C.breadcrumb_html(crumbs)}</span>'
+        f'    </div>'
+        f'  </div>'
+        f'  <div class="right">{icon("bell", 16)} {len(notifications)}'
+        f'    <span class="sep">·</span> {icon("user", 16)} <b>{ctx.user.name}</b>'
+        f'    {C.badge_html(ctx.user.role_label, "info")}</div>'
+        f'</header>',
+        unsafe_allow_html=True)
 
 
 def _render_sidebar(ctx: ShellContext, brand: theme.Branding) -> None:

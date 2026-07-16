@@ -81,7 +81,10 @@ DEFAULT_PALETTE = Palette(
         border="#DDE3EC", text="#161C24", text_muted="#5B6472",
         text_subtle="#8A93A2", overlay="rgba(16,22,30,0.45)"),
     dark=Surface(
-        bg="#0E1116", surface="#161B22", surface_alt="#1C232C",
-        border="#2A323D", text="#EBEEF3", text_muted="#9AA4B2",
-        text_subtle="#6B7482", overlay="rgba(0,0,0,0.55)"),
+        # intentionally designed dark: deep blue-black base, elevated surfaces,
+        # a visible-but-quiet border, and calibrated text contrast (not a naive
+        # inversion of the light theme).
+        bg="#0B0E14", surface="#141922", surface_alt="#1C2330",
+        border="#262E3B", text="#E7EBF3", text_muted="#98A2B3",
+        text_subtle="#69727F", overlay="rgba(3,6,12,0.60)"),
 )
