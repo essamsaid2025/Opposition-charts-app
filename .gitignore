@@ -3,6 +3,8 @@ __pycache__/
 .pytest_cache/
 # platform runtime state: sqlite db, disk cache and logs (fap defaults)
 user_data/
+# identity secrets (client ids/secrets, tenant, domains) - never commit
+.streamlit/secrets.toml
 .venv/
 venv/
 *.log

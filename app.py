@@ -53,6 +53,9 @@ ensure_fresh_platform()
 from fap.bootstrap import PlatformContext, init_platform   # noqa: E402
 from fap.core.exceptions import FAPError               # noqa: E402
 from fap.core.version import platform_version          # noqa: E402  (re-imported post-refresh)
+# Identity is the platform entry point. Pages import only this facade - never a
+# provider, never Microsoft. See fap.identity and docs/IDENTITY.md.
+from fap.identity import Role, current_user, logout, require_login   # noqa: E402
 from fap.pipeline.columns import (                     # noqa: E402
     CONFIDENCE_THRESHOLD,
     alias_candidates as platform_alias_candidates,
@@ -2086,7 +2089,24 @@ register_viz("Custom Dashboard", "Dashboards", viz_custom_dashboard, uses_pitch=
 # =============================
 # APP UI
 # =============================
+def _render_identity_sidebar(user) -> None:
+    """Signed-in account panel: who, role, organization, and sign out."""
+    with st.sidebar:
+        st.markdown(f"**{user.name}**  \n{user.role_label}"
+                    + (f" · {user.organization}" if user.organization else ""))
+        if st.button("Sign out", key="identity_signout"):
+            logout()
+            st.rerun()
+        st.divider()
+
+
 def run_app():
+    # Authentication is the platform entry point: identity is verified and
+    # authorized before any of the application renders. Unauthenticated or
+    # unauthorized visitors never reach the code below (require_login stops).
+    user = require_login()
+    _render_identity_sidebar(user)
+
     app_theme_name = st.sidebar.selectbox("App theme (UI only)", list(APP_THEMES.keys()), index=0)
     inject_css(APP_THEMES[app_theme_name])
 

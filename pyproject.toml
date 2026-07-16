@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "First Team Football Analysis Platform - modular, plugin-based analytics"
 requires-python = ">=3.10"
 dependencies = [
-    "streamlit>=1.32",
+    "streamlit>=1.42",          # native OpenID Connect authentication (st.login/st.user)
     "pandas>=2.0",
     "numpy>=1.24",
     "matplotlib>=3.7",
@@ -17,6 +17,7 @@ dependencies = [
     "PyYAML>=6.0",
     "scipy>=1.10",
     "pillow>=10.0",
+    "Authlib>=1.3",             # OIDC flow behind Streamlit's native auth
 ]
 
 [project.optional-dependencies]

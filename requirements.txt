@@ -1,4 +1,5 @@
-streamlit
+# Streamlit >= 1.42 for native OpenID Connect authentication (st.login/st.user).
+streamlit>=1.42
 pandas
 matplotlib
 numpy
@@ -9,3 +10,5 @@ mplsoccer
 PyYAML
 scipy
 pillow
+# Identity layer: Streamlit's native OIDC auth uses Authlib under the hood.
+Authlib>=1.3
