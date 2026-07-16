@@ -228,6 +228,43 @@ def import_service() -> ImportService:
     return platform().importer
 
 
+def workspace_manager():
+    """The club-environment layer (hierarchy, data manager, audit, versions,
+    presets). Resolved through the platform bootstrap."""
+    return platform().workspace_manager
+
+
+def _audit_login(user) -> None:
+    """Record a login once per session. Never breaks the app if it fails."""
+    if st.session_state.get("_audited_login") == user.email:
+        return
+    try:
+        workspace_manager().audit.record(user, "login")
+        st.session_state["_audited_login"] = user.email
+    except Exception:
+        pass
+
+
+def _record_import(user, filename: str, result) -> None:
+    """Add a successful import to the Data Manager (history + audit). Wrapped so
+    a persistence hiccup never blocks the analysis screen."""
+    if st.session_state.get("_recorded_import") == getattr(result, "provider_id", "") + filename:
+        return
+    try:
+        s = result.summary
+        workspace_manager().register_dataset(
+            user, name=filename, provider_id=result.provider_id,
+            coord_system=result.coord_system, rows=int(s.get("rows", 0)),
+            season=str(s.get("season", "")), competition=str(s.get("competition", "")),
+            document={"columns": list(result.frame.columns)[:60],
+                      "mapping": result.mapping,
+                      "quality": getattr(result.quality, "overall", None),
+                      "players": s.get("players", 0)})
+        st.session_state["_recorded_import"] = result.provider_id + filename
+    except Exception:
+        pass
+
+
 def read_uploaded_file(uploaded_file) -> pd.DataFrame:
     """Raw, un-normalized frame for the mapping preview.
 
@@ -2105,6 +2142,7 @@ def run_app():
     # authorized before any of the application renders. Unauthenticated or
     # unauthorized visitors never reach the code below (require_login stops).
     user = require_login()
+    _audit_login(user)
     _render_identity_sidebar(user)
 
     app_theme_name = st.sidebar.selectbox("App theme (UI only)", list(APP_THEMES.keys()), index=0)
@@ -2340,6 +2378,7 @@ def run_app():
         st.error(f"Could not process file: {e}")
         st.stop()
 
+    _record_import(user, uploaded.name, result)
     render_import_summary(result, cleaned)
 
     # Filters (v3 preserved)

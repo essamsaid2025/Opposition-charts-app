@@ -53,7 +53,117 @@ MIGRATIONS: list[tuple[int, str]] = [
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """),
-    # (5, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 3B - Workspace & Data Management. Additive only; existing projects
+    # and workspaces keep loading unchanged (new project columns are nullable
+    # with defaults).
+    (5, """
+        -- club hierarchy as an adjacency tree: club > season > competition >
+        -- team > opponent > match. One table, unlimited depth, no rigid joins.
+        CREATE TABLE IF NOT EXISTS org_nodes (
+            id TEXT PRIMARY KEY,
+            parent_id TEXT,
+            kind TEXT NOT NULL,                 -- club|season|competition|team|opponent|match
+            name TEXT NOT NULL,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT,
+            FOREIGN KEY (parent_id) REFERENCES org_nodes(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_parent ON org_nodes(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_org_kind ON org_nodes(kind);
+
+        -- the Data Manager: one row per imported dataset + its metadata
+        CREATE TABLE IF NOT EXISTS datasets (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            project_id TEXT,
+            node_id TEXT,                       -- optional link into org_nodes
+            name TEXT NOT NULL,
+            provider_id TEXT NOT NULL DEFAULT '',
+            coord_system TEXT NOT NULL DEFAULT '',
+            rows INTEGER NOT NULL DEFAULT 0,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            content_hash TEXT NOT NULL DEFAULT '',
+            season TEXT NOT NULL DEFAULT '',
+            competition TEXT NOT NULL DEFAULT '',
+            opponent TEXT NOT NULL DEFAULT '',
+            match_date TEXT NOT NULL DEFAULT '',
+            document TEXT NOT NULL DEFAULT '{}', -- columns, mapping, validation, quality
+            status TEXT NOT NULL DEFAULT 'active',  -- active|archived
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_datasets_workspace ON datasets(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_datasets_status ON datasets(status);
+
+        -- reusable presets: chart | filter | export | dashboard (import mappings
+        -- keep their own mapping_templates table)
+        CREATE TABLE IF NOT EXISTS presets (
+            id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            owner_id TEXT,
+            scope TEXT NOT NULL DEFAULT 'user',  -- user|club|global
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_presets_kind ON presets(kind);
+
+        -- immutable project version snapshots
+        CREATE TABLE IF NOT EXISTS project_versions (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            document TEXT NOT NULL DEFAULT '{}',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_versions_project ON project_versions(project_id);
+
+        -- append-only audit trail
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id TEXT PRIMARY KEY,
+            ts TEXT NOT NULL DEFAULT (datetime('now')),
+            actor TEXT NOT NULL DEFAULT '',
+            actor_role TEXT NOT NULL DEFAULT '',
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL DEFAULT '',
+            target_id TEXT NOT NULL DEFAULT '',
+            detail TEXT NOT NULL DEFAULT '{}'
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+        CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_log(actor);
+
+        -- per-user auto-save (session state persisted without a Save button)
+        CREATE TABLE IF NOT EXISTS user_state (
+            user_id TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'session',
+            document TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, scope)
+        );
+
+        -- per-user pins / favorites / recents
+        CREATE TABLE IF NOT EXISTS user_items (
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,                 -- pin|favorite|recent
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            ts TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, kind, target_type, target_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_items ON user_items(user_id, kind);
+
+        -- enrich projects (nullable/defaulted -> old rows still load)
+        ALTER TABLE projects ADD COLUMN owner_id TEXT;
+        ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+        ALTER TABLE projects ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE projects ADD COLUMN contributors TEXT NOT NULL DEFAULT '[]';
+    """),
+    # (6, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

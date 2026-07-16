@@ -42,7 +42,7 @@ from fap.visuals.export import ExportEngine
 from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.layout import LayoutEngine
 from fap.visuals.renderer import Renderer
-from fap.workspaces import WorkspaceService
+from fap.workspaces import WorkspaceManager, WorkspaceService
 
 
 @dataclass(slots=True)
@@ -117,6 +117,10 @@ class PlatformContext:
     def importer(self) -> ImportService:
         return self.services.get("importer")
 
+    @property
+    def workspace_manager(self) -> WorkspaceManager:
+        return self.services.get("workspace_manager")
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -154,6 +158,8 @@ def init_platform(root: Path | None = None, *,
     services.register("validation", lambda _: ValidationEngine())
     services.register("pipeline", lambda _: DataPipeline())
     services.register("importer", _importer)
+    services.register("workspace_manager",
+                      lambda reg: WorkspaceManager(reg.get("db")))
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())
