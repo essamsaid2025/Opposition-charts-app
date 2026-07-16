@@ -1914,6 +1914,29 @@ register_viz("Custom Dashboard", "Dashboards", viz_custom_dashboard, uses_pitch=
 # =============================
 # APP UI
 # =============================
+def _apply_theme_skin() -> None:
+    """Inject the centralized professional application skin (fap.theme).
+
+    CSS only, and CSS cannot reach a chart (matplotlib figures are images), so
+    this never affects the visualization engine. Configuration-driven via the
+    `[branding]` secrets section; falls back to the neutral professional default.
+    Guarded so a branding hiccup never blocks the app. Once per session.
+    """
+    if st.session_state.get("_theme_applied"):
+        return
+    try:
+        from fap import theme
+        try:
+            branding_cfg = dict(st.secrets.get("branding", {}) or {})
+        except Exception:
+            branding_cfg = {}
+        brand = theme.load_branding(branding_cfg)
+        theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
+        st.session_state["_theme_applied"] = True
+    except Exception:
+        pass
+
+
 def _render_identity_sidebar(user) -> None:
     """Signed-in account panel: who, role, organization, and sign out."""
     with st.sidebar:
@@ -1936,6 +1959,8 @@ def run_app():
     if not st.session_state.get("_in_shell"):
         _audit_login(user)
         _render_identity_sidebar(user)
+
+    _apply_theme_skin()
 
     app_theme_name = st.sidebar.selectbox("App theme (UI only)", list(APP_THEMES.keys()), index=0)
     inject_css(APP_THEMES[app_theme_name])
