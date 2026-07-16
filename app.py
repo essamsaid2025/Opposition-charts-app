@@ -64,6 +64,24 @@ from fap.pipeline.columns import (                     # noqa: E402
 )
 from fap.pipeline.importer import ImportResult, ImportService  # noqa: E402
 from fap.providers.custom import temporary_custom_provider     # noqa: E402
+# Open Play business logic now lives in the platform (fap.openplay). app.py
+# re-exports these names so run_app, the visualization engine and the existing
+# public API keep working unchanged. See docs and Phase 4 notes.
+from fap.openplay import runtime as _op_runtime                # noqa: E402
+from fap.openplay import (                                     # noqa: E402
+    read_uploaded_file, platform_import,
+    clean_columns, ensure_columns, validate_data, normalize_coordinates,
+    flip_attacking_direction, add_derived_columns, pct, safe_count, is_success,
+    alias_candidates, platform_detect, auto_map_columns, mapping_confidence,
+    save_mapping_template, mapping_log, resolve_column_mapping, apply_column_mapping,
+    mapping_preview_table, _norm_key,
+)
+from fap.openplay.config import (                              # noqa: E402
+    DEF_EVENTS, ARROW_EVENTS, SUCCESS_WORDS, REQUIRED_MINIMUM,
+    PITCH_LENGTH, PITCH_WIDTH, W, COORD_SYSTEM_IDS,
+    REQUIRED_CANONICAL, OPTIONAL_CANONICAL, CANONICAL_LABELS,
+    APP_TO_PLATFORM as _APP_TO_PLATFORM, PLATFORM_TO_APP as _PLATFORM_TO_APP,
+)
 
 # -----------------------------
 # Page config
@@ -188,20 +206,13 @@ CLUB_CUSTOM_NAMES = ["Club Theme", "Custom Theme"]
 
 HEAT_CMAPS = ["Greens", "Blues", "Reds", "Purples", "Oranges", "YlOrRd", "YlGnBu",
               "RdYlGn_r", "coolwarm", "magma", "inferno", "viridis", "cividis", "bone_r", "Greys"]
-DEF_EVENTS = ["duel", "recovery", "interception", "clearance", "tackle", "block"]
-ARROW_EVENTS = ["pass", "carry", "cross", "dribble"]
-SUCCESS_WORDS = ["successful", "success", "complete", "won"]
-REQUIRED_MINIMUM = ["event_type", "x", "y"]
-PITCH_LENGTH = 100
-PITCH_WIDTH = 68
-W = PITCH_WIDTH  # shorthand
+# event vocabularies, pitch dims and coord-id mapping now live in
+# fap.openplay.config (imported above).
 
 # -----------------------------
-# Data helpers (v3 contract preserved)
+# Platform accessors (Streamlit-cached). The Open Play data/import/mapping
+# helpers below are re-exported from fap.openplay (imported at the top).
 # -----------------------------
-COORD_SYSTEM_IDS: Dict[str, str] = {"0-100": "0-100", "120 x 80": "120x80"}
-
-
 @st.cache_resource(show_spinner=False)
 def _platform_context(version: str) -> PlatformContext:
     """Cached platform, keyed by the platform's own version.
@@ -232,6 +243,14 @@ def workspace_manager():
     """The club-environment layer (hierarchy, data manager, audit, versions,
     presets). Resolved through the platform bootstrap."""
     return platform().workspace_manager
+
+
+# Inject the Streamlit-cached import service into the Streamlit-free Open Play
+# controllers, so read_uploaded_file / platform_import / the mapping controller
+# reuse the same versioned platform the UI does. One-way: UI -> controllers.
+# Late-bound (lambda) so replacing app.import_service - e.g. in tests - is
+# honored by the controllers, preserving the pre-migration injection behaviour.
+_op_runtime.set_import_service(lambda: import_service())
 
 
 def _audit_login(user) -> None:
@@ -265,188 +284,8 @@ def _record_import(user, filename: str, result) -> None:
         pass
 
 
-def read_uploaded_file(uploaded_file) -> pd.DataFrame:
-    """Raw, un-normalized frame for the mapping preview.
-
-    This is only a Streamlit-widget adapter now: it turns the uploaded file into
-    bytes and hands them to ``ImportService.inspect``. Provider detection and
-    file loading belong to the platform, and - crucially - inspect resolves the
-    provider through the SAME path ``import_file`` uses, so the preview sees the
-    exact provider the import will use (e.g. a StatsBomb export named
-    ``events.json`` is recognized as StatsBomb here, not as generic JSON).
-    """
-    name = getattr(uploaded_file, "name", "") or "upload.csv"
-    try:
-        uploaded_file.seek(0)
-    except Exception:
-        pass
-    data = uploaded_file.read()
-    try:
-        return import_service().inspect(data, name).frame
-    except FAPError as exc:
-        raise ValueError("Please upload a CSV, Excel or JSON file.") from exc
-
-
-def platform_import(filename: str, data: bytes, mapping: Dict[str, str],
-                    coord_mode: str, attack_direction: str) -> ImportResult:
-    """Hand the confirmed Open Play mapping to the platform and let it do the
-    work: provider detection, loading, mapping, coordinate normalization,
-    cleaning, validation and quality scoring.
-
-    Open Play's mapping is {canonical: source}; ImportService wants the inverse.
-    """
-    return import_service().import_file(
-        data, filename,
-        mapping={src: canon for canon, src in mapping.items() if src},
-        coord_system=COORD_SYSTEM_IDS.get(coord_mode, "0-100"),
-        flip_direction=attack_direction.startswith("Team attacks right-to-left"),
-    )
-
-
-def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
-    return df
-
-
-def ensure_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = clean_columns(df)
-    for col in ["x", "y", "x2", "y2", "minute", "second", "shirt_number", "period"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    for col in ["event_type", "phase", "team", "opponent", "player", "receiver", "outcome",
-                "shot_result", "body_part", "direction", "competition", "date", "match_id",
-                "zone", "sequence_id", "notes"]:
-        if col not in df.columns:
-            df[col] = ""
-        df[col] = df[col].fillna("").astype(str).str.strip()
-    if "period" not in df.columns:
-        df["period"] = 1
-    df["period"] = pd.to_numeric(df["period"], errors="coerce").fillna(1)
-    for col in ["x2", "y2", "minute", "second"]:
-        if col not in df.columns:
-            df[col] = np.nan
-    return df
-
-
-def validate_data(df: pd.DataFrame) -> List[str]:
-    missing = [c for c in REQUIRED_MINIMUM if c not in df.columns]
-    return [f"Missing required columns: {', '.join(missing)}"] if missing else []
-
-
-# ============================================================================
-# COLUMN MAPPING - Open Play consumes the platform's mapping engine.
-# The alias table, the normalizer, candidate ranking and detection all live in
-# fap.pipeline.columns; there is no second alias list here and there must never
-# be one again. Open Play only translates between its own field vocabulary
-# (x2/y2) and the platform's canonical schema (end_x/end_y), and drives the UI.
-# ============================================================================
-REQUIRED_CANONICAL = ["event_type", "x", "y"]
-OPTIONAL_CANONICAL = ["x2", "y2"]
-CANONICAL_LABELS = {"event_type": "Event type", "x": "X (start)", "y": "Y (start)",
-                    "x2": "X (end)", "y2": "Y (end)"}
-
-# Open Play's field names -> the platform's canonical schema. x2/y2 are the
-# schema's legacy aliases for end_x/end_y and are kept in sync by coerce_schema.
-_APP_TO_PLATFORM = {"event_type": "event_type", "x": "x", "y": "y",
-                    "x2": "end_x", "y2": "end_y"}
-_PLATFORM_TO_APP = {v: k for k, v in _APP_TO_PLATFORM.items()}
-
-# the platform's normalizer, re-exported under the historical Open Play name
-_norm_key = normalize_name
-
-
-def alias_candidates(df: pd.DataFrame) -> Dict[str, List[str]]:
-    """Platform alias candidates, expressed in Open Play's field names.
-    Best match first; used for the preview log and the mapping dialog."""
-    platform = platform_alias_candidates(df)
-    return {app_field: list(platform[plat_field])
-            for app_field, plat_field in _APP_TO_PLATFORM.items()
-            if platform.get(plat_field)}
-
-
-def platform_detect(df: pd.DataFrame) -> Tuple[object, Optional[str]]:
-    """Platform detection for this file shape: a saved mapping template wins,
-    otherwise the alias engine. Returns (ColumnMapping, template_name)."""
-    try:
-        return import_service().detect(df)
-    except FAPError:
-        # no template store available (e.g. read-only deployment) -> aliases only
-        return detect_columns(df), None
-
-
-def auto_map_columns(df: pd.DataFrame) -> Dict[str, str]:
-    """Best-match auto detection via the platform. Returns {canonical: source}
-    for the fields Open Play maps; every rule behind it belongs to the platform."""
-    detected, _template = platform_detect(df)
-    mapping: Dict[str, str] = {}
-    for source, plat_field in detected.mapping.items():
-        app_field = _PLATFORM_TO_APP.get(plat_field)
-        if app_field:
-            mapping[app_field] = source
-    return mapping
-
-
-def mapping_confidence(df: pd.DataFrame) -> float:
-    """Platform confidence for the fields Open Play requires. Below the
-    platform's CONFIDENCE_THRESHOLD the mapping dialog opens."""
-    detected, _template = platform_detect(df)
-    return detected.confidence_for([_APP_TO_PLATFORM[c] for c in REQUIRED_CANONICAL])
-
-
-def save_mapping_template(name: str, df: pd.DataFrame, mapping: Dict[str, str],
-                          filename: str) -> None:
-    """Persist the confirmed mapping through the platform TemplateRepository so
-    the next file with this column shape maps itself."""
-    svc = import_service()
-    source_to_canonical = {src: _APP_TO_PLATFORM[canon]
-                           for canon, src in mapping.items() if src}
-    svc.save_template(name, svc.pick_provider(filename).info.id,
-                      [str(c) for c in df.columns], source_to_canonical)
-
-
-def mapping_log(df: pd.DataFrame, mapping: Dict[str, str]) -> List[str]:
-    """Human-readable notes for cases where several aliases were present and a
-    best match had to be chosen (requirement: 'use the best match and log it')."""
-    cands = alias_candidates(df)
-    logs: List[str] = []
-    for canon, chosen in mapping.items():
-        others = [c for c in cands.get(canon, []) if c != chosen]
-        if others:
-            logs.append(f"{CANONICAL_LABELS.get(canon, canon)}: using '{chosen}' "
-                        f"(also matched: {', '.join(others)})")
-    return logs
-
-
-def resolve_column_mapping(df: pd.DataFrame,
-                           manual: Optional[Dict[str, str]] = None
-                           ) -> Tuple[Dict[str, str], List[str]]:
-    """Auto detection combined with a user/session manual map (manual wins).
-    Returns (mapping {canonical: source}, unresolved_required_canonicals)."""
-    mapping = auto_map_columns(df)
-    for canon, src in (manual or {}).items():
-        if src and src in df.columns:
-            for other in [k for k, v in mapping.items() if v == src and k != canon]:
-                del mapping[other]            # free the source from any auto claim
-            mapping[canon] = src
-    unresolved = [c for c in REQUIRED_CANONICAL if c not in mapping]
-    return mapping, unresolved
-
-
-def apply_column_mapping(df: pd.DataFrame, mapping: Dict[str, str]) -> pd.DataFrame:
-    """Rename detected/selected source columns to their canonical names."""
-    rename = {src: canon for canon, src in mapping.items()
-              if src in df.columns and src != canon and canon not in df.columns}
-    return df.rename(columns=rename) if rename else df
-
-
-def mapping_preview_table(df: pd.DataFrame, mapping: Dict[str, str]) -> pd.DataFrame:
-    """Original column -> mapped canonical field, for every uploaded column."""
-    inv = {src: canon for canon, src in mapping.items()}
-    rows = [{"Original column": col,
-             "Mapped to": CANONICAL_LABELS.get(inv[col], inv[col]) if col in inv else "—"}
-            for col in df.columns]
-    return pd.DataFrame(rows, columns=["Original column", "Mapped to"])
+# --- Open Play import + column-mapping controllers migrated to
+# --- fap.openplay.imports / fap.openplay.mapping (imported at top).
 
 
 def render_import_preview(df: pd.DataFrame, mapping: Dict[str, str], logs: List[str],
@@ -610,60 +449,9 @@ def render_custom_provider_save(result: ImportResult) -> None:
             st.warning(f"Could not save the export format: {exc}")
 
 
-def normalize_coordinates(df: pd.DataFrame, mode: str) -> pd.DataFrame:
-    df = df.copy()
-    if mode == "120 x 80":
-        for a in ["x", "x2"]:
-            df[a] = df[a] / 120 * 100
-        for a in ["y", "y2"]:
-            df[a] = df[a] / 80 * 100
-    for col in ["x", "y", "x2", "y2"]:
-        df[col] = pd.to_numeric(df[col], errors="coerce").clip(0, 100)
-    return df
-
-
-def flip_attacking_direction(df: pd.DataFrame, attack_direction: str) -> pd.DataFrame:
-    df = df.copy()
-    if attack_direction.startswith("Team attacks right-to-left"):
-        for col in ["x", "x2"]:
-            df[col] = 100 - df[col]
-    return df
-
-
-def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    dx = df["x2"] - df["x"]
-    dy = df["y2"] - df["y"]
-    df["distance"] = np.sqrt(dx**2 + dy**2)
-    df["is_forward"] = dx > 8
-    df["is_backward"] = dx < -8
-    df["is_lateral"] = (~df["is_forward"]) & (~df["is_backward"])
-    df["is_progressive"] = (dx >= 10) & ((100 - df["x2"]) <= 0.75 * (100 - df["x"]))
-    df["into_final_third"] = (df["x"] < 66.67) & (df["x2"] >= 66.67)
-    df["into_box"] = (df["x2"] >= 83) & (df["y2"].between(21, 79))
-    df["in_box"] = (df["x"] >= 83) & (df["y"].between(21, 79))
-    df["start_third"] = pd.cut(df["x"], bins=[-0.1, 33.33, 66.67, 100.1],
-                               labels=["Defensive Third", "Middle Third", "Final Third"])
-    df["lane"] = pd.cut(df["y"], bins=[-0.1, 33.33, 66.67, 100.1],
-                        labels=["Left Lane", "Central Lane", "Right Lane"])
-    df["time_min"] = pd.to_numeric(df["minute"], errors="coerce").fillna(0) + \
-        pd.to_numeric(df["second"], errors="coerce").fillna(0) / 60
-    df["shot_distance"] = np.sqrt((100 - df["x"]) ** 2 + (50 - df["y"]) ** 2)
-    return df
-
-
-def pct(n: float, d: float) -> str:
-    return "0%" if d == 0 else f"{(n / d * 100):.0f}%"
-
-
-def safe_count(df: pd.DataFrame, col: str, value: str) -> int:
-    if col not in df.columns:
-        return 0
-    return int(df[col].astype(str).str.lower().eq(value.lower()).sum())
-
-
-def is_success(series: pd.Series) -> pd.Series:
-    return series.astype(str).str.lower().isin(SUCCESS_WORDS)
+# --- Open Play data transforms migrated to fap.openplay.transforms
+# --- (imported at top): normalize_coordinates, flip_attacking_direction,
+# --- add_derived_columns, pct, safe_count, is_success.
 
 
 def kpi(label: str, value) -> None:
