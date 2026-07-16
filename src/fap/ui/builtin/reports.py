@@ -1,5 +1,5 @@
-"""Reports - list saved reports. The report engine (fap.reports) is unchanged;
-this page only surfaces report presets and links to build one."""
+"""Reports page - create, open, export and manage reports via the Reports
+Engine (fap.reports). Consumes platform services only; no report logic here."""
 from __future__ import annotations
 
 import streamlit as st
@@ -19,16 +19,76 @@ class ReportsPage(Page):
 
     def render(self, shell) -> None:
         st.title("Reports")
-        st.caption("Report layouts are saved as dashboard presets and rendered by the "
-                   "existing report engine.")
-        if shell.wm is None:
+        reports = _reports_manager(shell)
+        if reports is None:
+            st.info("Reports engine unavailable.")
             return
-        try:
-            layouts = shell.wm.list_presets(shell.user, kind="dashboard")
-        except Exception:
-            layouts = []
-        if not layouts:
-            st.info("No saved report layouts yet. Save one from the analysis screen.")
-            return
-        for layout in layouts:
-            st.write(f"• **{layout.name}** · _{layout.scope}_")
+
+        tab_list, tab_create = st.tabs(["My reports", "Create"])
+
+        with tab_create:
+            self._create(shell, reports)
+
+        with tab_list:
+            query = st.text_input("Search reports", key="report_search",
+                                  placeholder="title, template, owner…")
+            fav_only = st.toggle("Favorites only", key="report_fav_only")
+            records = shell.wm and reports.list(
+                shell.user, workspace_id=shell.workspace_id,
+                favorite=True if fav_only else None, query=query)
+            records = records or []
+            if not records:
+                st.info("No reports yet. Use the Create tab.")
+            for r in records:
+                self._row(shell, reports, r)
+
+    # ------------------------------------------------------------ create
+    def _create(self, shell, reports) -> None:
+        templates = reports.templates()
+        names = {t.info.id: t.info.name for t in templates}
+        template = st.selectbox("Template", list(names), format_func=lambda i: names[i],
+                                key="report_template")
+        title = st.text_input("Title (optional)", key="report_title")
+        opponent = st.text_input("Opponent", key="report_opponent")
+        dataset = st.session_state.get("_status_dataset", "")
+        df = st.session_state.get("_analysis_df")     # set by the analysis screen, if present
+        if st.button("Create report", type="primary", key="report_create_btn"):
+            if df is None:
+                st.warning("Load a dataset first (Opponent Analysis) to build a report.")
+                return
+            try:
+                rec = reports.create(shell.user, template=template, df=df, title=title,
+                                     workspace_id=shell.workspace_id,
+                                     cover={"opponent": opponent})
+                st.success(f"Created “{rec.title}”.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not create report: {exc}")
+
+    # ------------------------------------------------------------ row actions
+    def _row(self, shell, reports, r) -> None:
+        with st.container(border=True):
+            c1, c2 = st.columns([4, 2])
+            c1.markdown(f"**{r.title}**  \n_{r.template_id}_ · {r.owner} · {r.updated_at}")
+            with c2:
+                fmt = st.selectbox("Export", reports.available_formats(),
+                                   key=f"fmt_{r.id}", label_visibility="collapsed")
+                if st.button("Export", key=f"exp_{r.id}"):
+                    try:
+                        rendered = reports.render(shell.user, r.id, fmt)
+                        st.download_button("Download", rendered.content, file_name=rendered.filename,
+                                           mime=rendered.mime, key=f"dl_{r.id}")
+                    except Exception as exc:
+                        st.error(str(exc))
+                fav = "Unfavorite" if r.favorite else "Favorite"
+                if st.button(fav, key=f"fav_{r.id}"):
+                    reports.favorite(shell.user, r.id, on=not r.favorite); st.rerun()
+                if st.button("Archive" if r.status == "active" else "Restore", key=f"arc_{r.id}"):
+                    reports.archive(shell.user, r.id, archived=r.status == "active"); st.rerun()
+
+
+def _reports_manager(shell):
+    try:
+        return shell.platform.reports if shell.platform is not None else None
+    except Exception:
+        return None

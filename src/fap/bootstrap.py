@@ -42,7 +42,19 @@ from fap.visuals.export import ExportEngine
 from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.layout import LayoutEngine
 from fap.visuals.renderer import Renderer
+from fap.reports import ReportsManager
 from fap.workspaces import WorkspaceManager, WorkspaceService
+
+
+def _reports_manager(db: Database) -> ReportsManager:
+    """Reports engine over the shared DB, with the default platform branding
+    (the shell may rebuild it with configured branding). Headless-safe."""
+    try:
+        from fap.theme import DEFAULT_BRANDING
+        branding = DEFAULT_BRANDING
+    except Exception:
+        branding = None
+    return ReportsManager(db, branding=branding)
 
 
 @dataclass(slots=True)
@@ -121,6 +133,10 @@ class PlatformContext:
     def workspace_manager(self) -> WorkspaceManager:
         return self.services.get("workspace_manager")
 
+    @property
+    def reports(self) -> "ReportsManager":
+        return self.services.get("reports")
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -160,6 +176,7 @@ def init_platform(root: Path | None = None, *,
     services.register("importer", _importer)
     services.register("workspace_manager",
                       lambda reg: WorkspaceManager(reg.get("db")))
+    services.register("reports", lambda reg: _reports_manager(reg.get("db")))
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())

@@ -163,7 +163,38 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE projects ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
         ALTER TABLE projects ADD COLUMN contributors TEXT NOT NULL DEFAULT '[]';
     """),
-    # (6, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 5.2 - Reports Engine. Additive; a report belongs to a workspace/
+    # project/dataset and stores its document as versioned JSON.
+    (6, """
+        CREATE TABLE IF NOT EXISTS reports (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            project_id TEXT,
+            dataset_id TEXT,
+            title TEXT NOT NULL,
+            template_id TEXT NOT NULL DEFAULT '',
+            owner TEXT NOT NULL DEFAULT '',
+            contributors TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',   -- active|archived|draft
+            favorite INTEGER NOT NULL DEFAULT 0,
+            version INTEGER NOT NULL DEFAULT 1,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_reports_workspace ON reports(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
+        CREATE INDEX IF NOT EXISTS idx_reports_owner ON reports(owner);
+        -- per-user report autosave drafts (recover unfinished reports)
+        CREATE TABLE IF NOT EXISTS report_drafts (
+            user_id TEXT NOT NULL,
+            draft_key TEXT NOT NULL,
+            document TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (user_id, draft_key)
+        );
+    """),
+    # (7, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 
