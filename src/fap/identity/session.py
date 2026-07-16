@@ -7,14 +7,13 @@ this module maps its result through the pure IdentityService + AccessPolicy.
 """
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
 import streamlit as st
 
 from fap.identity.builtin.dev import DEV_EMAIL, DevProvider
-from fap.identity.config import IdentityConfig, load_identity_config
+from fap.identity.config import IdentityConfig, development_mode, load_identity_config
 from fap.identity.models import User
 from fap.identity.provider import load_builtin_identity_providers
 from fap.identity.roles import Role
@@ -35,16 +34,6 @@ def is_session_expired(login_ts: float | None, now: float, timeout_minutes: int,
     return (now - login_ts) > (timeout_minutes * 60)
 
 
-def _development() -> bool:
-    if os.environ.get("FAP_ENVIRONMENT", "").strip().lower() == "development":
-        return True
-    try:
-        from fap.config import load_settings
-        return load_settings().environment.strip().lower() == "development"
-    except Exception:
-        return False
-
-
 def _secrets() -> dict[str, Any]:
     try:
         return {k: st.secrets[k] for k in st.secrets}      # Streamlit Secrets -> dict
@@ -54,7 +43,7 @@ def _secrets() -> dict[str, Any]:
 
 def _config() -> IdentityConfig:
     load_builtin_identity_providers()
-    return load_identity_config(_secrets(), development=_development())
+    return load_identity_config(_secrets(), development=development_mode())
 
 
 def _service() -> IdentityService:
@@ -147,7 +136,8 @@ def _render_login(cfg: IdentityConfig) -> None:
     if not cfg.configured:
         st.error("Sign-in is not configured. An administrator must set up an identity "
                  "provider (e.g. Microsoft Entra ID) in `.streamlit/secrets.toml`.")
-        st.caption("For local development, set `FAP_ENVIRONMENT=development` to bypass sign-in.")
+        st.caption("For local development, set `FAP_AUTH_PROVIDER=dev` (or "
+                   "`FAP_ENVIRONMENT=development`) to bypass sign-in and run as Super Admin.")
         return
     if cfg.policy.fail_closed and cfg.policy.admits_no_one:
         st.error("Access policy admits no one (fail closed). Configure `allowed_domains` "

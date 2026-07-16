@@ -170,6 +170,43 @@ def test_dev_provider_added_only_in_development():
     assert "dev" in load_identity_config(SECRETS, development=True).providers
 
 
+# ---------------------------------------------------------------- development mode
+def test_development_mode_triggered_by_auth_provider_env(monkeypatch):
+    from fap.identity.config import development_mode
+    monkeypatch.delenv("FAP_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("FAP_AUTH_PROVIDER", "dev")
+    assert development_mode() is True
+
+
+def test_development_mode_triggered_by_environment_env(monkeypatch):
+    from fap.identity.config import development_mode
+    monkeypatch.delenv("FAP_AUTH_PROVIDER", raising=False)
+    monkeypatch.setenv("FAP_ENVIRONMENT", "development")
+    assert development_mode() is True
+
+
+def test_production_is_not_development_by_default(monkeypatch):
+    from fap.identity.config import development_mode
+    monkeypatch.delenv("FAP_AUTH_PROVIDER", raising=False)
+    monkeypatch.delenv("FAP_ENVIRONMENT", raising=False)
+    assert development_mode() is False          # default settings environment = production
+
+
+def test_auth_provider_other_than_dev_stays_production(monkeypatch):
+    from fap.identity.config import development_mode
+    monkeypatch.delenv("FAP_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("FAP_AUTH_PROVIDER", "microsoft")
+    assert development_mode() is False
+
+
+def test_development_bypass_yields_super_admin_without_any_idp(monkeypatch):
+    """The whole point: no Microsoft, no OAuth, no secrets.toml required."""
+    import app
+    monkeypatch.setenv("FAP_AUTH_PROVIDER", "dev")
+    user = app.require_login()                  # must NOT stop or need a provider
+    assert user.role is Role.SUPER_ADMIN and user.email == "developer@localhost"
+
+
 def test_service_resolves_claims_to_authorized_user():
     svc = IdentityService(load_identity_config(SECRETS))
     decision, user = svc.resolve("microsoft", {"oid": "1", "email": "boss@club.com", "name": "Boss"})

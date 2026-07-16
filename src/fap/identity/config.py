@@ -25,12 +25,37 @@ Tenant ids and domains live only in secrets; none are hard-coded here.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from fap.identity.policy import AccessPolicy
 
 DEFAULT_SESSION_TIMEOUT_MINUTES = 480
+
+
+def development_mode() -> bool:
+    """Is the login gate bypassed for local development?
+
+    Entirely configuration-driven, and true when ANY of these hold:
+
+      * ``FAP_AUTH_PROVIDER=dev``       (pick the dev identity provider), or
+      * ``FAP_ENVIRONMENT=development`` (the platform's dev-mode convention), or
+      * ``environment: development``    in settings (defaults.yaml / settings.local.yaml).
+
+    In development the session is a synthetic Super Admin - no Microsoft, no
+    OAuth, no secrets.toml. Production sets none of these, so it never enters
+    this path and continues to require Microsoft Entra ID sign-in.
+    """
+    if os.environ.get("FAP_AUTH_PROVIDER", "").strip().lower() == "dev":
+        return True
+    if os.environ.get("FAP_ENVIRONMENT", "").strip().lower() == "development":
+        return True
+    try:
+        from fap.config import load_settings
+        return load_settings().environment.strip().lower() == "development"
+    except Exception:
+        return False
 
 
 @dataclass(frozen=True, slots=True)
