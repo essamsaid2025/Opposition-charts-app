@@ -56,6 +56,35 @@ class WorkspaceManager:
         self._state = UserStateRepository(db)
         self.audit = AuditService(AuditRepository(db))
 
+    # ---------------------------------------------------------------- workspaces & projects
+    def list_workspaces(self) -> list[Workspace]:
+        return self._workspaces.list_all()
+
+    def ensure_workspace(self, actor: User) -> Workspace:
+        existing = self._workspaces.list_all()
+        if existing:
+            return existing[0]
+        require(actor.role, Capability.EDIT)
+        ws = Workspace(id=str(uuid.uuid4()), name="My Workspace", owner_id=actor.email)
+        self._workspaces.save(ws)
+        self.audit.record(actor, "workspace.create", target_type="workspace", target_id=ws.id,
+                          detail={"name": ws.name})
+        return ws
+
+    def create_workspace(self, actor: User, name: str) -> Workspace:
+        require(actor.role, Capability.MANAGE_CLUB)
+        ws = Workspace(id=str(uuid.uuid4()), name=name, owner_id=actor.email)
+        self._workspaces.save(ws)
+        self.audit.record(actor, "workspace.create", target_type="workspace", target_id=ws.id,
+                          detail={"name": name})
+        return ws
+
+    def list_projects(self, workspace_id: str) -> list[Project]:
+        return self._projects.list_for_workspace(workspace_id)
+
+    def get_project(self, project_id: str) -> Project | None:
+        return self._projects.get(project_id)
+
     # ---------------------------------------------------------------- club hierarchy
     def create_club(self, actor: User, name: str) -> OrgNode:
         require(actor.role, Capability.MANAGE_CLUB)

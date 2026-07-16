@@ -2141,9 +2141,13 @@ def run_app():
     # Authentication is the platform entry point: identity is verified and
     # authorized before any of the application renders. Unauthenticated or
     # unauthorized visitors never reach the code below (require_login stops).
-    user = require_login()
-    _audit_login(user)
-    _render_identity_sidebar(user)
+    # Standalone, run_app gates and draws its own account panel. Inside the
+    # application shell, the shell already did both, so we skip them here - the
+    # visualization content below is identical either way.
+    user = current_user() or require_login()
+    if not st.session_state.get("_in_shell"):
+        _audit_login(user)
+        _render_identity_sidebar(user)
 
     app_theme_name = st.sidebar.selectbox("App theme (UI only)", list(APP_THEMES.keys()), index=0)
     inject_css(APP_THEMES[app_theme_name])
@@ -2583,6 +2587,18 @@ def run_app():
                 unsafe_allow_html=True)
 
 
+def main() -> None:
+    """Entry point: the professional application shell wraps the platform and
+    dispatches to pages. The Open Play engine (run_app) is injected as the
+    Opponent Analysis page, so nothing about the visualization changes.
+
+    run_app() still works on its own - the shell is an additional layer, not a
+    replacement - which keeps backward compatibility.
+    """
+    from fap.ui.app_shell import render_shell
+    render_shell(open_play_renderer=run_app)
+
+
 import os as _os
 if not _os.environ.get("FAP_TEST"):
-    run_app()
+    main()
