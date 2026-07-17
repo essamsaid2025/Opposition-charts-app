@@ -194,7 +194,33 @@ MIGRATIONS: list[tuple[int, str]] = [
             PRIMARY KEY (user_id, draft_key)
         );
     """),
-    # (7, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 5.3 - Persistent Report Builder. Additive: report version history and
+    # managed image assets (bytes live in storage; this is the catalogue).
+    (7, """
+        CREATE TABLE IF NOT EXISTS report_versions (
+            id TEXT PRIMARY KEY,
+            report_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            document TEXT NOT NULL DEFAULT '{}',
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT,
+            FOREIGN KEY (report_id) REFERENCES reports(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_report_versions ON report_versions(report_id);
+
+        CREATE TABLE IF NOT EXISTS report_images (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            filename TEXT NOT NULL DEFAULT '',
+            mime TEXT NOT NULL DEFAULT '',
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            owner TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_report_images_ws ON report_images(workspace_id);
+    """),
+    # (8, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

@@ -56,9 +56,32 @@ class Section:
 
 
 @dataclass(slots=True)
+class Block:
+    """One editable element of a report document.
+
+    ``kind`` selects the payload shape - the document stays JSON-native and new
+    block kinds need no model change:
+
+        text  -> {"text": "markdown with # headings and - bullets"}
+        image -> {"image_id": "...", "caption": "...", "width_pct": 100}
+        chart -> {"viz_id": "...", "controls": {...}, "caption": ""}
+
+    A chart block stores a REFERENCE to a registered visualization, never a
+    duplicated image: the renderer regenerates it from the saved dataset at
+    export time.
+    """
+    id: str
+    kind: str                                   # text | image | chart
+    title: str = ""
+    hidden: bool = False
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class Cover:
     title: str = "Report"
     subtitle: str = ""
+    cover_image: str = ""                       # image_id of an uploaded cover
     club: str = ""
     organization: str = ""
     competition: str = ""
@@ -80,6 +103,11 @@ class ReportDocument:
     template_id: str = ""
     cover: Cover = field(default_factory=Cover)
     sections: list[Section] = field(default_factory=list)
+    #: editor content - an ordered, editable sequence of blocks. Template-built
+    #: ``sections`` render first; blocks are what the visual editor manages.
+    blocks: list[Block] = field(default_factory=list)
+    notes: str = ""
+    export_settings: dict[str, Any] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
     # -- serialization (JSON round-trip for persistence) --------------
@@ -99,9 +127,14 @@ class ReportDocument:
                 notes=s.get("notes", ""), markdown=s.get("markdown", ""))
             for s in data.get("sections", [])
         ]
+        blocks = [Block(id=b["id"], kind=b["kind"], title=b.get("title", ""),
+                        hidden=bool(b.get("hidden", False)), payload=b.get("payload", {}))
+                  for b in data.get("blocks", [])]
         return cls(id=data["id"], title=data["title"],
                    template_id=data.get("template_id", ""), cover=cover,
-                   sections=sections, meta=data.get("meta", {}))
+                   sections=sections, blocks=blocks, notes=data.get("notes", ""),
+                   export_settings=data.get("export_settings", {}),
+                   meta=data.get("meta", {}))
 
 
 @dataclass(slots=True)

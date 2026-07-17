@@ -79,6 +79,19 @@ class MarkdownReportExporter(ReportExporter):
                 lines += [s.markdown, ""]
             if s.notes:
                 lines += [f"**Notes:** {s.notes}", ""]
+        for b in document.blocks:
+            if b.hidden:
+                continue
+            if b.title:
+                lines += [f"## {b.title}", ""]
+            if b.kind == "text":
+                lines += [b.payload.get("text", ""), ""]
+            elif b.kind == "chart":
+                lines += [f"_[chart: {b.payload.get('viz_id', '')}]_", ""]
+            elif b.kind == "image":
+                lines += [f"_[image: {b.payload.get('caption') or b.payload.get('image_id', '')}]_", ""]
+        if document.notes:
+            lines += ["## Notes", "", document.notes, ""]
         text = "\n".join(lines)
         return RenderedReport(content=text.encode("utf-8"), mime="text/markdown",
                               filename=f"{_slug(document.title)}.md", text=text)
@@ -92,8 +105,12 @@ class HtmlReportExporter(ReportExporter):
 
     def render(self, document: ReportDocument, branding: Any = None) -> RenderedReport:
         css = _report_css(branding)
-        body = _cover_html(document.cover, branding) + "".join(
-            _section_html(s) for s in document.sections)
+        body = (_cover_html(document.cover, branding)
+                + "".join(_section_html(s) for s in document.sections)
+                + "".join(_block_html(b) for b in document.blocks if not b.hidden))
+        if document.notes:
+            body += (f"<section class='section'><h2>Notes</h2>"
+                     f"<div class='notes'>{_esc(document.notes)}</div></section>")
         page = (f"<!doctype html><html><head><meta charset='utf-8'>"
                 f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
                 f"<title>{_esc(document.title)}</title><style>{css}</style></head>"
@@ -191,6 +208,57 @@ def _cover_html(c: Cover, branding: Any) -> str:
     return (f"<section class='cover'><div class='logos'>{logos}</div>"
             f"<h1>{_esc(c.title)}</h1><div class='sub'>{_esc(c.subtitle)}</div>"
             f"<div class='meta'>{meta}</div></section>")
+
+
+def _markdown_to_html(text: str) -> str:
+    """Minimal, safe rendering of the editor's text blocks: #/##/### headings,
+    - bullets, blank-line paragraphs. Everything is escaped first."""
+    html_lines, bullets = [], False
+    for raw in (text or "").splitlines():
+        line = raw.rstrip()
+        if line.startswith("- "):
+            if not bullets:
+                html_lines.append("<ul>"); bullets = True
+            html_lines.append(f"<li>{_esc(line[2:])}</li>")
+            continue
+        if bullets:
+            html_lines.append("</ul>"); bullets = False
+        if line.startswith("### "):
+            html_lines.append(f"<h4>{_esc(line[4:])}</h4>")
+        elif line.startswith("## "):
+            html_lines.append(f"<h3>{_esc(line[3:])}</h3>")
+        elif line.startswith("# "):
+            html_lines.append(f"<h2>{_esc(line[2:])}</h2>")
+        elif line.strip():
+            html_lines.append(f"<p>{_esc(line)}</p>")
+    if bullets:
+        html_lines.append("</ul>")
+    return "".join(html_lines)
+
+
+def _block_html(b: Any) -> str:
+    """Render one editor block. Charts/images arrive pre-materialized as base64
+    - the exporter only embeds, it never renders a chart itself."""
+    parts = ["<section class='section fap-block'>"]
+    if b.title:
+        parts.append(f"<h2>{_esc(b.title)}</h2>")
+    if b.kind == "text":
+        parts.append(_markdown_to_html(b.payload.get("text", "")))
+    elif b.kind in ("image", "chart"):
+        data = b.payload.get("image_b64", "")
+        mime = b.payload.get("mime", "image/png")
+        width = int(b.payload.get("width_pct", 100) or 100)
+        if data:
+            parts.append(f"<img style='width:{width}%;max-width:100%' "
+                         f"alt='{_esc(b.title or b.kind)}' src='data:{mime};base64,{data}'/>")
+        elif b.kind == "chart":
+            parts.append(f"<div class='notes'>Chart “{_esc(b.payload.get('viz_id',''))}” "
+                         f"could not be regenerated (no dataset available).</div>")
+        caption = b.payload.get("caption", "")
+        if caption:
+            parts.append(f"<div class='notes'>{_esc(caption)}</div>")
+    parts.append("</section>")
+    return "".join(parts)
 
 
 def _section_html(s: Section) -> str:

@@ -84,6 +84,10 @@ class ReportsPage(Page):
         with st.container(border=True):
             c1, c2 = st.columns([4, 2])
             c1.markdown(f"**{r.title}**  \n_{r.template_id}_ · {r.owner} · {r.updated_at}")
+            if c1.button("Open in editor", key=f"open_{r.id}", type="primary"):
+                from fap.ui.builtin.report_editor import OPEN_REPORT
+                st.session_state[OPEN_REPORT] = r.id      # navigation only
+                shell.goto("report_editor")
             with c2:
                 fmt = st.selectbox("Export", reports.available_formats(),
                                    key=f"fmt_{r.id}", label_visibility="collapsed")

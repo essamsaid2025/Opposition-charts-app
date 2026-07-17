@@ -9,5 +9,7 @@ import pipeline. Consumers never touch this: they keep calling
 """
 from fap.storage.base import DatasetStorage, safe_name
 from fap.storage.parquet import ParquetDatasetStorage
+from fap.storage.images import ALLOWED_MIME, ImageStorage, LocalImageStorage
 
-__all__ = ["DatasetStorage", "ParquetDatasetStorage", "safe_name"]
+__all__ = ["DatasetStorage", "ParquetDatasetStorage", "safe_name",
+           "ImageStorage", "LocalImageStorage", "ALLOWED_MIME"]

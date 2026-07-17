@@ -17,12 +17,16 @@ import pandas as pd
 from fap.core.exceptions import AuthError
 from fap.db.engine import Database
 from fap.identity.models import User
+from fap.reports.blocks import ChartBlockRenderer
 from fap.reports.builders import DocumentBuilder
 from fap.reports.exporters import RenderedReport
 from fap.reports.models import ReportDocument, ReportRecord
 from fap.reports.registry import load_builtin_reports
 from fap.reports.renderer import ReportRenderer
-from fap.reports.repository import ReportDraftRepository, ReportRepository
+from fap.reports.repository import (
+    ReportDraftRepository, ReportImage, ReportImageRepository, ReportRepository,
+    ReportVersion, ReportVersionRepository,
+)
 from fap.reports.sections import BuildContext
 from fap.workspaces.audit import AuditService
 from fap.workspaces.permissions import Capability, can, require
@@ -30,14 +34,22 @@ from fap.workspaces.repositories import AuditRepository
 
 
 class ReportsManager:
-    def __init__(self, db: Database, branding: Any = None) -> None:
+    def __init__(self, db: Database, branding: Any = None, *,
+                 frame_provider: Any = None, images: Any = None,
+                 themes: Any = None, cache: Any = None) -> None:
         load_builtin_reports()
         self._db = db
         self._reports = ReportRepository(db)
         self._drafts = ReportDraftRepository(db)
+        self._versions = ReportVersionRepository(db)
+        self._image_repo = ReportImageRepository(db)
         self._builder = DocumentBuilder()
         self._renderer = ReportRenderer()
         self._branding = branding
+        # injected platform services (reused, never re-implemented)
+        self._frame_provider = frame_provider    # dataset_id -> DataFrame | None
+        self._images = images                    # ImageStorage
+        self._charts = ChartBlockRenderer(themes=themes, cache=cache)
         self.audit = AuditService(AuditRepository(db))
 
     # ---------------------------------------------------------------- catalog
@@ -142,11 +154,133 @@ class ReportsManager:
         self._reports.delete(report_id)
         self.audit.record(user, "report.delete", target_type="report", target_id=report_id)
 
+    # ---------------------------------------------------------------- editor persistence
+    def save_document(self, user: User, report_id: str, document: ReportDocument,
+                      note: str = "") -> ReportRecord:
+        """Persist an edited document (this IS the autosave: every change lands
+        in the platform database, never session_state)."""
+        rec = self._require_editable(user, report_id)
+        rec.document = document.to_dict()
+        rec.title = document.title or rec.title
+        self._reports.save(rec)
+        return rec
+
+    def update_blocks(self, user: User, report_id: str, mutate: Any) -> ReportDocument:
+        """Load -> mutate(document) -> save. The editor calls this for every
+        block operation, so the document is always durable."""
+        doc = self.document(report_id)
+        if doc is None:
+            raise ValueError(f"report {report_id!r} not found")
+        mutate(doc)
+        self.save_document(user, report_id, doc)
+        return doc
+
+    def save_as(self, user: User, report_id: str, title: str) -> ReportRecord:
+        """Duplicate under a new title (Save As...)."""
+        copy = self.duplicate(user, report_id, title=title)
+        self.audit.record(user, "report.save_as", target_type="report", target_id=copy.id,
+                          detail={"source": report_id, "title": title})
+        return copy
+
+    # ---------------------------------------------------------------- version history
+    def save_version(self, user: User, report_id: str, note: str = "") -> ReportVersion:
+        """Manual Save = an immutable snapshot the user can return to."""
+        rec = self._require_editable(user, report_id)
+        version = ReportVersion(id=str(uuid.uuid4()), report_id=report_id,
+                                version=self._versions.next_version(report_id),
+                                document=dict(rec.document), note=note,
+                                created_by=user.email)
+        self._versions.add(version)
+        rec.version = version.version
+        self._reports.save(rec)
+        self.audit.record(user, "report.version", target_type="report", target_id=report_id,
+                          detail={"version": version.version, "note": note})
+        return version
+
+    def list_versions(self, report_id: str) -> list[ReportVersion]:
+        return self._versions.list(report_id)
+
+    def restore_version(self, user: User, report_id: str, version: int) -> ReportRecord:
+        snap = self._versions.get(report_id, version)
+        if snap is None:
+            raise ValueError(f"version {version} of report {report_id!r} not found")
+        rec = self._require_editable(user, report_id)
+        self.save_version(user, report_id, note=f"auto before restore of v{version}")
+        rec.document = dict(snap.document)
+        self._reports.save(rec)
+        self.audit.record(user, "report.restore_version", target_type="report",
+                          target_id=report_id, detail={"version": version})
+        return rec
+
+    # ---------------------------------------------------------------- image manager
+    def upload_image(self, user: User, data: bytes, filename: str, mime: str,
+                     workspace_id: str | None = None) -> ReportImage:
+        """Store an image ONCE; reports reference it by id."""
+        require(user.role, Capability.EDIT)
+        if self._images is None:
+            raise ValueError("Image storage is not configured.")
+        image_id = str(uuid.uuid4())
+        self._images.save(image_id, data, mime)
+        record = ReportImage(id=image_id, filename=filename, mime=mime,
+                             size_bytes=len(data), workspace_id=workspace_id,
+                             owner=user.email)
+        self._image_repo.add(record)
+        self.audit.record(user, "report.image_upload", target_type="image",
+                          target_id=image_id, detail={"filename": filename})
+        return record
+
+    def preview_chart(self, viz_id: str, frame: Any, controls: dict[str, Any] | None = None,
+                      dpi: int = 110) -> bytes | None:
+        """PNG preview of a registered visualization for the chart picker.
+        Reuses the platform renderer - no chart code here."""
+        return self._charts.render_png(viz_id, frame, controls or {}, dpi=dpi)
+
+    def dataset_frame(self, dataset_id: str | None) -> Any:
+        """The saved dataset behind a report (via the workspace's storage)."""
+        if not dataset_id or self._frame_provider is None:
+            return None
+        return self._frame_provider(dataset_id)
+
+    def image_bytes(self, image_id: str) -> bytes | None:
+        return self._images.load(image_id) if self._images else None
+
+    def image_mime(self, image_id: str) -> str:
+        return self._images.mime(image_id) if self._images else ""
+
+    def list_images(self, workspace_id: str | None = None) -> list[ReportImage]:
+        return self._image_repo.list(workspace_id)
+
+    def delete_image(self, user: User, image_id: str) -> None:
+        require(user.role, Capability.EDIT)
+        if self._images is not None:
+            self._images.delete(image_id)
+        self._image_repo.delete(image_id)
+        self.audit.record(user, "report.image_delete", target_type="image", target_id=image_id)
+
     # ---------------------------------------------------------------- export
+    def _materialize(self, doc: ReportDocument, record: ReportRecord | None) -> ReportDocument:
+        """Regenerate chart blocks from the SAVED dataset and inline image
+        assets, so the exporter only embeds. Deterministic for the same data."""
+        dataset_id = (record.dataset_id if record else None) or doc.meta.get("dataset_id")
+        frame = None
+        if dataset_id and self._frame_provider is not None:
+            frame = self._frame_provider(dataset_id)
+        self._charts.materialize(doc, frame)
+        if self._images is not None:
+            for block in doc.blocks:
+                if block.kind == "image" and not block.hidden:
+                    data = self._images.load(block.payload.get("image_id", ""))
+                    if data:
+                        import base64
+                        block.payload["image_b64"] = base64.b64encode(data).decode("ascii")
+                        block.payload["mime"] = self._images.mime(block.payload["image_id"])
+        return doc
+
     def render(self, user: User, report_id: str, fmt: str = "html") -> RenderedReport:
         doc = self.document(report_id)
         if doc is None:
             raise ValueError(f"report {report_id!r} not found")
+        doc = self._materialize(doc, self._reports.get(report_id))
         rendered = self._renderer.render(doc, fmt, self._branding)
         self.audit.record(user, "report.export", target_type="report", target_id=report_id,
                           detail={"format": fmt})

@@ -43,19 +43,26 @@ from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.layout import LayoutEngine
 from fap.visuals.renderer import Renderer
 from fap.reports import ReportsManager
-from fap.storage import DatasetStorage, ParquetDatasetStorage
+from fap.storage import DatasetStorage, LocalImageStorage, ParquetDatasetStorage
 from fap.workspaces import WorkspaceManager, WorkspaceService
 
 
-def _reports_manager(db: Database) -> ReportsManager:
-    """Reports engine over the shared DB, with the default platform branding
-    (the shell may rebuild it with configured branding). Headless-safe."""
+def _reports_manager(reg: "ServiceRegistry") -> ReportsManager:
+    """Reports engine over the shared platform services: DB, branding, image
+    storage, figure themes, cache, and the workspace's dataset frames (so chart
+    blocks regenerate from the saved dataset at export). Headless-safe."""
     try:
         from fap.theme import DEFAULT_BRANDING
         branding = DEFAULT_BRANDING
     except Exception:
         branding = None
-    return ReportsManager(db, branding=branding)
+    workspace = reg.get("workspace_manager")
+    return ReportsManager(
+        reg.get("db"), branding=branding,
+        frame_provider=workspace.dataset_frame,      # reuse persistent dataset storage
+        images=reg.get("image_storage"),
+        themes=reg.get("themes"),
+        cache=reg.get("cache"))
 
 
 @dataclass(slots=True)
@@ -181,10 +188,14 @@ def init_platform(root: Path | None = None, *,
     services.register("importer", _importer)
     services.register("dataset_storage", lambda _: ParquetDatasetStorage(
         Path(settings.user_data_dir) / "datasets"))
+    services.register("image_storage", lambda _: LocalImageStorage(
+        Path(settings.user_data_dir) / "images"))
+    services.register("themes", lambda _: ThemeManager(
+        settings.themes_dir, Path(settings.user_data_dir) / "themes"))
     services.register("workspace_manager",
                       lambda reg: WorkspaceManager(reg.get("db"), cache=reg.get("cache"),
                                                    storage=reg.get("dataset_storage")))
-    services.register("reports", lambda reg: _reports_manager(reg.get("db")))
+    services.register("reports", _reports_manager)
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())

@@ -16,7 +16,12 @@ from fap.reports import visual_section  # noqa: F401  (registers the visuals sec
 
 # reports engine
 from fap.reports.models import (
-    Chart, Cover, Insight, KPI, ReportDocument, ReportRecord, Section, Table,
+    Block, Chart, Cover, Insight, KPI, ReportDocument, ReportRecord, Section, Table,
+)
+from fap.reports.blocks import (
+    BLOCK_KINDS, ChartBlockRenderer, add_block, chart_block, delete_block,
+    duplicate_block, image_block, move_block, reorder_blocks, set_hidden,
+    text_block, visible_blocks,
 )
 from fap.reports.sections import BuildContext, SectionBuilder, section_builder_registry
 from fap.reports.templates import CustomTemplate, ReportTemplate, template_registry
@@ -31,6 +36,9 @@ __all__ = [
     "ReportBuilder", "ReportSection", "ReportSpec", "section_registry",
     # models
     "ReportDocument", "ReportRecord", "Section", "Cover", "KPI", "Table", "Insight", "Chart",
+    "Block", "BLOCK_KINDS", "text_block", "image_block", "chart_block", "add_block",
+    "delete_block", "duplicate_block", "move_block", "reorder_blocks", "set_hidden",
+    "visible_blocks", "ChartBlockRenderer",
     # engine
     "BuildContext", "SectionBuilder", "section_builder_registry",
     "ReportTemplate", "CustomTemplate", "template_registry",
