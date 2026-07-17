@@ -44,9 +44,18 @@ class VersionDiff:
     changed: list[str]
 
 
+#: user_state scope holding the active-dataset pointer (one source of truth)
+ACTIVE_DATASET_SCOPE = "active_dataset"
+
+
 class WorkspaceManager:
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, cache: Any = None, storage: Any = None) -> None:
         self._db = db
+        # Dataset data has two tiers:
+        #   storage (DatasetStorage) - the SOURCE OF TRUTH, survives restarts
+        #   cache   (CacheManager)   - an accelerator in front of it, may expire
+        self._cache = cache
+        self._storage = storage
         self._org = OrgRepository(db)
         self._datasets = DatasetRepository(db)
         self._presets = PresetRepository(db)
@@ -212,6 +221,11 @@ class WorkspaceManager:
         require(actor.role, Capability.EDIT)
         self._require_dataset(dataset_id)
         self._datasets.delete(dataset_id)
+        # drop the stored frame + any cached copy so deletion is complete
+        if self._storage is not None:
+            self._storage.delete(dataset_id)
+        if self._cache is not None:
+            self._cache.delete(self._frame_key(dataset_id))
         self.audit.record(actor, "dataset.delete", target_type="dataset", target_id=dataset_id)
 
     def export_dataset(self, actor: User, dataset_id: str) -> dict[str, Any]:
@@ -227,6 +241,65 @@ class WorkspaceManager:
         if ds is None:
             raise ValueError(f"dataset {dataset_id!r} not found")
         return ds
+
+    # ---------------------------------------------------------------- active dataset
+    # THE single source of truth. Whatever imports a file (Opponent Analysis)
+    # activates it here; every consumer (Reports, Scouting, Match Analysis, Set
+    # Piece) reads it from here. The pointer lives in the existing user_state
+    # table; the frame lives in the existing platform cache - no new store, no
+    # session_state, no duplicated state.
+    @staticmethod
+    def _frame_key(dataset_id: str) -> str:
+        return f"dataset::{dataset_id}"
+
+    def store_dataset_frame(self, dataset_id: str, frame: pd.DataFrame) -> None:
+        """Persist a dataset's normalized frame (source of truth), then warm the
+        cache. Storage first: if caching fails the data is still safe."""
+        if self._storage is not None:
+            self._storage.save(dataset_id, frame)
+        if self._cache is not None:
+            self._cache.set(self._frame_key(dataset_id), frame)
+
+    def dataset_frame(self, dataset_id: str) -> pd.DataFrame | None:
+        """A dataset's frame: cache -> persistent storage -> re-warm cache.
+        The caller never learns which tier answered."""
+        if not dataset_id:
+            return None
+        if self._cache is not None:
+            hit = self._cache.get(self._frame_key(dataset_id))
+            if hit is not None:
+                return hit
+        if self._storage is None:
+            return None
+        frame = self._storage.load(dataset_id)           # survives cache expiry/restart
+        if frame is not None and self._cache is not None:
+            self._cache.set(self._frame_key(dataset_id), frame)   # re-warm
+        return frame
+
+    def set_active_dataset(self, user: User, dataset_id: str,
+                           frame: pd.DataFrame | None = None) -> None:
+        """Mark ``dataset_id`` active for this user and (optionally) publish the
+        exact frame every screen should consume - persisted, not just cached."""
+        self._state.save_state(user.email, ACTIVE_DATASET_SCOPE, {"dataset_id": dataset_id})
+        if frame is not None:
+            self.store_dataset_frame(dataset_id, frame)
+
+    def active_dataset_id(self, user: User) -> str | None:
+        return self._state.load_state(user.email, ACTIVE_DATASET_SCOPE).get("dataset_id")
+
+    def active_dataset(self, user: User) -> Dataset | None:
+        dataset_id = self.active_dataset_id(user)
+        return self._datasets.get(dataset_id) if dataset_id else None
+
+    def active_frame(self, user: User) -> pd.DataFrame | None:
+        """The canonical event frame of the active dataset, or None if nothing is
+        active. Unchanged signature for every consumer (Reports, Scouting, Match
+        Analysis, Set Piece, Dashboard, Opponent Analysis): it resolves through
+        cache -> persistent storage transparently and survives cache expiry."""
+        return self.dataset_frame(self.active_dataset_id(user) or "")
+
+    def clear_active_dataset(self, user: User) -> None:
+        self._state.save_state(user.email, ACTIVE_DATASET_SCOPE, {})
 
     # ---------------------------------------------------------------- presets / templates
     def save_preset(self, actor: User, *, kind: str, name: str, document: dict[str, Any],

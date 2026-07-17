@@ -279,14 +279,18 @@ def _audit_login(user) -> None:
         pass
 
 
-def _record_import(user, filename: str, result) -> None:
-    """Add a successful import to the Data Manager (history + audit). Wrapped so
-    a persistence hiccup never blocks the analysis screen."""
+def _record_import(user, filename: str, result, frame=None) -> None:
+    """Add a successful import to the Data Manager (history + audit) AND make it
+    the platform's active dataset, so every other screen (Reports, Scouting,
+    Match/Set-Piece Analysis) consumes this exact frame without re-uploading.
+    WorkspaceManager owns that state - never session_state. Wrapped so a
+    persistence hiccup never blocks the analysis screen."""
     if st.session_state.get("_recorded_import") == getattr(result, "provider_id", "") + filename:
         return
     try:
         s = result.summary
-        workspace_manager().register_dataset(
+        wm = workspace_manager()
+        dataset = wm.register_dataset(
             user, name=filename, provider_id=result.provider_id,
             coord_system=result.coord_system, rows=int(s.get("rows", 0)),
             season=str(s.get("season", "")), competition=str(s.get("competition", "")),
@@ -294,6 +298,9 @@ def _record_import(user, filename: str, result) -> None:
                       "mapping": result.mapping,
                       "quality": getattr(result.quality, "overall", None),
                       "players": s.get("players", 0)})
+        # publish the exact frame the charts consume as THE active dataset
+        wm.set_active_dataset(user, dataset.id,
+                              frame=frame if frame is not None else result.frame)
         st.session_state["_recorded_import"] = result.provider_id + filename
     except Exception:
         pass
@@ -2210,7 +2217,7 @@ def run_app():
         st.error(f"Could not process file: {e}")
         st.stop()
 
-    _record_import(user, uploaded.name, result)
+    _record_import(user, uploaded.name, result, frame=df)
     render_import_summary(result, cleaned)
 
     # Filters (v3 preserved)

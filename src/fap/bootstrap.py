@@ -43,6 +43,7 @@ from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.layout import LayoutEngine
 from fap.visuals.renderer import Renderer
 from fap.reports import ReportsManager
+from fap.storage import DatasetStorage, ParquetDatasetStorage
 from fap.workspaces import WorkspaceManager, WorkspaceService
 
 
@@ -130,6 +131,10 @@ class PlatformContext:
         return self.services.get("importer")
 
     @property
+    def dataset_storage(self) -> DatasetStorage:
+        return self.services.get("dataset_storage")
+
+    @property
     def workspace_manager(self) -> WorkspaceManager:
         return self.services.get("workspace_manager")
 
@@ -174,8 +179,11 @@ def init_platform(root: Path | None = None, *,
     services.register("validation", lambda _: ValidationEngine())
     services.register("pipeline", lambda _: DataPipeline())
     services.register("importer", _importer)
+    services.register("dataset_storage", lambda _: ParquetDatasetStorage(
+        Path(settings.user_data_dir) / "datasets"))
     services.register("workspace_manager",
-                      lambda reg: WorkspaceManager(reg.get("db")))
+                      lambda reg: WorkspaceManager(reg.get("db"), cache=reg.get("cache"),
+                                                   storage=reg.get("dataset_storage")))
     services.register("reports", lambda reg: _reports_manager(reg.get("db")))
 
     return PlatformContext(settings=settings, services=services,

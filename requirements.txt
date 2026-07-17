@@ -12,3 +12,6 @@ scipy
 pillow
 # Identity layer: Streamlit's native OIDC auth uses Authlib under the hood.
 Authlib>=1.3
+# Persistent dataset storage: normalized frames are stored as Parquet
+# (dtype-exact, compressed, fastest re-open) so data survives restarts.
+pyarrow>=14

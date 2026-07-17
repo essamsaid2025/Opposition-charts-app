@@ -262,3 +262,153 @@ def test_old_project_without_new_columns_still_loads(db):
     assert loaded is not None and loaded.name == "Old Project"
     row = db.query("SELECT status, tags FROM projects WHERE id='old'")[0]
     assert row["status"] == "active" and row["tags"] == "[]"    # defaults applied
+
+
+# ------------------------------------------------ active dataset (one source of truth)
+def _cached_wm(tmp_path) -> WorkspaceManager:
+    from fap.cache import CacheManager
+    from fap.config.settings import CacheSettings
+    return WorkspaceManager(Database(tmp_path / "a.sqlite3"),
+                            cache=CacheManager(CacheSettings(backend="memory")))
+
+
+def test_workspace_manager_owns_the_active_dataset(tmp_path):
+    import pandas as pd
+    wm = _cached_wm(tmp_path)
+    frame = pd.DataFrame({"event_type": ["pass"], "x": [10.0], "y": [20.0]})
+    ds = wm.register_dataset(ANALYST, name="vs Rival", provider_id="generic_csv", rows=1)
+
+    assert wm.active_dataset(ANALYST) is None          # nothing active yet
+    wm.set_active_dataset(ANALYST, ds.id, frame=frame)
+
+    assert wm.active_dataset_id(ANALYST) == ds.id
+    assert wm.active_dataset(ANALYST).name == "vs Rival"
+    pd.testing.assert_frame_equal(wm.active_frame(ANALYST), frame)
+
+
+def test_every_screen_consumes_the_same_active_frame(tmp_path):
+    """Opponent Analysis activates; Reports/Scouting/Match read the SAME object."""
+    import pandas as pd
+    wm = _cached_wm(tmp_path)
+    frame = pd.DataFrame({"event_type": ["pass", "shot"], "x": [1.0, 2.0], "y": [3.0, 4.0]})
+    ds = wm.register_dataset(ANALYST, name="d", rows=2)
+    wm.set_active_dataset(ANALYST, ds.id, frame=frame)      # Opponent Analysis
+
+    reports_df = wm.active_frame(ANALYST)                   # Reports
+    scouting_df = wm.active_frame(ANALYST)                  # Scouting
+    match_df = wm.active_frame(ANALYST)                     # Match Analysis
+    for other in (scouting_df, match_df):
+        pd.testing.assert_frame_equal(reports_df, other)
+    assert len(reports_df) == 2
+
+
+def test_active_dataset_is_per_user_and_clearable(tmp_path):
+    import pandas as pd
+    wm = _cached_wm(tmp_path)
+    ds = wm.register_dataset(ANALYST, name="d")
+    wm.set_active_dataset(ANALYST, ds.id, frame=pd.DataFrame({"x": [1]}))
+    assert wm.active_dataset_id(READER) is None             # other users unaffected
+    wm.clear_active_dataset(ANALYST)
+    assert wm.active_dataset_id(ANALYST) is None
+
+
+def test_active_frame_none_without_cache_but_pointer_survives(tmp_path):
+    """No cache injected -> pointer still works, frame simply unavailable."""
+    wm = WorkspaceManager(Database(tmp_path / "n.sqlite3"))   # no cache
+    ds = wm.register_dataset(ANALYST, name="d")
+    wm.set_active_dataset(ANALYST, ds.id)
+    assert wm.active_dataset_id(ANALYST) == ds.id
+    assert wm.active_frame(ANALYST) is None
+
+
+# ------------------------------------------------ persistent dataset storage
+def _persistent_wm(tmp_path, cache=None):
+    """WorkspaceManager with real persistent storage (+ optional cache)."""
+    from fap.storage import ParquetDatasetStorage
+    return WorkspaceManager(Database(tmp_path / "p.sqlite3"), cache=cache,
+                            storage=ParquetDatasetStorage(tmp_path / "datasets"))
+
+
+def _frame():
+    import pandas as pd
+    return pd.DataFrame({
+        "event_type": ["pass", "shot"], "x": [10.0, 90.0], "y": [20.0, 50.0],
+        "is_forward": [True, False],
+        "start_third": pd.Categorical(["Defensive Third", "Final Third"]),
+    })
+
+
+def test_dataset_frame_survives_cache_expiry(tmp_path):
+    """The cache is only an accelerator - clearing it must not lose data."""
+    import pandas as pd
+    from fap.cache import CacheManager
+    from fap.config.settings import CacheSettings
+    cache = CacheManager(CacheSettings(backend="memory"))
+    wm = _persistent_wm(tmp_path, cache=cache)
+    ds = wm.register_dataset(ANALYST, name="d", rows=2)
+    wm.set_active_dataset(ANALYST, ds.id, frame=_frame())
+
+    cache.clear()                                    # simulate TTL expiry
+    frame = wm.active_frame(ANALYST)                 # must still resolve
+    assert frame is not None
+    pd.testing.assert_frame_equal(frame, _frame())
+    # and the cache was re-warmed transparently
+    assert cache.get(wm._frame_key(ds.id)) is not None
+
+
+def test_dataset_frame_survives_restart(tmp_path):
+    """A brand-new manager (new process/deploy) re-opens the stored frame."""
+    import pandas as pd
+    wm = _persistent_wm(tmp_path)
+    ds = wm.register_dataset(ANALYST, name="d", rows=2)
+    wm.set_active_dataset(ANALYST, ds.id, frame=_frame())
+
+    reborn = _persistent_wm(tmp_path)                # fresh objects, same disk
+    pd.testing.assert_frame_equal(reborn.active_frame(ANALYST), _frame())
+
+
+def test_storage_is_dtype_exact_no_import_rerun(tmp_path):
+    import pandas as pd
+    from fap.storage import ParquetDatasetStorage
+    store = ParquetDatasetStorage(tmp_path / "s")
+    original = _frame()
+    store.save("abc", original)
+    loaded = store.load("abc")
+    pd.testing.assert_frame_equal(loaded, original)          # dtypes preserved
+    assert str(loaded["start_third"].dtype) == "category"
+    assert store.exists("abc") and store.size_bytes("abc") > 0
+
+
+def test_storage_load_missing_returns_none(tmp_path):
+    from fap.storage import ParquetDatasetStorage
+    store = ParquetDatasetStorage(tmp_path / "s")
+    assert store.load("never-saved") is None and not store.exists("never-saved")
+
+
+def test_deleting_dataset_removes_stored_frame(tmp_path):
+    wm = _persistent_wm(tmp_path)
+    ds = wm.register_dataset(ANALYST, name="d")
+    wm.set_active_dataset(ANALYST, ds.id, frame=_frame())
+    assert wm._storage.exists(ds.id)
+    wm.delete_dataset(ANALYST, ds.id)
+    assert not wm._storage.exists(ds.id)
+
+
+def test_consumers_call_active_frame_unchanged(tmp_path):
+    """Reports/Scouting/Match/SetPiece/Dashboard use the same one-arg call."""
+    import inspect
+    sig = inspect.signature(WorkspaceManager.active_frame)
+    assert list(sig.parameters) == ["self", "user"]
+    wm = _persistent_wm(tmp_path)
+    ds = wm.register_dataset(ANALYST, name="d")
+    wm.set_active_dataset(ANALYST, ds.id, frame=_frame())
+    assert len(wm.active_frame(ANALYST)) == 2
+
+
+def test_storage_optional_backward_compatible(tmp_path):
+    """WorkspaceManager(db) with no cache and no storage still works."""
+    wm = WorkspaceManager(Database(tmp_path / "b.sqlite3"))
+    ds = wm.register_dataset(ANALYST, name="d")
+    wm.set_active_dataset(ANALYST, ds.id, frame=_frame())     # nowhere to put it
+    assert wm.active_dataset_id(ANALYST) == ds.id             # pointer still works
+    assert wm.active_frame(ANALYST) is None

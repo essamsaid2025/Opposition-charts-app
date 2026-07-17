@@ -44,22 +44,36 @@ class ReportsPage(Page):
 
     # ------------------------------------------------------------ create
     def _create(self, shell, reports) -> None:
+        # The active dataset comes from the platform (WorkspaceManager) - the one
+        # source of truth. No re-upload, and never session_state.
+        dataset = shell.wm.active_dataset(shell.user) if shell.wm else None
+        df = shell.wm.active_frame(shell.user) if shell.wm else None
+        if dataset is None:
+            st.info("No active dataset. Import a file in **Opponent Analysis** — it becomes "
+                    "the active dataset automatically and every screen reuses it.")
+            return
+        st.caption(f"Active dataset: **{dataset.name}** · {dataset.provider_id or 'provider n/a'}"
+                   f" · {dataset.rows:,} rows")
+        if df is None:
+            st.warning("The active dataset's data is no longer cached. Re-open "
+                       "**Opponent Analysis** to refresh it.")
+            return
+
         templates = reports.templates()
         names = {t.info.id: t.info.name for t in templates}
         template = st.selectbox("Template", list(names), format_func=lambda i: names[i],
                                 key="report_template")
         title = st.text_input("Title (optional)", key="report_title")
-        opponent = st.text_input("Opponent", key="report_opponent")
-        dataset = st.session_state.get("_status_dataset", "")
-        df = st.session_state.get("_analysis_df")     # set by the analysis screen, if present
+        opponent = st.text_input("Opponent", key="report_opponent",
+                                 value=dataset.opponent or "")
         if st.button("Create report", type="primary", key="report_create_btn"):
-            if df is None:
-                st.warning("Load a dataset first (Opponent Analysis) to build a report.")
-                return
             try:
-                rec = reports.create(shell.user, template=template, df=df, title=title,
-                                     workspace_id=shell.workspace_id,
-                                     cover={"opponent": opponent})
+                rec = reports.create(
+                    shell.user, template=template, df=df, title=title,
+                    workspace_id=shell.workspace_id or dataset.workspace_id,
+                    dataset_id=dataset.id,
+                    cover={"opponent": opponent, "competition": dataset.competition,
+                           "season": dataset.season, "match_date": dataset.match_date})
                 st.success(f"Created “{rec.title}”.")
                 st.rerun()
             except Exception as exc:
