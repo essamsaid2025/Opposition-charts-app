@@ -175,6 +175,26 @@ class ReportsManager:
         self.save_document(user, report_id, doc)
         return doc
 
+    def studio(self, report_id: str) -> "ReportStudio | None":
+        """The page-based editable view of a report (studio overlay + document).
+        Legacy reports with no overlay are migrated on read (one default page)."""
+        from fap.reports.studio import ReportStudio
+        doc = self.document(report_id)
+        return ReportStudio.from_document(doc) if doc is not None else None
+
+    def update_studio(self, user: User, report_id: str, mutate: Any) -> "ReportStudio":
+        """Load studio -> mutate(studio) -> save. The studio equivalent of
+        ``update_blocks``: reuses the same autosave/persistence path, so every
+        page/layout change is durable with no new storage."""
+        from fap.reports.studio import ReportStudio
+        doc = self.document(report_id)
+        if doc is None:
+            raise ValueError(f"report {report_id!r} not found")
+        studio = ReportStudio.from_document(doc)
+        mutate(studio)
+        self.save_document(user, report_id, studio.to_document())
+        return studio
+
     def save_as(self, user: User, report_id: str, title: str) -> ReportRecord:
         """Duplicate under a new title (Save As...)."""
         copy = self.duplicate(user, report_id, title=title)

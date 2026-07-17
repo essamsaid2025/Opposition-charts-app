@@ -23,6 +23,12 @@ from fap.reports.blocks import (
     duplicate_block, image_block, move_block, reorder_blocks, set_hidden,
     text_block, visible_blocks,
 )
+# report studio (editable page/layout overlay - phase 6A)
+from fap.reports.studio import (
+    Align, Axis, BlockLayout, Edge, EditorState, Page, PageSize, ReportStudio,
+    A4, LETTER, PAGE_SIZES, new_page, page_size,
+)
+from fap.reports import editor_ops
 from fap.reports.sections import BuildContext, SectionBuilder, section_builder_registry
 from fap.reports.templates import CustomTemplate, ReportTemplate, template_registry
 from fap.reports.exporters import RenderedReport, ReportExporter, exporter_registry
@@ -39,6 +45,10 @@ __all__ = [
     "Block", "BLOCK_KINDS", "text_block", "image_block", "chart_block", "add_block",
     "delete_block", "duplicate_block", "move_block", "reorder_blocks", "set_hidden",
     "visible_blocks", "ChartBlockRenderer",
+    # report studio (phase 6A)
+    "ReportStudio", "Page", "PageSize", "BlockLayout", "EditorState",
+    "Align", "Edge", "Axis", "A4", "LETTER", "PAGE_SIZES", "new_page", "page_size",
+    "editor_ops",
     # engine
     "BuildContext", "SectionBuilder", "section_builder_registry",
     "ReportTemplate", "CustomTemplate", "template_registry",
