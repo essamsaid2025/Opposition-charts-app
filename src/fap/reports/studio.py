@@ -251,8 +251,14 @@ class ReportStudio:
     @classmethod
     def _synthesize(cls, document: ReportDocument) -> "ReportStudio":
         """A legacy report (no overlay) becomes one page with its existing blocks
-        stacked in a simple vertical flow - so it opens in the studio unchanged."""
-        page = new_page(title=document.title or "Page 1")
+        stacked in a simple vertical flow - so it opens in the studio unchanged.
+
+        The synthesized page id is DERIVED from the document id (not random) so a
+        legacy report that is opened but not yet saved keeps the same page id across
+        reloads - the editor's per-page widget keys stay stable until the first edit
+        persists the overlay. Saved overlays are unaffected (they take ``_hydrate``)."""
+        page_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"fap-studio-page/{document.id}"))
+        page = Page(id=page_id, title=document.title or "Page 1")
         layouts: dict[str, BlockLayout] = {}
         y = _FLOW_TOP
         for block in document.blocks:

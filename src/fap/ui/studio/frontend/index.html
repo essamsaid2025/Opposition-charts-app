@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html,body{margin:0;padding:0;overflow:hidden;font-family:-apple-system,Segoe UI,Roboto,sans-serif;}
+  #stage{position:relative;margin:0 auto;box-shadow:0 8px 30px rgba(0,0,0,.18);}
+  .fap-b{position:absolute;box-sizing:border-box;overflow:hidden;user-select:none;}
+  .fap-b .content{width:100%;height:100%;overflow:hidden;}
+  .fap-b.sel{outline:2px solid var(--accent);outline-offset:0;}
+  .fap-b.locked{cursor:not-allowed;}
+  .hnd{position:absolute;width:10px;height:10px;background:var(--accent);border:1px solid #fff;border-radius:2px;z-index:99999;}
+  .hnd.nw{cursor:nwse-resize;} .hnd.ne{cursor:nesw-resize;}
+  .hnd.sw{cursor:nesw-resize;} .hnd.se{cursor:nwse-resize;}
+  .hnd.n{cursor:ns-resize;} .hnd.s{cursor:ns-resize;} .hnd.e{cursor:ew-resize;} .hnd.w{cursor:ew-resize;}
+  .guide{position:absolute;background:var(--accent);z-index:99998;pointer-events:none;opacity:.7;}
+  .marquee{position:absolute;border:1px dashed var(--accent);background:rgba(120,120,255,.08);z-index:99997;pointer-events:none;}
+  .grid{position:absolute;inset:0;pointer-events:none;}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+// ---- Streamlit component protocol (hand-written, no build step) ----------
+const Q = {ready:false};
+function post(type, extra){ window.parent.postMessage(Object.assign({isStreamlitMessage:true,type:type}, extra||{}), "*"); }
+function setValue(v){ post("streamlit:setComponentValue", {value: v, dataType: "json"}); }
+function setHeight(h){ post("streamlit:setFrameHeight", {height: h}); }
+window.addEventListener("message", (e)=>{ if(e.data && e.data.type==="streamlit:render"){ render(e.data.args); }});
+post("streamlit:componentReady", {apiVersion: 1});
+
+// ---- state ---------------------------------------------------------------
+let ARGS=null, ZOOM=1, GRID=8, SNAP=true, GUIDES=true, SELECTED=new Set();
+const stage=document.getElementById("stage");
+
+function emit(action, payload){
+  setValue(Object.assign({action:action, nonce: Date.now()+"-"+Math.random().toString(36).slice(2)}, payload||{}));
+}
+function snap(v){ return SNAP && GRID>0 ? Math.round(v/GRID)*GRID : Math.round(v); }
+
+function render(args){
+  ARGS=args; ZOOM=args.zoom||1; GRID=args.grid||8; SNAP=!!args.snap; GUIDES=!!args.guides;
+  SELECTED=new Set(args.selected||[]);
+  const t=args.theme||{};
+  document.body.style.setProperty("--accent", t.accent||"#2563EB");
+  document.body.style.background = t.bg||"#eef1f6";
+  const W=(args.page.w||794)*ZOOM, H=(args.page.h||1123)*ZOOM;
+  stage.style.width=W+"px"; stage.style.height=H+"px";
+  stage.style.background = args.page.background_color || t.surface || "#ffffff";
+  stage.innerHTML="";
+  if(args.page.bg_image){ stage.style.backgroundImage="url('"+args.page.bg_image+"')"; stage.style.backgroundSize="cover"; }
+  else stage.style.backgroundImage="none";
+  if(args.rulers_grid){ const g=document.createElement("div"); g.className="grid";
+    g.style.backgroundImage="linear-gradient(to right,rgba(127,127,127,.12) 1px,transparent 1px),linear-gradient(to bottom,rgba(127,127,127,.12) 1px,transparent 1px)";
+    g.style.backgroundSize=(GRID*ZOOM)+"px "+(GRID*ZOOM)+"px"; stage.appendChild(g); }
+  (args.blocks||[]).forEach(drawBlock);
+  drawHandles();
+  setHeight(H+24);
+}
+
+function drawBlock(b){
+  const el=document.createElement("div");
+  el.className="fap-b"+(SELECTED.has(b.id)?" sel":"")+(b.locked?" locked":"");
+  el.dataset.id=b.id;
+  el.style.left=(b.x*ZOOM)+"px"; el.style.top=(b.y*ZOOM)+"px";
+  el.style.width=(b.w*ZOOM)+"px"; el.style.height=(b.h*ZOOM)+"px";
+  el.style.zIndex=b.z||0; el.style.opacity=(b.opacity==null?1:b.opacity);
+  el.style.borderRadius=(b.radius||0)+"px";
+  if(b.rotation) el.style.transform="rotate("+b.rotation+"deg)";
+  const c=document.createElement("div"); c.className="content"; c.innerHTML=b.html||""; el.appendChild(c);
+  el.addEventListener("pointerdown", (ev)=>startDrag(ev,b,el));
+  stage.appendChild(el);
+}
+
+// ---- selection + drag ----------------------------------------------------
+let drag=null;
+function startDrag(ev,b,el){
+  ev.stopPropagation();
+  const multi=ev.shiftKey||ev.ctrlKey||ev.metaKey;
+  if(multi){ if(SELECTED.has(b.id)) SELECTED.delete(b.id); else SELECTED.add(b.id);
+    emit("multiselect",{ids:Array.from(SELECTED)}); return; }
+  if(!SELECTED.has(b.id)){ SELECTED=new Set([b.id]); emit("select",{block_id:b.id}); }
+  if(b.locked) return;
+  drag={id:b.id, sx:ev.clientX, sy:ev.clientY, ox:b.x, oy:b.y, el:el, moved:false};
+  el.setPointerCapture(ev.pointerId);
+  el.addEventListener("pointermove", onDrag); el.addEventListener("pointerup", endDrag);
+}
+function onDrag(ev){
+  if(!drag) return;
+  const dx=(ev.clientX-drag.sx)/ZOOM, dy=(ev.clientY-drag.sy)/ZOOM;
+  drag.nx=snap(drag.ox+dx); drag.ny=snap(drag.oy+dy); drag.moved=true;
+  drag.el.style.left=(drag.nx*ZOOM)+"px"; drag.el.style.top=(drag.ny*ZOOM)+"px";
+  showGuides(drag.el, drag.nx, drag.ny);
+}
+function endDrag(ev){
+  if(!drag) return; clearGuides();
+  drag.el.removeEventListener("pointermove", onDrag); drag.el.removeEventListener("pointerup", endDrag);
+  if(drag.moved) emit("move",{block_id:drag.id, x:drag.nx, y:drag.ny});
+  drag=null;
+}
+
+// ---- resize handles (single selection) -----------------------------------
+function selBlock(){ if(SELECTED.size!==1) return null;
+  const id=Array.from(SELECTED)[0]; return (ARGS.blocks||[]).find(b=>b.id===id)||null; }
+function drawHandles(){
+  const b=selBlock(); if(!b || b.locked) return;
+  const pos={nw:[0,0],n:[.5,0],ne:[1,0],e:[1,.5],se:[1,1],s:[.5,1],sw:[0,1],w:[0,.5]};
+  Object.keys(pos).forEach(k=>{
+    const h=document.createElement("div"); h.className="hnd "+k;
+    const [fx,fy]=pos[k];
+    h.style.left=((b.x + b.w*fx)*ZOOM - 5)+"px"; h.style.top=((b.y + b.h*fy)*ZOOM - 5)+"px";
+    h.addEventListener("pointerdown",(ev)=>startResize(ev,b,k,h)); stage.appendChild(h);
+  });
+}
+let rz=null;
+function startResize(ev,b,k,h){
+  ev.stopPropagation();
+  rz={b:Object.assign({},b), k:k, sx:ev.clientX, sy:ev.clientY, h:h, cur:Object.assign({},b)};
+  h.setPointerCapture(ev.pointerId);
+  h.addEventListener("pointermove", onResize); h.addEventListener("pointerup", endResize);
+}
+function onResize(ev){
+  if(!rz) return;
+  const dx=(ev.clientX-rz.sx)/ZOOM, dy=(ev.clientY-rz.sy)/ZOOM; const b=rz.b, k=rz.k;
+  let x=b.x,y=b.y,w=b.w,ht=b.h;
+  if(k.includes("e")) w=Math.max(24,b.w+dx);
+  if(k.includes("s")) ht=Math.max(24,b.h+dy);
+  if(k.includes("w")){ w=Math.max(24,b.w-dx); x=b.x+(b.w-w); }
+  if(k.includes("n")){ ht=Math.max(24,b.h-dy); y=b.y+(b.h-ht); }
+  if(ARGS.aspect && (k==="nw"||k==="ne"||k==="sw"||k==="se")){ const r=b.w/b.h; ht=w/r; }
+  rz.cur={id:b.id,x:snap(x),y:snap(y),w:snap(w),h:snap(ht)};
+  const el=stage.querySelector('.fap-b[data-id="'+b.id+'"]');
+  if(el){ el.style.left=(rz.cur.x*ZOOM)+"px"; el.style.top=(rz.cur.y*ZOOM)+"px";
+    el.style.width=(rz.cur.w*ZOOM)+"px"; el.style.height=(rz.cur.h*ZOOM)+"px"; }
+}
+function endResize(ev){
+  if(!rz) return;
+  rz.h.removeEventListener("pointermove", onResize); rz.h.removeEventListener("pointerup", endResize);
+  emit("resize", rz.cur); rz=null;
+}
+
+// ---- alignment guides (visual only) --------------------------------------
+function clearGuides(){ stage.querySelectorAll(".guide").forEach(g=>g.remove()); }
+function showGuides(el,x,y){
+  if(!GUIDES) return; clearGuides();
+  const me=selBlock()||{}; const w=me.w||0, h=me.h||0;
+  const edgesX=[x, x+w/2, x+w], edgesY=[y, y+h/2, y+h];
+  (ARGS.blocks||[]).forEach(o=>{ if(o.id===el.dataset.id) return;
+    [o.x,o.x+o.w/2,o.x+o.w].forEach(ex=>{ edgesX.forEach(mx=>{ if(Math.abs(mx-ex)<=2) vGuide(ex); }); });
+    [o.y,o.y+o.h/2,o.y+o.h].forEach(ey=>{ edgesY.forEach(my=>{ if(Math.abs(my-ey)<=2) hGuide(ey); }); });
+  });
+}
+function vGuide(x){ const g=document.createElement("div"); g.className="guide";
+  g.style.left=(x*ZOOM)+"px"; g.style.top=0; g.style.width="1px"; g.style.height="100%"; stage.appendChild(g); }
+function hGuide(y){ const g=document.createElement("div"); g.className="guide";
+  g.style.top=(y*ZOOM)+"px"; g.style.left=0; g.style.height="1px"; g.style.width="100%"; stage.appendChild(g); }
+
+// ---- marquee (selection rectangle) + deselect ----------------------------
+let marq=null;
+stage.addEventListener("pointerdown",(ev)=>{
+  if(ev.target!==stage && !ev.target.classList.contains("grid")) return;
+  const r=stage.getBoundingClientRect();
+  marq={x0:ev.clientX-r.left, y0:ev.clientY-r.top, el:document.createElement("div")};
+  marq.el.className="marquee"; stage.appendChild(marq.el);
+  stage.setPointerCapture(ev.pointerId);
+  stage.addEventListener("pointermove", onMarq); stage.addEventListener("pointerup", endMarq);
+});
+function onMarq(ev){ if(!marq) return; const r=stage.getBoundingClientRect();
+  const x=ev.clientX-r.left, y=ev.clientY-r.top;
+  const l=Math.min(x,marq.x0), t=Math.min(y,marq.y0), w=Math.abs(x-marq.x0), h=Math.abs(y-marq.y0);
+  Object.assign(marq.el.style,{left:l+"px",top:t+"px",width:w+"px",height:h+"px"});
+  marq.rect={l:l/ZOOM,t:t/ZOOM,r:(l+w)/ZOOM,b:(t+h)/ZOOM};
+}
+function endMarq(ev){ if(!marq) return;
+  stage.removeEventListener("pointermove", onMarq); stage.removeEventListener("pointerup", endMarq);
+  const rc=marq.rect; marq.el.remove();
+  if(rc && (rc.r-rc.l>4)){ const ids=(ARGS.blocks||[]).filter(b=>!(b.x>rc.r||b.x+b.w<rc.l||b.y>rc.b||b.y+b.h<rc.t)).map(b=>b.id);
+    SELECTED=new Set(ids); emit("multiselect",{ids:ids}); }
+  else { SELECTED=new Set(); emit("deselect",{}); }
+  marq=null;
+}
+
+// ---- keyboard ------------------------------------------------------------
+window.addEventListener("keydown",(ev)=>{
+  if(SELECTED.size===0) return;
+  if(ev.key==="Delete"||ev.key==="Backspace"){ emit("delete",{ids:Array.from(SELECTED)}); ev.preventDefault(); }
+  else if((ev.ctrlKey||ev.metaKey) && (ev.key==="d"||ev.key==="D")){ emit("duplicate",{ids:Array.from(SELECTED)}); ev.preventDefault(); }
+  else if(ev.key==="Escape"){ SELECTED=new Set(); emit("deselect",{}); }
+  else if(ev.key.startsWith("Arrow")){
+    const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[ev.key];
+    if(d){ emit("nudge",{ids:Array.from(SELECTED), dx:d[0]*(ev.shiftKey?10:1), dy:d[1]*(ev.shiftKey?10:1)}); ev.preventDefault(); }
+  }
+});
+</script>
+</body>
+</html>
