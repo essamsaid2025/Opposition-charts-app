@@ -235,42 +235,69 @@ def _canvas(shell, reports, report_id, studio, record, colors, selected) -> None
     _dispatch(shell, reports, report_id, action)
 
 
-def _dispatch(shell, reports, report_id, action: dict) -> None:
-    """Map ONE canvas action onto editor_ops. Dedup by nonce so a rerun that
-    re-delivers the same action does not re-apply it."""
-    nonce = action.get("nonce")
-    kind = action.get("action")
-    if kind in (None,):
-        return
-    # selection actions: ephemeral, no DB write
+#: canvas actions that only change the ephemeral UI selection (no DB write)
+_SELECTION_ACTIONS = ("select", "multiselect", "deselect")
+
+
+def selection_after(kind: str, action: dict, current: set[str]) -> set[str]:
+    """Pure: the selection set produced by a selection action. No Streamlit."""
     if kind == "select":
-        _select_only(action.get("block_id")); return
+        bid = action.get("block_id")
+        return {bid} if bid else set()
     if kind == "multiselect":
-        st.session_state[_SEL] = set(action.get("ids", [])); st.rerun()
-    if kind == "deselect":
-        st.session_state[_SEL] = set(); st.rerun()
-    # structural/geometry actions: dedup then apply through ops
-    if nonce and st.session_state.get(_NONCE) == nonce:
-        return
-    st.session_state[_NONCE] = nonce
+        return set(action.get("ids", []))
+    return set()          # deselect
+
+
+def action_op(kind: str, action: dict):
+    """Pure: the editor_ops mutation for a geometry/structural canvas action, or
+    None if the action is not one. Returned as a callable(studio) so it can be
+    unit-tested directly and applied through ``update_studio``. JavaScript only
+    reports geometry/intent - every mutation is one of these pure ops."""
     if kind == "move":
         bid, x, y = action["block_id"], action["x"], action["y"]
-        _apply(reports, report_id, shell, lambda s: ops.move_block(s, bid, x, y))
-    elif kind == "resize":
+        return lambda s: ops.move_block(s, bid, x, y)
+    if kind == "resize":
         bid = action["id"]
-        _apply(reports, report_id, shell,
-               lambda s: (ops.move_block(s, bid, action["x"], action["y"]),
-                          ops.resize_block(s, bid, action["w"], action["h"])))
-    elif kind == "nudge":
+        return lambda s: (ops.move_block(s, bid, action["x"], action["y"]),
+                          ops.resize_block(s, bid, action["w"], action["h"]))
+    if kind == "nudge":
         ids, dx, dy = action.get("ids", []), action.get("dx", 0), action.get("dy", 0)
-        _apply(reports, report_id, shell,
-               lambda s: [ops.nudge_block(s, i, dx, dy) for i in ids])
-    elif kind == "delete":
+        return lambda s: [ops.nudge_block(s, i, dx, dy) for i in ids]
+    if kind == "delete":
         ids = action.get("ids", [])
-        _apply(reports, report_id, shell, lambda s: [ops.delete_block(s, i) for i in ids])
-    elif kind == "duplicate":
+        return lambda s: [ops.delete_block(s, i) for i in ids]
+    if kind == "duplicate":
         ids = action.get("ids", [])
-        _apply(reports, report_id, shell, lambda s: [ops.duplicate_block(s, i) for i in ids])
+        return lambda s: [ops.duplicate_block(s, i) for i in ids]
+    return None
+
+
+def _dispatch(shell, reports, report_id, action: dict) -> None:
+    """Map ONE canvas action onto editor_ops.
+
+    EVERY action is deduped by its nonce first: Streamlit re-delivers the last
+    component value on every rerun until a new one arrives, so without this a
+    single click/drag would re-process forever (infinite rerun loop). The decision
+    logic lives in the pure ``selection_after`` / ``action_op`` helpers; this
+    function only touches Streamlit (session, rerun) and ``update_studio``."""
+    kind = action.get("action")
+    if not kind:
+        return
+    nonce = action.get("nonce")
+    if nonce is not None and st.session_state.get(_NONCE) == nonce:
+        return                      # already handled this exact action
+    if nonce is not None:
+        st.session_state[_NONCE] = nonce
+
+    if kind in _SELECTION_ACTIONS:              # ephemeral UI only, no DB write
+        st.session_state[_SEL] = selection_after(kind, action, _selection())
+        st.rerun()
+        return
+
+    op = action_op(kind, action)                # geometry/structural -> ops + autosave
+    if op is not None:
+        _apply(reports, report_id, shell, op)
 
 
 # ---------------------------------------------------------------- inspector
