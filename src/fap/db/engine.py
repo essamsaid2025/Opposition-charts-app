@@ -220,7 +220,86 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_report_images_ws ON report_images(workspace_id);
     """),
-    # (8, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 7.1 - Enterprise Identity, Administration & Permissions. Additive only:
+    # a persisted user directory, configurable capability-based roles, scoped
+    # permission grants, invitations and session tracking. Existing auth, roles
+    # and audit are untouched; these tables are new.
+    (8, """
+        -- roles as configurable capability sets (built-ins seeded, customs added)
+        CREATE TABLE IF NOT EXISTS role_definitions (
+            slug TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            capabilities TEXT NOT NULL DEFAULT '[]',
+            superuser INTEGER NOT NULL DEFAULT 0,
+            builtin INTEGER NOT NULL DEFAULT 0,
+            rank INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+
+        -- the persisted directory of platform users (SSO identities are owned by
+        -- the provider; this row holds the platform's assignment + status)
+        CREATE TABLE IF NOT EXISTS platform_users (
+            email TEXT PRIMARY KEY,
+            name TEXT NOT NULL DEFAULT '',
+            position TEXT NOT NULL DEFAULT '',
+            role_slug TEXT NOT NULL DEFAULT 'read_only',
+            org_id TEXT, club_id TEXT, team_id TEXT, workspace_id TEXT,
+            status TEXT NOT NULL DEFAULT 'active',   -- active|suspended|disabled
+            provider_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_login_at TEXT,
+            invited_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_platform_users_role ON platform_users(role_slug);
+        CREATE INDEX IF NOT EXISTS idx_platform_users_status ON platform_users(status);
+
+        -- scoped permission grants: extra capabilities for a user on one org node
+        -- (inherited down the org_nodes tree). effect allow|deny.
+        CREATE TABLE IF NOT EXISTS permission_grants (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            scope_kind TEXT NOT NULL DEFAULT 'workspace',  -- organization|club|team|workspace|project
+            scope_id TEXT NOT NULL DEFAULT '',
+            capabilities TEXT NOT NULL DEFAULT '[]',
+            effect TEXT NOT NULL DEFAULT 'allow',           -- allow|deny
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_grants_email ON permission_grants(email);
+        CREATE INDEX IF NOT EXISTS idx_grants_scope ON permission_grants(scope_kind, scope_id);
+
+        -- invitations: super/club admin invites -> user accepts via SSO login
+        CREATE TABLE IF NOT EXISTS invitations (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            role_slug TEXT NOT NULL DEFAULT 'read_only',
+            position TEXT NOT NULL DEFAULT '',
+            scope_kind TEXT NOT NULL DEFAULT '',
+            scope_id TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',   -- pending|accepted|revoked|expired
+            token TEXT NOT NULL DEFAULT '',
+            invited_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            accepted_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_invites_email ON invitations(email);
+        CREATE INDEX IF NOT EXISTS idx_invites_status ON invitations(status);
+
+        -- session tracking for the admin sessions view / force-logout
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            id TEXT PRIMARY KEY,
+            email TEXT NOT NULL,
+            provider_id TEXT NOT NULL DEFAULT '',
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+            status TEXT NOT NULL DEFAULT 'active',    -- active|expired|forced_out
+            revoked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_email ON user_sessions(email);
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON user_sessions(status);
+    """),
+    # (9, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

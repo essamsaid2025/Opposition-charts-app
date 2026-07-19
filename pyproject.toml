@@ -23,6 +23,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4", "mypy>=1.8", "ruff>=0.3"]
+# Editable Office export (Phase 6C). PDF and HTML/Markdown need no extra deps
+# (PDF reuses matplotlib); DOCX/PPTX degrade gracefully until these are installed.
+publishing = ["python-docx>=1.1", "python-pptx>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

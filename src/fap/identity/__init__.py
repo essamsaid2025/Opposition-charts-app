@@ -14,9 +14,16 @@ browser: fap.identity.roles, .policy, .service, .provider, .config.
 from fap.identity.roles import DEFAULT_ROLE, Role, all_roles, role_from_slug
 from fap.identity.models import Identity, User
 from fap.identity.session import current_user, logout, require_login, roles
+from fap.identity.capabilities import (
+    ALL_CAPABILITIES, Capability, RoleDefinition, builtin_role_definitions, role_capabilities,
+)
+from fap.identity.positions import POSITIONS, normalize_position
 
 __all__ = [
     "current_user", "require_login", "logout", "roles",
     "Role", "DEFAULT_ROLE", "all_roles", "role_from_slug",
     "Identity", "User",
+    # enterprise authorization (phase 7.1)
+    "Capability", "ALL_CAPABILITIES", "RoleDefinition", "builtin_role_definitions",
+    "role_capabilities", "POSITIONS", "normalize_position",
 ]

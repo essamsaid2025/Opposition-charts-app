@@ -32,6 +32,14 @@ from fap.reports import editor_ops
 from fap.reports.sections import BuildContext, SectionBuilder, section_builder_registry
 from fap.reports.templates import CustomTemplate, ReportTemplate, template_registry
 from fap.reports.exporters import RenderedReport, ReportExporter, exporter_registry
+# publishing & layout engine (phase 6C)
+from fap.reports.publishing import (
+    CoverDesign, Margins, MasterPage, PageNumbering, PrintSettings, PublishSettings,
+    Watermark, Zone, preset as publish_preset, PRESETS,
+)
+from fap.reports.layout import (
+    LayoutEngine, RenderedDocument, RenderedElement, RenderedPage,
+)
 from fap.reports.builders import DocumentBuilder
 from fap.reports.renderer import ReportRenderer
 from fap.reports.manager import ReportsManager
@@ -54,4 +62,8 @@ __all__ = [
     "ReportTemplate", "CustomTemplate", "template_registry",
     "ReportExporter", "RenderedReport", "exporter_registry",
     "DocumentBuilder", "ReportRenderer", "ReportsManager", "load_builtin_reports",
+    # publishing & layout (phase 6C)
+    "LayoutEngine", "RenderedDocument", "RenderedPage", "RenderedElement",
+    "PublishSettings", "CoverDesign", "MasterPage", "Watermark", "Zone",
+    "PageNumbering", "PrintSettings", "Margins", "publish_preset", "PRESETS",
 ]

@@ -149,6 +149,17 @@ class PlatformContext:
     def reports(self) -> "ReportsManager":
         return self.services.get("reports")
 
+    @property
+    def permissions(self):
+        """Capability-based authorization decision service (Phase 7.1)."""
+        return self.services.get("permissions")
+
+    @property
+    def administration(self):
+        """Enterprise administration façade: users, roles, invitations, sessions,
+        scoped grants and storage (Phase 7.1)."""
+        return self.services.get("administration")
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -196,9 +207,48 @@ def init_platform(root: Path | None = None, *,
                       lambda reg: WorkspaceManager(reg.get("db"), cache=reg.get("cache"),
                                                    storage=reg.get("dataset_storage")))
     services.register("reports", _reports_manager)
+    services.register("permissions", _permissions)
+    services.register("administration", lambda reg: _administration(reg, settings))
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())
+
+
+def _permissions(reg: "ServiceRegistry"):
+    """Capability-based authorization over the directory tables, with org-tree
+    scope inheritance sourced from the existing OrgRepository (no new hierarchy)."""
+    from fap.identity.access import PermissionService
+    from fap.identity.directory import GrantRepository, RoleRepository, UserDirectoryRepository
+    from fap.workspaces.repositories import OrgRepository
+    db = reg.get("db")
+    org = OrgRepository(db)
+
+    def node_parent(node_id: str) -> "str | None":
+        node = org.get(node_id)
+        return node.parent_id if node else None
+
+    return PermissionService(RoleRepository(db), UserDirectoryRepository(db),
+                             GrantRepository(db), node_parent)
+
+
+def _administration(reg: "ServiceRegistry", settings: "AppSettings"):
+    """Enterprise admin façade. Seeds built-in roles and the first Super Admin
+    (from FAP_SUPER_ADMIN or [identity].super_admin) on first resolution."""
+    import os
+    from fap.identity.administration import AdministrationService
+    from fap.workspaces.audit import AuditService
+    from fap.workspaces.repositories import AuditRepository
+    db = reg.get("db")
+    svc = AdministrationService(
+        db, audit=AuditService(AuditRepository(db)), permissions=reg.get("permissions"),
+        storage=reg.get("dataset_storage"), images=reg.get("image_storage"),
+        cache=reg.get("cache"))
+    owner = (os.environ.get("FAP_SUPER_ADMIN")
+             or getattr(getattr(settings, "identity", None), "super_admin", "")
+             or "").strip()
+    if owner:
+        svc.ensure_super_admin(owner)
+    return svc
 
 
 def init_import_service(root: Path | None = None, *, settings: AppSettings | None = None,
