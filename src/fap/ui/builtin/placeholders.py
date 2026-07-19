@@ -37,12 +37,10 @@ class SetPieceAnalysisPage(_Placeholder):
     _blurb = "Corners, free kicks and throw-ins."
 
 
-@page_registry.register
-class ScoutingPage(_Placeholder):
-    info = PluginInfo(id="scouting", name="Scouting", category="page")
-    section = "Analysis"; icon = "scouting"; order = 30
-    min_role = Role.SCOUT              # scouts and above
-    _blurb = "Opposition and recruitment scouting."
+# NOTE: the Scouting page is no longer a placeholder - the real implementation
+# lives in fap.ui.builtin.scouting (Phase 8.0), registered under id="scouting".
+# The placeholder was removed so it no longer collides with (and shadows) the
+# real page during plugin discovery.
 
 
 @page_registry.register
