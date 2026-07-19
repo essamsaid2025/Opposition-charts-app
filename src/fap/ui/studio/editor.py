@@ -1,18 +1,23 @@
-"""The Professional Visual Report Editor (Phase 6B).
+"""The Report Studio editor (Phase 6D - Performance First).
 
-A Canva/PowerPoint-style editor built ENTIRELY on the Phase-6A foundation:
+A structured, section-based report editor - NOT a free canvas. It feels like
+editing a professional scouting report (Opta / Wyscout / club scouting dept.),
+not designing a magazine. The template owns typography/spacing/margins/cover/
+branding; the user only edits CONTENT.
 
-* every mutation is a pure :mod:`fap.reports.editor_ops` call applied through
-  ``ReportsManager.update_studio`` (autosave straight to the database);
-* the interactive canvas is a static custom component that only *reports* drag/
-  resize/select intent - Python maps it onto the same ops (with a native control
-  fallback if the iframe is unavailable);
-* charts reuse the visualization registry + ``preview_chart`` (Renderer byte
-  cache); images reuse ImageStorage; controls reuse the generic control renderer;
-  chrome colors come from the application theme (no hardcoded colors).
+Performance is the priority:
 
-session_state holds only ephemeral UI state (current selection, the last handled
-canvas nonce, undo/redo snapshots) - never the report itself.
+* no custom-component iframe (that was the blank-canvas / "keeps loading" cause);
+* charts are NEVER rendered live while editing - they render once on "Refresh"
+  or at Export, and the result is cached on the block (``image_b64``) and reused;
+* every edit is one ``update_studio`` autosave + one cheap rerun of native
+  widgets; there is no heavy per-run HTML;
+* blocks are an ordered, auto-flowed list - no positioning math.
+
+It REUSES everything: the studio/block models, ``update_studio`` autosave, the
+6C LayoutEngine + exporters (blocks are re-stacked so the editor order == the
+exported order), ImageStorage and the visualization registry. Models, manager,
+exporters and storage are unchanged.
 """
 from __future__ import annotations
 
@@ -20,21 +25,43 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from fap.reports import editor_ops as ops
-from fap.reports import text_block
-from fap.reports.studio import Align, Axis, Edge
+from fap.reports import chart_block, image_block, text_block
 from fap.ui.studio import history
-from fap.ui.studio.component import canvas
-from fap.ui.studio.render import (
-    DIVIDER, NOTES, SECTION_HEADER, SPACER, block_content_html,
-)
 
-ZOOM_STEPS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
-_SEL = "_studio_sel"                 # set[str] of selected block ids (ephemeral UI)
-_NONCE = "_studio_nonce"             # last handled canvas action nonce (dedup)
+# block "variants" layered on the text block kind (kept identical to 6C so the
+# exporters/layout engine render them unchanged)
+SECTION_HEADER, NOTES, DIVIDER, SPACER = "section_header", "notes", "divider", "spacer"
+
+# professional report templates -> existing 6C publishing presets (no exporter change)
+REPORT_TEMPLATES: dict[str, str] = {
+    "Scouting Department": "scout",
+    "Professional White": "professional",
+    "Presentation": "presentation",
+    "Executive Summary": "executive",
+    "Coach": "coach",
+    "Print": "print",
+}
+COVER_TEMPLATES: dict[str, str] = {"Centered": "center", "Left aligned": "left",
+                                   "Right aligned": "right"}
+
+# the structured blocks a body page is composed of (Add Block menu)
+BLOCK_MENU: dict[str, Callable] = {
+    "Section header": lambda: _variant(text_block("New section", title="Section"), SECTION_HEADER),
+    "Text": lambda: text_block("Write here…", title="Text"),
+    "Notes": lambda: _variant(text_block("Notes…", title="Notes"), NOTES),
+    "Recommendations": lambda: _variant(text_block("Recommendation…", title="Recommendations"), SECTION_HEADER),
+    "Chart": lambda: chart_block("", {}, title="Chart"),
+    "Image": lambda: image_block("", title="Image"),
+    "Divider": lambda: _variant(text_block("", title="Divider"), DIVIDER),
+}
+
+_HEIGHT = {SECTION_HEADER: 54, NOTES: 150, DIVIDER: 24, SPACER: 40}
+_MARGIN = 48.0
+_GAP = 18.0
+_PREVIEW = "_studio_preview_html"       # cached export-preview HTML (session, per report)
 
 
-# ---------------------------------------------------------------- entry point
+# ================================================================ entry point
 def render_studio(shell: Any, reports: Any, report_id: str) -> None:
     record = reports.get(report_id)
     if record is None:
@@ -44,590 +71,419 @@ def render_studio(shell: Any, reports: Any, report_id: str) -> None:
     if studio is None:
         st.info("Report could not be opened.")
         return
-    colors = _theme_colors()
-    selected = _selection()
 
-    _toolbar(shell, reports, report_id, studio, record)
-
-    left, center, right = st.columns([1.15, 3.0, 1.5], gap="small")
-    with left:
-        _pages_panel(shell, reports, report_id, studio)
-        _layers_panel(shell, reports, report_id, studio, selected)
-    with center:
-        _canvas(shell, reports, report_id, studio, record, colors, selected)
-    with right:
-        _inspector(shell, reports, report_id, studio, record, selected, colors)
+    _header(shell, reports, report_id, record, studio)
+    tab_content, tab_template, tab_export = st.tabs(["✎ Content", "◨ Template", "⭳ Export"])
+    with tab_content:
+        _cover_editor(shell, reports, report_id, studio)
+        st.divider()
+        _body_editor(shell, reports, report_id, studio)
+    with tab_template:
+        _template_editor(shell, reports, report_id, studio)
+    with tab_export:
+        _export(shell, reports, report_id)
 
 
-# ---------------------------------------------------------------- toolbar
-def _toolbar(shell, reports, report_id, studio, record) -> None:
-    c1, c2, c3, c4, c5, c6 = st.columns([2.4, 1.1, 0.7, 0.7, 1.6, 1.2])
+# ================================================================ header
+def _header(shell, reports, report_id, record, studio) -> None:
+    c1, c2, c3 = st.columns([5, 1, 1])
     c1.markdown(f"### {record.title}")
-    with c2:
-        zoom = st.selectbox("Zoom", ZOOM_STEPS, index=ZOOM_STEPS.index(studio.editor.zoom)
-                            if studio.editor.zoom in ZOOM_STEPS else 3,
-                            format_func=lambda z: f"{int(z*100)}%", key="studio_zoom",
-                            label_visibility="collapsed")
-        if zoom != studio.editor.zoom:
-            _apply(reports, report_id, shell, lambda s, z=zoom: _set_zoom(s, z), push=False)
-    if c3.button("↶", key="studio_undo", disabled=not history.can_undo(report_id), help="Undo"):
+    c1.caption(f"{record.template_id or 'report'} · updated {record.updated_at} · v{record.version}")
+    if c2.button("↶ Undo", disabled=not history.can_undo(report_id), use_container_width=True):
         _undo(shell, reports, report_id)
-    if c4.button("↷", key="studio_redo", disabled=not history.can_redo(report_id), help="Redo"):
-        _redo(shell, reports, report_id)
-    with c5:
-        add = st.selectbox("Insert", ["+ Insert", "Rich Text", "Section Header", "Notes",
-                                      "Divider", "Spacer"], key="studio_add",
-                           label_visibility="collapsed")
-        if add != "+ Insert":
-            _insert_text_like(shell, reports, report_id, add)
-    if c6.button("Save version", key="studio_ver"):
+    if c3.button("Save version", use_container_width=True):
         reports.save_version(shell.user, report_id, note="editor snapshot")
         st.toast("Version saved")
 
 
-def _set_zoom(studio, z: float) -> None:
-    studio.editor.zoom = z
+# ================================================================ cover
+def _cover_editor(shell, reports, report_id, studio) -> None:
+    cover = studio.document.cover
+    pub = _publish(studio)
+    with st.expander("Cover", expanded=True):
+        colf, colp = st.columns([2, 1])
+        with colf:
+            title = st.text_input("Title", value=cover.title, key="cv_title")
+            subtitle = st.text_input("Subtitle", value=cover.subtitle, key="cv_sub")
+            cc = st.columns(2)
+            cover_tpl = cc[0].selectbox("Cover style", list(COVER_TEMPLATES),
+                                        index=_cover_index(pub), key="cv_style")
+            photo = cc[1].file_uploader("Photo", type=["png", "jpg", "jpeg", "webp"], key="cv_photo")
+            if st.button("Apply cover", type="primary", key="cv_apply"):
+                image_id = cover.cover_image
+                if photo is not None:
+                    img = reports.upload_image(shell.user, photo.getvalue(), photo.name,
+                                               photo.type or "image/png",
+                                               workspace_id=_ws(reports, report_id))
+                    image_id = img.id
+
+                def m(s, t=title, sub=subtitle, style=COVER_TEMPLATES[cover_tpl], iid=image_id):
+                    s.document.cover.title = t
+                    s.document.cover.subtitle = sub
+                    s.document.cover.cover_image = iid
+                    p = _publish(s)
+                    p.setdefault("cover", {})["alignment"] = style
+                    _set_publish(s, p)
+                _apply(shell, reports, report_id, m, push=False)
+        with colp:
+            st.caption("Preview")
+            st.markdown(_cover_preview_html(reports, cover, pub), unsafe_allow_html=True)
 
 
-def _insert_text_like(shell, reports, report_id, label: str) -> None:
-    factory = {
-        "Rich Text": lambda: text_block("Write here…", title="Text"),
-        "Section Header": lambda: _variant(text_block("# Section title", title="Section"), SECTION_HEADER, h=70),
-        "Notes": lambda: _variant(text_block("Coaching notes…", title="Notes"), NOTES, h=140),
-        "Divider": lambda: _variant(text_block("", title="Divider"), DIVIDER, h=32),
-        "Spacer": lambda: _variant(text_block("", title="Spacer"), SPACER, h=48),
-    }[label]
-    _apply(reports, report_id, shell,
-           lambda s, f=factory: ops.add_block_to_page(s, f(), s.editor.active_page,
-                                                       height=_default_h(label)))
+# ================================================================ body
+def _body_editor(shell, reports, report_id, studio) -> None:
+    blocks = studio.document.blocks
+    st.markdown("**Sections**")
+    if not blocks:
+        st.caption("Empty report — add a section below.")
+    for i, b in enumerate(blocks):
+        _block_card(shell, reports, report_id, b, i, len(blocks))
+
+    st.markdown("**Add block**")
+    cols = st.columns([3, 1])
+    choice = cols[0].selectbox("Block type", list(BLOCK_MENU), key="add_block_type",
+                               label_visibility="collapsed")
+    if cols[1].button("＋ Add", use_container_width=True, key="add_block_btn"):
+        factory = BLOCK_MENU[choice]
+        _apply(shell, reports, report_id, lambda s, f=factory: _add(s, f()))
 
 
-def _variant(block, variant: str, h: int):
+def _block_card(shell, reports, report_id, block, index, total) -> None:
+    variant = (block.payload or {}).get("variant", "")
+    kind_label = {"section_header": "Section", "notes": "Notes", "divider": "Divider",
+                  "spacer": "Spacer"}.get(variant, block.kind.title())
+    header = f"{'🙈 ' if block.hidden else ''}{block.title or kind_label} · {kind_label}"
+    with st.expander(header, expanded=False):
+        # row of structural controls (no pixel editing)
+        c = st.columns(6)
+        if c[0].button("↑", key=f"up_{block.id}", disabled=index == 0, help="Move up"):
+            _apply(shell, reports, report_id, lambda s, b=block.id: _move(s, b, -1))
+        if c[1].button("↓", key=f"dn_{block.id}", disabled=index == total - 1, help="Move down"):
+            _apply(shell, reports, report_id, lambda s, b=block.id: _move(s, b, +1))
+        if c[2].button("⧉", key=f"dup_{block.id}", help="Duplicate"):
+            _apply(shell, reports, report_id, lambda s, b=block.id: _duplicate(s, b))
+        if c[3].button("👁" if not block.hidden else "🚫", key=f"hide_{block.id}", help="Hide/Show"):
+            _apply(shell, reports, report_id, lambda s, b=block.id, h=not block.hidden: _hide(s, b, h))
+        if c[4].button("🗑", key=f"del_{block.id}", help="Delete"):
+            _apply(shell, reports, report_id, lambda s, b=block.id: _delete(s, b))
+
+        if block.kind == "text":
+            _edit_text(shell, reports, report_id, block, variant)
+        elif block.kind == "chart":
+            _edit_chart(shell, reports, report_id, block)
+        elif block.kind == "image":
+            _edit_image(shell, reports, report_id, block)
+
+
+def _edit_text(shell, reports, report_id, block, variant) -> None:
+    if variant in (DIVIDER, SPACER):
+        st.caption(f"{variant.title()} — no content.")
+        return
+    title = st.text_input("Heading", value=block.title, key=f"t_{block.id}")
+    body = st.text_area("Text", value=block.payload.get("text", ""), height=160, key=f"x_{block.id}",
+                        help="Plain text. Use short lines; the template styles it professionally.")
+    if st.button("Apply", key=f"ap_{block.id}"):
+        _apply(shell, reports, report_id,
+               lambda s, b=block.id, t=title, x=body: _set_text(s, b, t, x))
+
+
+def _edit_chart(shell, reports, report_id, block) -> None:
+    from fap.visuals.base import load_builtin_visuals, visual_registry
+    from fap.ui.components.controls import render_controls
+    load_builtin_visuals()
+    infos = visual_registry.infos()
+    ids = [i.id for i in infos]
+    labels = {i.id: i.name for i in infos}
+    cur = block.payload.get("viz_id", "")
+    idx = ids.index(cur) if cur in ids else 0
+    viz_id = st.selectbox("Visualization", ids, index=idx, format_func=lambda i: labels.get(i, i),
+                          key=f"cv_{block.id}")
+    viz = visual_registry.create(viz_id)
+    controls = render_controls(getattr(viz, "controls", ()) or (),
+                               saved=block.payload.get("controls", {}), key_prefix=f"cc_{block.id}")
+    b64 = block.payload.get("image_b64", "")
+    if b64:
+        st.image(f"data:image/png;base64,{b64}", caption="cached preview", width=280)
+    else:
+        st.caption("No preview yet — charts render at Export, or click Refresh.")
+    cols = st.columns(3)
+    if cols[0].button("Apply options", key=f"ca_{block.id}"):
+        _apply(shell, reports, report_id,
+               lambda s, b=block.id, v=viz_id, c=controls: _set_chart(s, b, v, c))
+    if cols[1].button("Refresh chart", key=f"cr_{block.id}"):
+        png = _render_chart_once(reports, report_id, viz_id, controls)
+        _apply(shell, reports, report_id,
+               lambda s, b=block.id, v=viz_id, c=controls, p=png: _set_chart(s, b, v, c, p))
+
+
+def _edit_image(shell, reports, report_id, block) -> None:
+    image_id = block.payload.get("image_id", "")
+    if image_id:
+        data = reports.image_bytes(image_id)
+        if data:
+            st.image(data, width=280)
+    up = st.file_uploader("Replace / insert image", type=["png", "jpg", "jpeg", "webp", "svg"],
+                          key=f"iu_{block.id}")
+    caption = st.text_input("Caption", value=block.payload.get("caption", ""), key=f"ic_{block.id}")
+    fit = st.selectbox("Fit", ["cover", "contain", "fill"],
+                       index=["cover", "contain", "fill"].index(block.payload.get("fit", "cover")),
+                       key=f"if_{block.id}")
+    if st.button("Apply", key=f"ia_{block.id}"):
+        new_id = image_id
+        if up is not None:
+            img = reports.upload_image(shell.user, up.getvalue(), up.name, up.type or "image/png",
+                                       workspace_id=_ws(reports, report_id))
+            new_id = img.id
+        _apply(shell, reports, report_id,
+               lambda s, b=block.id, i=new_id, c=caption, f=fit: _set_image(s, b, i, c, f))
+
+
+# ================================================================ template / theme
+def _template_editor(shell, reports, report_id, studio) -> None:
+    st.caption("Choose a professional template. It restyles the whole report instantly — "
+               "typography, spacing, margins, cover and branding. You edit content, not design.")
+    pub = _publish(studio)
+    current = pub.get("preset", "professional")
+    names = list(REPORT_TEMPLATES)
+    cur_name = next((n for n, slug in REPORT_TEMPLATES.items() if slug == current), names[0])
+    choice = st.radio("Template", names, index=names.index(cur_name), key="tpl_choice")
+    if st.button("Apply template", type="primary", key="tpl_apply"):
+        from fap.reports import publish_preset
+        slug = REPORT_TEMPLATES[choice]
+
+        def m(s, sl=slug):
+            settings = publish_preset(sl)
+            # keep the user's cover alignment/photo choices
+            existing = _publish(s)
+            data = settings.to_dict()
+            if existing.get("cover"):
+                data["cover"]["alignment"] = existing["cover"].get("alignment",
+                                                                    data["cover"]["alignment"])
+            _set_publish(s, data)
+        _apply(shell, reports, report_id, m, push=False)
+        st.session_state.pop(_PREVIEW, None)
+        st.toast(f"Applied {choice}")
+
+
+# ================================================================ export (render only here)
+def _export(shell, reports, report_id) -> None:
+    st.caption("Charts and images render here — the export is the same engine the preview uses, "
+               "so the PDF looks like the report.")
+    formats = reports.available_formats()
+    cols = st.columns(len(formats) or 1)
+    mimes = {"html": "text/html", "markdown": "text/markdown", "pdf": "application/pdf"}
+    for i, fmt in enumerate(formats):
+        if cols[i].button(fmt.upper(), key=f"exp_{fmt}", use_container_width=True):
+            try:
+                rendered = reports.render(shell.user, report_id, fmt)
+                st.download_button(f"Download {fmt.upper()}", rendered.content,
+                                   file_name=rendered.filename,
+                                   mime=mimes.get(fmt, "application/octet-stream"),
+                                   key=f"dl_{fmt}")
+            except Exception as exc:
+                st.error(f"{fmt.upper()} export failed: {exc}")
+
+    st.divider()
+    if st.button("Refresh preview", key="prev_refresh"):
+        try:
+            st.session_state[_PREVIEW] = reports.render(shell.user, report_id, "html").text
+        except Exception as exc:
+            st.error(f"Preview failed: {exc}")
+    html = st.session_state.get(_PREVIEW)
+    if html:
+        st.components.v1.html(html, height=900, scrolling=True)
+    else:
+        st.caption("Click **Refresh preview** to render the full report (renders charts once).")
+
+
+# ================================================================ pure structural ops
+def _variant(block, variant: str):
     block.payload["variant"] = variant
     return block
 
 
-def _default_h(label: str) -> float:
-    return {"Divider": 32, "Spacer": 48, "Section Header": 70, "Notes": 140}.get(label, 220)
+def _add(studio, block) -> None:
+    studio.document.blocks.append(block)
+    _reflow(studio)
 
 
-# ---------------------------------------------------------------- pages panel
-def _pages_panel(shell, reports, report_id, studio) -> None:
-    st.markdown("**Pages**")
-    b1, b2 = st.columns(2)
-    if b1.button("＋ New", key="pg_new", use_container_width=True):
-        _apply(reports, report_id, shell, lambda s: ops.create_page(s))
-    if b2.button("⧉ Duplicate", key="pg_dup", use_container_width=True):
-        _apply(reports, report_id, shell, lambda s: ops.duplicate_page(s, s.editor.active_page))
-
-    for i, page in enumerate(studio.pages):
-        active = page.id == studio.editor.active_page
-        with st.container(border=True):
-            st.markdown(_page_thumb_html(studio, page, active), unsafe_allow_html=True)
-            r1, r2, r3, r4 = st.columns(4)
-            if r1.button("Open", key=f"pg_open_{page.id}", disabled=active):
-                _apply(reports, report_id, shell, lambda s, p=page.id: _activate(s, p), push=False)
-            if r2.button("↑", key=f"pg_up_{page.id}", disabled=i == 0):
-                _apply(reports, report_id, shell, lambda s, p=page.id: ops.move_page(s, p, -1))
-            if r3.button("↓", key=f"pg_dn_{page.id}", disabled=i == len(studio.pages) - 1):
-                _apply(reports, report_id, shell, lambda s, p=page.id: ops.move_page(s, p, +1))
-            if r4.button("🗑", key=f"pg_del_{page.id}", disabled=len(studio.pages) <= 1):
-                _apply(reports, report_id, shell, lambda s, p=page.id: ops.delete_page(s, p))
+def _move(studio, block_id: str, delta: int) -> None:
+    blocks = studio.document.blocks
+    i = next((k for k, b in enumerate(blocks) if b.id == block_id), -1)
+    j = max(0, min(len(blocks) - 1, i + delta))
+    if i >= 0 and i != j:
+        blocks.insert(j, blocks.pop(i))
+        _reflow(studio)
 
 
-def _activate(studio, page_id: str) -> None:
-    studio.editor.active_page = page_id
+def _duplicate(studio, block_id: str) -> None:
+    import uuid
+    from fap.reports.models import Block
+    blocks = studio.document.blocks
+    i = next((k for k, b in enumerate(blocks) if b.id == block_id), -1)
+    if i < 0:
+        return
+    src = blocks[i]
+    blocks.insert(i + 1, Block(id=str(uuid.uuid4()), kind=src.kind, title=src.title,
+                               hidden=src.hidden, payload=dict(src.payload)))
+    _reflow(studio)
 
 
-def _page_thumb_html(studio, page, active: bool) -> str:
-    colors = _theme_colors()
+def _delete(studio, block_id: str) -> None:
+    studio.document.blocks = [b for b in studio.document.blocks if b.id != block_id]
+    studio.layouts.pop(block_id, None)
+    _reflow(studio)
+
+
+def _hide(studio, block_id: str, hidden: bool) -> None:
+    for b in studio.document.blocks:
+        if b.id == block_id:
+            b.hidden = hidden
+
+
+def _set_text(studio, block_id: str, title: str, text: str) -> None:
+    for b in studio.document.blocks:
+        if b.id == block_id:
+            b.title = title
+            b.payload["text"] = text
+    _reflow(studio)
+
+
+def _set_chart(studio, block_id: str, viz_id: str, controls: dict, image_b64: str | None = None) -> None:
+    for b in studio.document.blocks:
+        if b.id == block_id:
+            b.payload["viz_id"] = viz_id
+            b.payload["controls"] = dict(controls)
+            if image_b64 is not None:
+                b.payload["image_b64"] = image_b64
+
+
+def _set_image(studio, block_id: str, image_id: str, caption: str, fit: str) -> None:
+    for b in studio.document.blocks:
+        if b.id == block_id:
+            b.payload["image_id"] = image_id
+            b.payload["caption"] = caption
+            b.payload["fit"] = fit
+
+
+def _reflow(studio) -> None:
+    """Auto-stack every block into a single clean vertical flow on the first page,
+    so the editor order equals the exported order and the 6C LayoutEngine positions
+    everything with no manual coordinates. This is the 'no positioning' guarantee."""
+    if not studio.pages:
+        return
+    page = studio.pages[0]
+    pid = page.id
     pw, ph = page.dimensions()
-    scale = 120 / ph
-    boxes = ""
-    for b in studio.blocks_on(page.id):
-        lay = studio.layouts[b.id]
-        if b.hidden:
-            continue
-        boxes += (f"<div style='position:absolute;left:{lay.x*scale}px;top:{lay.y*scale}px;"
-                  f"width:{lay.width*scale}px;height:{lay.height*scale}px;"
-                  f"background:{colors['accent']};opacity:.35;border-radius:2px'></div>")
-    border = colors["accent"] if active else colors["border"]
-    return (f"<div style='position:relative;width:{pw*scale}px;height:{ph*scale}px;"
-            f"background:{colors['surface']};border:2px solid {border};border-radius:4px;"
-            f"margin:0 auto 4px'>{boxes}</div>"
-            f"<div style='text-align:center;color:{colors['muted']};font-size:12px'>"
-            f"{page.title or 'Page'}</div>")
+    x, width = _MARGIN, pw - 2 * _MARGIN
+    y = _MARGIN
+    for b in studio.document.blocks:
+        variant = (b.payload or {}).get("variant", "")
+        h = _HEIGHT.get(variant)
+        if h is None:
+            if b.kind == "chart":
+                h = 340.0
+            elif b.kind == "image":
+                h = 260.0
+            else:
+                lines = max(1, (b.payload or {}).get("text", "").count("\n") + 1)
+                h = max(120.0, lines * 22.0)
+        lay = studio.layouts.get(b.id)
+        if lay is None:
+            from fap.reports.studio import BlockLayout
+            lay = BlockLayout(page_id=pid)
+            studio.layouts[b.id] = lay
+        lay.page_id, lay.x, lay.y, lay.width, lay.height = pid, x, y, width, float(h)
+        lay.z, lay.rotation, lay.locked = 0, 0.0, False
+        if not b.hidden:
+            y += h + _GAP
 
 
-# ---------------------------------------------------------------- layers panel
-def _layers_panel(shell, reports, report_id, studio, selected) -> None:
-    st.markdown("**Layers**")
-    blocks = list(reversed(studio.blocks_on(studio.editor.active_page)))  # front -> back
-    if not blocks:
-        st.caption("No blocks on this page.")
-        return
-    for b in blocks:
-        lay = studio.layouts[b.id]
-        mark = "●" if b.id in selected else "○"
-        label = b.title or f"{b.kind.title()}"
-        cols = st.columns([0.5, 2.2, 0.6, 0.6, 0.6, 0.6])
-        if cols[0].button(mark, key=f"ly_sel_{b.id}", help="Select"):
-            _select_only(b.id)
-        cols[1].markdown(f"<span style='font-size:13px'>{label}</span>"
-                         + ("  ·hidden" if b.hidden else ""), unsafe_allow_html=True)
-        if cols[2].button("↑", key=f"ly_fwd_{b.id}", help="Bring forward"):
-            _apply(reports, report_id, shell, lambda s, x=b.id: ops.bring_forward(s, x))
-        if cols[3].button("↓", key=f"ly_bwd_{b.id}", help="Send backward"):
-            _apply(reports, report_id, shell, lambda s, x=b.id: ops.send_backward(s, x))
-        if cols[4].button("🔒" if lay.locked else "🔓", key=f"ly_lock_{b.id}"):
-            _apply(reports, report_id, shell, lambda s, x=b.id, v=not lay.locked: ops.lock_block(s, x, v))
-        if cols[5].button("👁" if not b.hidden else "🚫", key=f"ly_hide_{b.id}"):
-            _apply(reports, report_id, shell, lambda s, x=b.id, v=not b.hidden: ops.hide_block(s, x, v))
+# ================================================================ helpers
+def _render_chart_once(reports, report_id, viz_id: str, controls: dict) -> str:
+    """Render a chart PNG exactly once (at the user's request), returning base64.
+    Never called during a normal rerun."""
+    import base64
+    if not viz_id:
+        return ""
+    record = reports.get(report_id)
+    frame = reports.dataset_frame(record.dataset_id if record else None)
+    if frame is None:
+        return ""
+    png = reports.preview_chart(viz_id, frame, controls, dpi=140)
+    return base64.b64encode(png).decode("ascii") if png else ""
 
 
-# ---------------------------------------------------------------- canvas
-def _canvas(shell, reports, report_id, studio, record, colors, selected) -> None:
-    page = studio.page(studio.editor.active_page)
-    if page is None:
-        st.info("No page selected.")
-        return
-    pw, ph = page.dimensions()
-    chart_cache = st.session_state.setdefault(f"_studio_charts::{report_id}", {})
-    theme_id = _chart_theme(studio)
-    dataset_id = record.dataset_id
-    bg_image = ""
-    if page.background:
-        data = reports.image_bytes(page.background)
-        if data:
-            import base64
-            bg_image = f"data:{reports.image_mime(page.background)};base64,{base64.b64encode(data).decode()}"
-
-    blocks = []
-    for b in studio.blocks_on(page.id):
-        if b.hidden:
-            continue
-        lay = studio.layouts[b.id]
-        p = b.payload or {}
-        blocks.append({
-            "id": b.id, "x": lay.x, "y": lay.y, "w": lay.width, "h": lay.height,
-            "z": lay.z, "rotation": lay.rotation, "locked": lay.locked,
-            "opacity": float(p.get("opacity", 1) or 1), "radius": int(p.get("radius", 0) or 0),
-            "kind": b.kind,
-            "html": block_content_html(b, reports=reports, dataset_id=dataset_id,
-                                       theme_id=theme_id, colors=colors, chart_cache=chart_cache),
-        })
-
-    action = canvas(
-        page={"w": pw, "h": ph, "background_color": page.background_color,
-              "bg_image": bg_image},
-        blocks=blocks, zoom=studio.editor.zoom, grid=studio.editor.grid_size,
-        snap=studio.editor.snap_to_grid, guides=studio.editor.guides,
-        rulers_grid=studio.editor.rulers, aspect=st.session_state.get("_studio_aspect", False),
-        selected=list(selected), theme=colors, key=f"canvas_{report_id}_{page.id}")
-
-    from fap.ui.studio.component import UNAVAILABLE
-    if action is UNAVAILABLE:
-        st.caption("Interactive canvas unavailable in this environment — use the "
-                   "Inspector controls to move, resize and arrange blocks.")
-        return
-    if action is None:
-        return                     # canvas rendered; no new action this run
-    _dispatch(shell, reports, report_id, action)
+def _publish(studio) -> dict:
+    return dict((studio.document.meta or {}).get("publish", {}))
 
 
-#: canvas actions that only change the ephemeral UI selection (no DB write)
-_SELECTION_ACTIONS = ("select", "multiselect", "deselect")
-
-
-def selection_after(kind: str, action: dict, current: set[str]) -> set[str]:
-    """Pure: the selection set produced by a selection action. No Streamlit."""
-    if kind == "select":
-        bid = action.get("block_id")
-        return {bid} if bid else set()
-    if kind == "multiselect":
-        return set(action.get("ids", []))
-    return set()          # deselect
-
-
-def action_op(kind: str, action: dict):
-    """Pure: the editor_ops mutation for a geometry/structural canvas action, or
-    None if the action is not one. Returned as a callable(studio) so it can be
-    unit-tested directly and applied through ``update_studio``. JavaScript only
-    reports geometry/intent - every mutation is one of these pure ops."""
-    if kind == "move":
-        bid, x, y = action["block_id"], action["x"], action["y"]
-        return lambda s: ops.move_block(s, bid, x, y)
-    if kind == "resize":
-        bid = action["id"]
-        return lambda s: (ops.move_block(s, bid, action["x"], action["y"]),
-                          ops.resize_block(s, bid, action["w"], action["h"]))
-    if kind == "nudge":
-        ids, dx, dy = action.get("ids", []), action.get("dx", 0), action.get("dy", 0)
-        return lambda s: [ops.nudge_block(s, i, dx, dy) for i in ids]
-    if kind == "delete":
-        ids = action.get("ids", [])
-        return lambda s: [ops.delete_block(s, i) for i in ids]
-    if kind == "duplicate":
-        ids = action.get("ids", [])
-        return lambda s: [ops.duplicate_block(s, i) for i in ids]
-    return None
-
-
-def _dispatch(shell, reports, report_id, action: dict) -> None:
-    """Map ONE canvas action onto editor_ops.
-
-    EVERY action is deduped by its nonce first: Streamlit re-delivers the last
-    component value on every rerun until a new one arrives, so without this a
-    single click/drag would re-process forever (infinite rerun loop). The decision
-    logic lives in the pure ``selection_after`` / ``action_op`` helpers; this
-    function only touches Streamlit (session, rerun) and ``update_studio``."""
-    kind = action.get("action")
-    if not kind:
-        return
-    nonce = action.get("nonce")
-    if nonce is not None and st.session_state.get(_NONCE) == nonce:
-        return                      # already handled this exact action
-    if nonce is not None:
-        st.session_state[_NONCE] = nonce
-
-    if kind in _SELECTION_ACTIONS:              # ephemeral UI only, no DB write
-        st.session_state[_SEL] = selection_after(kind, action, _selection())
-        st.rerun()
-        return
-
-    op = action_op(kind, action)                # geometry/structural -> ops + autosave
-    if op is not None:
-        _apply(reports, report_id, shell, op)
-
-
-# ---------------------------------------------------------------- inspector
-def _inspector(shell, reports, report_id, studio, record, selected, colors) -> None:
-    tabs = st.tabs(["Properties", "Charts", "Images", "Theme"])
-    with tabs[0]:
-        if len(selected) == 0:
-            _page_properties(shell, reports, report_id, studio)
-        elif len(selected) == 1:
-            _block_properties(shell, reports, report_id, studio, next(iter(selected)))
-        else:
-            _multi_properties(shell, reports, report_id, selected)
-    with tabs[1]:
-        _charts_tab(shell, reports, report_id, studio, record, selected)
-    with tabs[2]:
-        _images_tab(shell, reports, report_id, studio, record, selected)
-    with tabs[3]:
-        _theme_tab(shell, reports, report_id, studio)
-
-
-def _page_properties(shell, reports, report_id, studio) -> None:
-    page = studio.page(studio.editor.active_page)
-    if page is None:
-        return
-    st.caption("Page properties")
-    title = st.text_input("Page name", value=page.title, key="pp_title")
-    size = st.selectbox("Size", ["A4", "Letter"], index=0 if page.size == "A4" else 1, key="pp_size")
-    orient = st.radio("Orientation", ["portrait", "landscape"], horizontal=True,
-                      index=0 if page.orientation == "portrait" else 1, key="pp_orient")
-    bg = st.color_picker("Background", value=page.background_color or "#ffffff", key="pp_bg")
-    cols = st.number_input("Column guides", 1, 6, page.columns, key="pp_cols")
-    snap = st.checkbox("Snap to grid", value=studio.editor.snap_to_grid, key="pp_snap")
-    guides = st.checkbox("Alignment guides", value=studio.editor.guides, key="pp_guides")
-    grid_on = st.checkbox("Show grid", value=studio.editor.rulers, key="pp_grid")
-    if st.button("Apply", type="primary", key="pp_apply"):
-        def m(s):
-            pg = s.page(s.editor.active_page)
-            pg.title, pg.size, pg.orientation = title, size, orient
-            pg.background_color = "" if bg.lower() == "#ffffff" else bg
-            pg.columns = int(cols)
-            s.editor.snap_to_grid, s.editor.guides, s.editor.rulers = snap, guides, grid_on
-        _apply(reports, report_id, shell, m)
-
-
-def _block_properties(shell, reports, report_id, studio, block_id) -> None:
-    b = studio.block(block_id)
-    lay = studio.layouts.get(block_id)
-    if b is None or lay is None:
-        st.caption("Select a block.")
-        return
-    st.caption(f"{b.kind.title()} block")
-    title = st.text_input("Title", value=b.title, key=f"bp_t_{block_id}")
-
-    # geometry (native drag/resize fallback + precision)
-    g1, g2 = st.columns(2)
-    x = g1.number_input("X", value=float(lay.x), step=1.0, key=f"bp_x_{block_id}")
-    y = g2.number_input("Y", value=float(lay.y), step=1.0, key=f"bp_y_{block_id}")
-    w = g1.number_input("Width", value=float(lay.width), min_value=24.0, step=1.0, key=f"bp_w_{block_id}")
-    h = g2.number_input("Height", value=float(lay.height), min_value=24.0, step=1.0, key=f"bp_h_{block_id}")
-    rot = st.slider("Rotation", -180, 180, int(lay.rotation), key=f"bp_r_{block_id}")
-
-    payload_update: dict[str, Any] = {}
-    if b.kind == "text":
-        variant = b.payload.get("variant", "")
-        if variant not in (DIVIDER, SPACER):
-            body = st.text_area("Text ( # heading · - bullet )", value=b.payload.get("text", ""),
-                                height=200, key=f"bp_body_{block_id}")
-            payload_update["text"] = body
-    elif b.kind == "image":
-        payload_update["caption"] = st.text_input("Caption", value=b.payload.get("caption", ""),
-                                                   key=f"bp_cap_{block_id}")
-        payload_update["opacity"] = st.slider("Opacity", 0.0, 1.0, float(b.payload.get("opacity", 1)),
-                                              0.05, key=f"bp_op_{block_id}")
-        payload_update["radius"] = st.slider("Rounded corners", 0, 60, int(b.payload.get("radius", 0)),
-                                             key=f"bp_rad_{block_id}")
-        payload_update["fit"] = st.selectbox("Crop fit", ["cover", "contain", "fill"],
-                                             index=["cover", "contain", "fill"].index(b.payload.get("fit", "cover")),
-                                             key=f"bp_fit_{block_id}")
-    elif b.kind == "chart":
-        st.caption(f"Visualization: `{b.payload.get('viz_id', '')}` — edit options in the **Charts** tab.")
-
-    if st.button("Apply", type="primary", key=f"bp_apply_{block_id}"):
-        def m(s, bid=block_id, t=title, pu=dict(payload_update), gx=x, gy=y, gw=w, gh=h, gr=rot):
-            blk = s.block(bid)
-            blk.title = t
-            blk.payload.update(pu)
-            ops.move_block(s, bid, gx, gy)
-            ops.resize_block(s, bid, gw, gh)
-            ops.rotate_block(s, bid, gr)
-        _apply(reports, report_id, shell, m)
-
-    st.divider()
-    l1, l2, l3, l4 = st.columns(4)
-    if l1.button("⤒ Front", key=f"bp_front_{block_id}"):
-        _apply(reports, report_id, shell, lambda s: ops.bring_to_front(s, block_id))
-    if l2.button("⤓ Back", key=f"bp_back_{block_id}"):
-        _apply(reports, report_id, shell, lambda s: ops.send_to_back(s, block_id))
-    if l3.button("⧉ Dup", key=f"bp_dup_{block_id}"):
-        _apply(reports, report_id, shell, lambda s: ops.duplicate_block(s, block_id))
-    if l4.button("🗑 Del", key=f"bp_del_{block_id}"):
-        _apply(reports, report_id, shell, lambda s: ops.delete_block(s, block_id))
-
-
-def _multi_properties(shell, reports, report_id, selected) -> None:
-    ids = list(selected)
-    st.caption(f"{len(ids)} blocks selected")
-    st.markdown("**Align**")
-    a = st.columns(3)
-    mapping = [("Left", Edge.LEFT), ("Center", Edge.CENTER_X), ("Right", Edge.RIGHT),
-               ("Top", Edge.TOP), ("Middle", Edge.CENTER_Y), ("Bottom", Edge.BOTTOM)]
-    for i, (label, edge) in enumerate(mapping):
-        if a[i % 3].button(label, key=f"al_{edge}"):
-            _apply(reports, report_id, shell, lambda s, e=edge: ops.align_blocks(s, ids, e))
-    st.markdown("**Distribute**")
-    d1, d2 = st.columns(2)
-    if d1.button("Horizontally", key="dist_h"):
-        _apply(reports, report_id, shell, lambda s: ops.distribute_blocks(s, ids, Axis.HORIZONTAL))
-    if d2.button("Vertically", key="dist_v"):
-        _apply(reports, report_id, shell, lambda s: ops.distribute_blocks(s, ids, Axis.VERTICAL))
-    st.divider()
-    if st.button("🗑 Delete selected", key="multi_del"):
-        _apply(reports, report_id, shell, lambda s: [ops.delete_block(s, i) for i in ids])
-
-
-# ---------------------------------------------------------------- charts tab
-def _charts_tab(shell, reports, report_id, studio, record, selected) -> None:
-    from fap.visuals.base import load_builtin_visuals, visual_registry
-    from fap.ui.components.controls import render_controls
-
-    load_builtin_visuals()
-    infos = visual_registry.infos()
-    # editing an existing chart block?
-    sel_block = studio.block(next(iter(selected))) if len(selected) == 1 else None
-    editing = sel_block if (sel_block and sel_block.kind == "chart") else None
-
-    categories = sorted({i.category or "Other" for i in infos})
-    default_cat = 0
-    if editing:
-        cur = next((i for i in infos if i.id == editing.payload.get("viz_id")), None)
-        if cur:
-            default_cat = categories.index(cur.category or "Other")
-    category = st.selectbox("Category", categories, index=default_cat, key="ct_cat")
-    options = [i for i in infos if (i.category or "Other") == category]
-    labels = {i.id: i.name for i in options}
-    idx = 0
-    if editing and editing.payload.get("viz_id") in labels:
-        idx = list(labels).index(editing.payload["viz_id"])
-    viz_id = st.selectbox("Visualization", list(labels), index=idx,
-                          format_func=lambda i: labels[i], key="ct_viz")
-    info = next(i for i in options if i.id == viz_id)
-    if info.description:
-        st.caption(info.description)
-
-    # controls reused from the plugin's own declaration (same renderer as everywhere)
-    viz = visual_registry.create(viz_id)
-    saved = editing.payload.get("controls", {}) if editing else {}
-    controls = render_controls(getattr(viz, "controls", ()) or (), saved=saved,
-                               key_prefix=f"ct_{viz_id}")
-
-    frame = reports.dataset_frame(record.dataset_id)
-    if st.toggle("Preview", key="ct_prev") and frame is not None:
-        png = reports.preview_chart(viz_id, frame, controls, dpi=110)
-        if png:
-            st.image(png, use_container_width=True)
-        else:
-            st.caption("This visualization needs a dataset/controls to preview.")
-
-    if editing:
-        c1, c2 = st.columns(2)
-        if c1.button("Update options", type="primary", key="ct_update"):
-            _apply(reports, report_id, shell,
-                   lambda s, c=controls: _set_chart(s, editing.id, controls=c))
-        if c2.button("Replace visualization", key="ct_replace"):
-            _apply(reports, report_id, shell,
-                   lambda s, v=viz_id, c=controls: _set_chart(s, editing.id, viz_id=v, controls=c))
-        st.caption("Replacing keeps the same block (position, size, layer).")
-    else:
-        if st.button("Insert chart", type="primary", key="ct_insert"):
-            from fap.reports import chart_block
-            _apply(reports, report_id, shell,
-                   lambda s, v=viz_id, n=info.name, c=controls:
-                   ops.add_block_to_page(s, chart_block(v, c, title=n), s.editor.active_page,
-                                         width=520, height=360))
-
-
-def _set_chart(studio, block_id, *, viz_id: str | None = None,
-               controls: dict | None = None) -> None:
-    blk = studio.block(block_id)
-    if blk is None:
-        return
-    if viz_id is not None:
-        blk.payload["viz_id"] = viz_id
-    if controls is not None:
-        blk.payload["controls"] = dict(controls)
-
-
-# ---------------------------------------------------------------- images tab
-def _images_tab(shell, reports, report_id, studio, record, selected) -> None:
-    sel_block = studio.block(next(iter(selected))) if len(selected) == 1 else None
-    editing = sel_block if (sel_block and sel_block.kind == "image") else None
-
-    upload = st.file_uploader("Upload image", type=["png", "jpg", "jpeg", "svg", "webp"],
-                              key="im_up")
-    if upload is not None and st.button("Add to page", type="primary", key="im_add"):
-        try:
-            img = reports.upload_image(shell.user, upload.getvalue(), upload.name,
-                                       upload.type or "image/png", workspace_id=record.workspace_id)
-            from fap.reports import image_block
-            _apply(reports, report_id, shell,
-                   lambda s, i=img.id, n=upload.name:
-                   ops.add_block_to_page(s, image_block(i, caption=n), s.editor.active_page,
-                                         width=400, height=300))
-        except Exception as exc:
-            st.error(f"Could not add image: {exc}")
-
-    existing = reports.list_images(record.workspace_id)
-    if existing:
-        names = {i.id: f"{i.filename} ({i.size_bytes // 1024}KB)" for i in existing}
-        chosen = st.selectbox("Library", list(names), format_func=lambda i: names[i], key="im_lib")
-        c1, c2 = st.columns(2)
-        if c1.button("Insert", key="im_ins"):
-            from fap.reports import image_block
-            _apply(reports, report_id, shell,
-                   lambda s, i=chosen: ops.add_block_to_page(s, image_block(i), s.editor.active_page,
-                                                             width=400, height=300))
-        if editing and c2.button("Replace selected", key="im_replace"):
-            _apply(reports, report_id, shell,
-                   lambda s, i=chosen: _set_image(s, editing.id, i))
-            st.caption("Replaced image keeps the same block.")
-
-
-def _set_image(studio, block_id, image_id: str) -> None:
-    blk = studio.block(block_id)
-    if blk is not None:
-        blk.payload["image_id"] = image_id
-
-
-# ---------------------------------------------------------------- theme tab
-def _theme_tab(shell, reports, report_id, studio) -> None:
-    st.caption("Chart rendering theme (reuses the visualization themes).")
-    themes = getattr(shell.platform, "themes", None) if shell.platform else None
-    ids = []
-    if themes is not None:
-        try:
-            ids = list(themes.ids())
-        except Exception:
-            ids = []
-    current = _chart_theme(studio)
-    if ids:
-        choice = st.selectbox("Theme", ids, index=ids.index(current) if current in ids else 0,
-                              key="th_choice")
-        if st.button("Apply theme", key="th_apply"):
-            _apply(reports, report_id, shell, lambda s, c=choice: _set_meta(s, "chart_theme_id", c))
-            st.session_state.pop(f"_studio_charts::{report_id}", None)  # invalidate chart cache
-    else:
-        st.caption("No visualization themes available.")
-
-
-def _chart_theme(studio) -> str:
-    return (studio.document.meta or {}).get("chart_theme_id", "opta_light")
-
-
-def _set_meta(studio, key: str, value: Any) -> None:
+def _set_publish(studio, data: dict) -> None:
     meta = dict(studio.document.meta or {})
-    meta[key] = value
+    meta["publish"] = data
     studio.document.meta = meta
 
 
-# ---------------------------------------------------------------- apply / history / undo
-def _apply(reports, report_id, shell, mutate: Callable, *, push: bool = True) -> None:
-    """Persist one edit through the reused autosave path, recording an undo
-    snapshot first. Selection stays; the page reruns to reflect the change."""
+def _cover_index(pub: dict) -> int:
+    align = (pub.get("cover") or {}).get("alignment", "center")
+    for i, slug in enumerate(COVER_TEMPLATES.values()):
+        if slug == align:
+            return i
+    return 0
+
+
+def _cover_preview_html(reports, cover, pub) -> str:
+    align = (pub.get("cover") or {}).get("alignment", "center")
+    photo = ""
+    if cover.cover_image:
+        data = reports.image_bytes(cover.cover_image)
+        if data:
+            import base64
+            mime = reports.image_mime(cover.cover_image) or "image/png"
+            photo = (f"<img src='data:{mime};base64,{base64.b64encode(data).decode()}' "
+                     f"style='width:100%;height:120px;object-fit:cover;border-radius:6px'/>")
+    return (f"<div style='border:1px solid #d8dee9;border-radius:10px;padding:14px;"
+            f"text-align:{align};background:#fff;color:#16181d'>{photo}"
+            f"<div style='font-size:20px;font-weight:800;margin-top:8px'>{_esc(cover.title)}</div>"
+            f"<div style='color:#6b7280;font-size:13px'>{_esc(cover.subtitle)}</div>"
+            f"<div style='color:#9aa3b2;font-size:11px;margin-top:6px'>"
+            f"{_esc(cover.club)} · {_esc(cover.competition)}</div></div>")
+
+
+def _esc(s: Any) -> str:
+    import html
+    return html.escape(str(s or ""), quote=True)
+
+
+def _ws(reports, report_id) -> Any:
+    rec = reports.get(report_id)
+    return rec.workspace_id if rec else None
+
+
+# ================================================================ apply / undo
+def _apply(shell, reports, report_id, mutate: Callable, *, push: bool = True) -> None:
+    """Persist one edit through the reused autosave path (with an undo snapshot),
+    then rerun. The rerun is cheap: native widgets only, no iframe, no live charts."""
     try:
         if push:
             current = reports.document(report_id)
             if current is not None:
                 history.record(report_id, current.to_dict())
         reports.update_studio(shell.user, report_id, mutate)
+        st.session_state.pop(_PREVIEW, None)      # content changed -> stale preview
         st.rerun()
     except Exception as exc:
         st.error(str(exc))
 
 
 def _undo(shell, reports, report_id) -> None:
+    from fap.reports.models import ReportDocument
     current = reports.document(report_id)
     snap = history.undo(report_id, current.to_dict() if current else {})
     if snap is not None:
-        _restore(shell, reports, report_id, snap)
-
-
-def _redo(shell, reports, report_id) -> None:
-    current = reports.document(report_id)
-    snap = history.redo(report_id, current.to_dict() if current else {})
-    if snap is not None:
-        _restore(shell, reports, report_id, snap)
-
-
-def _restore(shell, reports, report_id, snapshot: dict) -> None:
-    from fap.reports.models import ReportDocument
-    try:
-        reports.save_document(shell.user, report_id, ReportDocument.from_dict(snapshot))
-        st.session_state.pop(f"_studio_charts::{report_id}", None)
-        st.rerun()
-    except Exception as exc:
-        st.error(str(exc))
-
-
-# ---------------------------------------------------------------- selection (ephemeral UI)
-def _selection() -> set[str]:
-    return st.session_state.setdefault(_SEL, set())
-
-
-def _select_only(block_id: str | None) -> None:
-    st.session_state[_SEL] = {block_id} if block_id else set()
-    st.rerun()
-
-
-# ---------------------------------------------------------------- theme colors
-def _theme_colors() -> dict[str, str]:
-    """Editor chrome colors from the application palette - never hardcoded."""
-    try:
-        from fap.theme import DEFAULT_PALETTE, resolve_mode
-        mode = resolve_mode(st.session_state.get("_theme_mode"))
-        if mode == "auto":
-            mode = "light"
-        s = DEFAULT_PALETTE.surface_for(mode)
-        return {"bg": s.bg, "surface": s.surface, "surface_alt": s.surface_alt,
-                "border": s.border, "text": s.text, "muted": s.text_muted,
-                "accent": DEFAULT_PALETTE.primary}
-    except Exception:
-        return {"bg": "#eef1f6", "surface": "#ffffff", "surface_alt": "#f4f6fa",
-                "border": "#e2e8f0", "text": "#16181d", "muted": "#5b6472",
-                "accent": "#2563EB"}
+        try:
+            reports.save_document(shell.user, report_id, ReportDocument.from_dict(snap))
+            st.session_state.pop(_PREVIEW, None)
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
