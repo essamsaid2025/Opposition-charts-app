@@ -82,6 +82,12 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     if wm_getter is not None:
         _wm_getter = wm_getter
 
+    # Bridge the (provider-agnostic) identity session layer to the enterprise
+    # services so login is DIRECTORY-FIRST: resolved lazily, only when a user
+    # actually signs in, and never importing bootstrap from the identity layer.
+    from fap.identity import enterprise
+    enterprise.bind(lambda: _platform_getter() if _platform_getter else None)
+
     brand = _branding()
     theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
 

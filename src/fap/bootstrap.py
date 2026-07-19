@@ -236,19 +236,39 @@ def _administration(reg: "ServiceRegistry", settings: "AppSettings"):
     (from FAP_SUPER_ADMIN or [identity].super_admin) on first resolution."""
     import os
     from fap.identity.administration import AdministrationService
+    from fap.identity.email import ConsoleEmailProvider
     from fap.workspaces.audit import AuditService
     from fap.workspaces.repositories import AuditRepository
     db = reg.get("db")
     svc = AdministrationService(
         db, audit=AuditService(AuditRepository(db)), permissions=reg.get("permissions"),
         storage=reg.get("dataset_storage"), images=reg.get("image_storage"),
-        cache=reg.get("cache"))
+        cache=reg.get("cache"), email=_email_provider(),
+        base_url=os.environ.get("FAP_BASE_URL", ""),
+        platform_name=getattr(settings, "app_name", "") or "the platform")
     owner = (os.environ.get("FAP_SUPER_ADMIN")
              or getattr(getattr(settings, "identity", None), "super_admin", "")
              or "").strip()
     if owner:
         svc.ensure_super_admin(owner)
     return svc
+
+
+def _email_provider():
+    """The invitation email transport. Microsoft Graph when app-registration
+    secrets are present, else the Console provider (development default)."""
+    import os
+    tenant = os.environ.get("FAP_GRAPH_TENANT", "")
+    client = os.environ.get("FAP_GRAPH_CLIENT_ID", "")
+    secret = os.environ.get("FAP_GRAPH_CLIENT_SECRET", "")
+    sender = os.environ.get("FAP_GRAPH_SENDER", "")
+    if tenant and client and secret and sender:
+        from fap.identity.email import GraphEmailProvider
+        provider = GraphEmailProvider(tenant, client, secret, sender)
+        if provider.available:
+            return provider
+    from fap.identity.email import ConsoleEmailProvider
+    return ConsoleEmailProvider()
 
 
 def init_import_service(root: Path | None = None, *, settings: AppSettings | None = None,

@@ -32,7 +32,8 @@ from fap.workspaces.audit import AuditService
 
 class AdministrationService:
     def __init__(self, db: Any, *, audit: AuditService, permissions: PermissionService,
-                 storage: Any = None, images: Any = None, cache: Any = None) -> None:
+                 storage: Any = None, images: Any = None, cache: Any = None,
+                 email: Any = None, base_url: str = "", platform_name: str = "the platform") -> None:
         self._db = db
         self.roles = RoleRepository(db)
         self.users = UserDirectoryRepository(db)
@@ -44,7 +45,28 @@ class AdministrationService:
         self._storage = storage
         self._images = images
         self._cache = cache
+        self._email = email
+        self._base_url = base_url
+        self._platform_name = platform_name
         self.seed_builtin_roles()
+
+    def provision_user(self, email: str, *, name: str = "", provider_id: str = "",
+                       role_slug: str = "read_only", status: str = "active") -> PlatformUser:
+        """System-level provisioning at first login (no actor / no capability
+        check - this is the platform admitting a user per policy, and is audited
+        as such). Never elevates: a Super Admin is only ever seeded explicitly."""
+        if role_slug == Role.SUPER_ADMIN.slug:
+            role_slug = Role.READ_ONLY.slug
+        existing = self.users.get(email)
+        rec = existing or PlatformUser(email=email.lower(), provider_id=provider_id)
+        rec.name = name or rec.name
+        rec.role_slug = existing.role_slug if existing else role_slug
+        rec.status = status if not existing else existing.status
+        rec.provider_id = provider_id or rec.provider_id
+        self.users.save(rec)
+        self.audit.record(None, "auth.provision", target_type="user", target_id=email,
+                          detail={"role": rec.role_slug, "status": rec.status})
+        return rec
 
     # ---------------------------------------------------------------- seeding
     def seed_builtin_roles(self) -> None:
@@ -247,7 +269,29 @@ class AdministrationService:
         self.invites.add(inv)
         self.audit.record(actor, "admin.invite.create", target_type="invitation", target_id=email,
                           detail={"role": role_slug})
+        self._send_invitation_email(actor, inv)
         return inv
+
+    def _send_invitation_email(self, actor: User, inv: Invitation) -> None:
+        """Deliver the invitation via the injected EmailProvider (Console in dev,
+        Microsoft Graph in production). Best-effort: a delivery failure never
+        breaks the invite, but is audited."""
+        if self._email is None:
+            return
+        from fap.identity.email import invitation_message
+        link = (f"{self._base_url.rstrip('/')}/?invite={inv.token}"
+                if self._base_url else f"?invite={inv.token}")
+        role = self.roles.get(inv.role_slug)
+        msg = invitation_message(to=inv.email, platform_name=self._platform_name,
+                                 inviter=actor.name or actor.email,
+                                 role_name=role.name if role else inv.role_slug, link=link)
+        try:
+            ok = bool(self._email.send(msg))
+        except Exception:
+            ok = False
+        self.audit.record(actor, "admin.invite.email_sent" if ok else "admin.invite.email_failed",
+                          target_type="invitation", target_id=inv.email,
+                          detail={"provider": getattr(getattr(self._email, "info", None), "id", "")})
 
     def list_invitations(self, actor: User, *, status: str | None = None) -> list[Invitation]:
         self._require(actor, Capability.VIEW_ADMIN)

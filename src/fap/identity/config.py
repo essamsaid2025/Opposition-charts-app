@@ -58,6 +58,10 @@ def development_mode() -> bool:
         return False
 
 
+#: how an authenticated but unknown user (no directory row, no invitation) is treated
+VALID_UNKNOWN_POLICIES = ("reject", "pending", "read_only")
+
+
 @dataclass(frozen=True, slots=True)
 class IdentityConfig:
     providers: tuple[str, ...]                # identity provider ids offered at sign-in
@@ -65,6 +69,8 @@ class IdentityConfig:
     session_timeout_minutes: int = DEFAULT_SESSION_TIMEOUT_MINUTES
     remember_session: bool = False
     development: bool = False
+    unknown_user_policy: str = "reject"       # reject | pending | read_only
+    base_url: str = ""                        # for invitation links
 
     @property
     def configured(self) -> bool:
@@ -91,10 +97,16 @@ def load_identity_config(secrets: Mapping[str, Any], *, development: bool = Fals
         providers = [*providers, "dev"]
 
     timeout = int(identity.get("session_timeout_minutes", DEFAULT_SESSION_TIMEOUT_MINUTES))
+    policy_name = str(identity.get("unknown_user_policy",
+                                  os.environ.get("FAP_UNKNOWN_USER_POLICY", "reject"))).strip().lower()
+    if policy_name not in VALID_UNKNOWN_POLICIES:
+        policy_name = "reject"
     return IdentityConfig(
         providers=tuple(dict.fromkeys(providers)),   # de-dup, keep order
         policy=AccessPolicy.from_mapping(identity),
         session_timeout_minutes=timeout,
         remember_session=bool(identity.get("remember_session", False)),
         development=development,
+        unknown_user_policy=policy_name,
+        base_url=str(identity.get("base_url", os.environ.get("FAP_BASE_URL", ""))).strip(),
     )
