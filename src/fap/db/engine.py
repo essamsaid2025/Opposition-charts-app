@@ -299,7 +299,143 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_sessions_email ON user_sessions(email);
         CREATE INDEX IF NOT EXISTS idx_sessions_status ON user_sessions(status);
     """),
-    # (9, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 8.0 - Professional Scouting Platform. Additive only: a player database
+    # plus its notes, videos, media, attachments, watchlists and report links.
+    # Scouting reports reuse the existing `reports` table (versioned) via a link
+    # row; images reuse ImageStorage; videos/attachments use the new FileStorage.
+    (9, """
+        CREATE TABLE IF NOT EXISTS players (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            nickname TEXT NOT NULL DEFAULT '',
+            club TEXT NOT NULL DEFAULT '',
+            league TEXT NOT NULL DEFAULT '',
+            country TEXT NOT NULL DEFAULT '',
+            nationality TEXT NOT NULL DEFAULT '',
+            age INTEGER,
+            dob TEXT NOT NULL DEFAULT '',
+            position TEXT NOT NULL DEFAULT '',
+            secondary_positions TEXT NOT NULL DEFAULT '[]',
+            foot TEXT NOT NULL DEFAULT '',
+            height INTEGER,
+            weight INTEGER,
+            shirt_number INTEGER,
+            contract_until TEXT NOT NULL DEFAULT '',
+            market_value REAL,
+            agent TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',       -- active|archived (soft delete) + scouting status in document
+            profile_image_id TEXT NOT NULL DEFAULT '',
+            club_logo_id TEXT NOT NULL DEFAULT '',
+            flag TEXT NOT NULL DEFAULT '',
+            tags TEXT NOT NULL DEFAULT '[]',
+            custom_fields TEXT NOT NULL DEFAULT '{}',
+            availability TEXT NOT NULL DEFAULT '',
+            medical_notes TEXT NOT NULL DEFAULT '',
+            internal_rating REAL,
+            priority TEXT NOT NULL DEFAULT '',
+            workspace_id TEXT,
+            owner TEXT NOT NULL DEFAULT '',
+            favorite INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_players_name ON players(name);
+        CREATE INDEX IF NOT EXISTS idx_players_club ON players(club);
+        CREATE INDEX IF NOT EXISTS idx_players_position ON players(position);
+        CREATE INDEX IF NOT EXISTS idx_players_archived ON players(archived);
+
+        CREATE TABLE IF NOT EXISTS scouting_reports (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            report_id TEXT NOT NULL,                     -- FK into reports (reused, versioned)
+            title TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_scout_reports_player ON scouting_reports(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_notes (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'note',           -- note|checklist
+            pinned INTEGER NOT NULL DEFAULT 0,
+            private INTEGER NOT NULL DEFAULT 0,
+            author TEXT NOT NULL DEFAULT '',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_player_notes ON player_notes(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_videos (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'external',        -- upload|external
+            provider TEXT NOT NULL DEFAULT '',            -- youtube|vimeo|hudl|wyscout|skillcorner|statsbomb|file|url
+            url TEXT NOT NULL DEFAULT '',
+            file_id TEXT NOT NULL DEFAULT '',             -- FileStorage id for uploads
+            filename TEXT NOT NULL DEFAULT '',
+            mime TEXT NOT NULL DEFAULT '',
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_player_videos ON player_videos(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_media (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            image_id TEXT NOT NULL,                       -- ImageStorage id (reused)
+            kind TEXT NOT NULL DEFAULT 'scouting',        -- profile|medical|training|match|scouting
+            caption TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_player_media ON player_media(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_attachments (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,                        -- FileStorage id (reused for attachments)
+            filename TEXT NOT NULL DEFAULT '',
+            mime TEXT NOT NULL DEFAULT '',
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            kind TEXT NOT NULL DEFAULT 'document',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_player_attachments ON player_attachments(player_id);
+
+        CREATE TABLE IF NOT EXISTS watchlists (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            owner TEXT NOT NULL DEFAULT '',
+            workspace_id TEXT,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS watchlist_members (
+            watchlist_id TEXT NOT NULL,
+            player_id TEXT NOT NULL,
+            added_by TEXT,
+            added_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (watchlist_id, player_id),
+            FOREIGN KEY (watchlist_id) REFERENCES watchlists(id) ON DELETE CASCADE,
+            FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_watchlist_members ON watchlist_members(player_id);
+    """),
+    # (10, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

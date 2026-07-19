@@ -160,6 +160,12 @@ class PlatformContext:
         scoped grants and storage (Phase 7.1)."""
         return self.services.get("administration")
 
+    @property
+    def scouting(self):
+        """Professional scouting platform: player database, notes, videos, media,
+        attachments, watchlists and Studio-integrated reports (Phase 8.0)."""
+        return self.services.get("scouting")
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -207,11 +213,36 @@ def init_platform(root: Path | None = None, *,
                       lambda reg: WorkspaceManager(reg.get("db"), cache=reg.get("cache"),
                                                    storage=reg.get("dataset_storage")))
     services.register("reports", _reports_manager)
+    services.register("video_storage", lambda _: _local_file_storage(settings, "videos"))
+    services.register("attachment_storage", lambda _: _local_file_storage(settings, "attachments"))
     services.register("permissions", _permissions)
     services.register("administration", lambda reg: _administration(reg, settings))
+    services.register("scouting", _scouting)
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())
+
+
+def _local_file_storage(settings: "AppSettings", subdir: str):
+    """The new local file tier (videos, attachments) - same pattern as
+    ParquetDatasetStorage / LocalImageStorage, under user_data/<subdir>."""
+    from fap.storage.files import LocalFileStorage
+    return LocalFileStorage(Path(settings.user_data_dir) / subdir)
+
+
+def _scouting(reg: "ServiceRegistry"):
+    """The scouting platform, wired to the shared platform services it reuses:
+    reports (Studio), image storage, the new video/attachment storage,
+    permissions and audit."""
+    from fap.scouting.service import ScoutingService
+    from fap.workspaces.audit import AuditService
+    from fap.workspaces.repositories import AuditRepository
+    db = reg.get("db")
+    return ScoutingService(
+        db, permissions=reg.get("permissions"),
+        audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
+        images=reg.get("image_storage"), videos=reg.get("video_storage"),
+        attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"))
 
 
 def _permissions(reg: "ServiceRegistry"):
