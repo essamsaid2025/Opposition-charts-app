@@ -348,14 +348,14 @@ class ScoutingService:
 
     def _auto_report(self, user: User, player: Player, title: str, cover: dict[str, Any],
                      df: pd.DataFrame):
+        # Start blank (cover + empty body): the scout builds the report in the
+        # Studio with Add Content. No sections are auto-inserted.
         templates = [t.info.id for t in self._reports.templates()]
-        template = "scout_report" if "scout_report" in templates else (templates[0] if templates else "")
+        template = "blank" if "blank" in templates else (templates[0] if templates else "")
         try:
             return self._reports.create(user, template=template, df=df, title=title,
                                         workspace_id=player.workspace_id, cover=cover)
         except Exception:
-            # fall back to the first available template if the preferred one needs
-            # data this player frame does not carry
             return self._reports.create(user, template=templates[0], df=df, title=title,
                                         workspace_id=player.workspace_id, cover=cover)
 

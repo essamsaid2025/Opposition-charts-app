@@ -54,6 +54,15 @@ class CustomTemplate:
 
 
 # ---------------------------------------------------------------- built-in templates
+@template_registry.register
+class BlankReport(ReportTemplate):
+    """The default: a cover and an EMPTY body. No sections are inserted - the user
+    builds the report by hand with the Add Content picker (Phase 6E philosophy)."""
+    info = PluginInfo(id="blank", name="Blank — start empty", category="template")
+    subtitle = ""
+    section_ids = ()
+
+
 _FULL = ("executive_summary", "tactical_summary", "open_play", "possession",
          "passing", "build_up", "final_third", "chance_creation", "shooting",
          "defensive", "pressing", "set_pieces", "key_players", "team_statistics",

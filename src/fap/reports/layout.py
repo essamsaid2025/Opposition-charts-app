@@ -182,24 +182,31 @@ class LayoutEngine:
         geo = self._page_geometry("A4", "portrait", settings)
         page = self._new_page(0, "cover", geo)
         cd = settings.cover
-        page.background_color = cd.overlay_color
+        # solid background from the designer, else the overlay colour (back-compat)
+        page.background_color = cd.background_color or cd.overlay_color
+        title_align = cd.title_align or cd.alignment
+        sub_align = cd.subtitle_align or cd.alignment
         bg_id = cd.background_image or cover.cover_image
         if bg_id:
             page.background_bytes = resolve(bg_id)
         page.elements.append(RenderedElement(kind="cover_overlay", fx=0, fy=0, fw=1, fh=1,
                              content={"color": cd.overlay_color, "opacity": cd.overlay_opacity}))
         if cd.show_logos:
+            lx, ly = {"top": (0.08, 0.10), "center": (0.44, 0.16),
+                      "corner": (0.80, 0.06)}.get(cd.logo_position, (0.08, 0.10))
             for i, logo in enumerate((cover.club_logo, cover.organization_logo)):
                 data = _logo_bytes(logo, resolve, branding)
                 if data:
-                    page.elements.append(RenderedElement(kind="logo", fx=0.08 + i * 0.14,
-                                         fy=0.10, fw=0.12, fh=0.07,
-                                         content={"image_bytes": data}))
+                    page.elements.append(RenderedElement(kind="logo", fx=lx + i * 0.14,
+                                         fy=ly, fw=0.12, fh=0.07, content={"image_bytes": data}))
         page.elements.append(RenderedElement(kind="text", fx=0.08, fy=0.62, fw=0.84, fh=0.12,
-                             align=cd.alignment, role="title", content={"text": cover.title}))
+                             align=title_align, role="title", content={"text": cover.title}))
+        if cd.divider:
+            page.elements.append(RenderedElement(kind="divider", fx=0.08, fy=0.735, fw=0.84, fh=0.004,
+                                 content={"color": cd.accent_color}))
         if cover.subtitle:
             page.elements.append(RenderedElement(kind="text", fx=0.08, fy=0.75, fw=0.84, fh=0.06,
-                                 align=cd.alignment, role="subtitle", content={"text": cover.subtitle}))
+                                 align=sub_align, role="subtitle", content={"text": cover.subtitle}))
         meta_lines = [v for v in (
             _join(" · ", cover.competition, cover.season),
             _join(" · ", ("vs " + cover.opponent) if cover.opponent else "", cover.match_date),
@@ -207,7 +214,7 @@ class LayoutEngine:
         ) if v]
         if meta_lines:
             page.elements.append(RenderedElement(kind="text", fx=0.08, fy=0.84, fw=0.84, fh=0.10,
-                                 align=cd.alignment, role="meta", content={"text": "\n".join(meta_lines)}))
+                                 align=title_align, role="meta", content={"text": "\n".join(meta_lines)}))
         return page
 
     # -------------------------------------------------------------- studio page

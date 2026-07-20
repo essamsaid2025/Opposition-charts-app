@@ -61,7 +61,12 @@ class ReportsPage(Page):
 
         templates = reports.templates()
         names = {t.info.id: t.info.name for t in templates}
-        template = st.selectbox("Template", list(names), format_func=lambda i: names[i],
+        # Start from Blank by default: the report opens with a cover and an empty
+        # body; the older section templates remain available as optional starts.
+        ordered = (["blank"] if "blank" in names else []) + [i for i in names if i != "blank"]
+        st.caption("New reports start **blank** — a cover and an empty body. You add every "
+                   "section yourself with **Add Content** in the editor.")
+        template = st.selectbox("Start from", ordered, format_func=lambda i: names[i],
                                 key="report_template")
         title = st.text_input("Title (optional)", key="report_title")
         opponent = st.text_input("Opponent", key="report_opponent",

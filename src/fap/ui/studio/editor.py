@@ -27,6 +27,9 @@ import streamlit as st
 
 from fap.reports import chart_block, image_block, text_block
 from fap.ui.studio import history
+from fap.ui.studio.covers import (
+    COVER_PRESETS, COVER_TEMPLATES, suggest_from_palette, template_design,
+)
 
 # block "variants" layered on the text block kind (kept identical to 6C so the
 # exporters/layout engine render them unchanged)
@@ -41,20 +44,6 @@ REPORT_TEMPLATES: dict[str, str] = {
     "Coach": "coach",
     "Print": "print",
 }
-COVER_TEMPLATES: dict[str, str] = {"Centered": "center", "Left aligned": "left",
-                                   "Right aligned": "right"}
-
-# the structured blocks a body page is composed of (Add Block menu)
-BLOCK_MENU: dict[str, Callable] = {
-    "Section header": lambda: _variant(text_block("New section", title="Section"), SECTION_HEADER),
-    "Text": lambda: text_block("Write here…", title="Text"),
-    "Notes": lambda: _variant(text_block("Notes…", title="Notes"), NOTES),
-    "Recommendations": lambda: _variant(text_block("Recommendation…", title="Recommendations"), SECTION_HEADER),
-    "Chart": lambda: chart_block("", {}, title="Chart"),
-    "Image": lambda: image_block("", title="Image"),
-    "Divider": lambda: _variant(text_block("", title="Divider"), DIVIDER),
-}
-
 _HEIGHT = {SECTION_HEADER: 54, NOTES: 150, DIVIDER: 24, SPACER: 40}
 _MARGIN = 48.0
 _GAP = 18.0
@@ -96,38 +85,99 @@ def _header(shell, reports, report_id, record, studio) -> None:
         st.toast("Version saved")
 
 
-# ================================================================ cover
+# ================================================================ cover designer
 def _cover_editor(shell, reports, report_id, studio) -> None:
     cover = studio.document.cover
-    pub = _publish(studio)
-    with st.expander("Cover", expanded=True):
+    cd = _cover_design(studio)
+    with st.expander("Cover designer", expanded=True):
         colf, colp = st.columns([2, 1])
         with colf:
+            # -- template gallery + report-type presets + branding suggestions --
+            st.markdown("**Cover template** — design only, never content")
+            gallery = list(COVER_TEMPLATES)
+            cur = next((n for n in gallery if COVER_TEMPLATES[n].get("template") == cd.get("template")),
+                       gallery[0])
+            g1, g2 = st.columns([3, 1])
+            tpl = g1.selectbox("Gallery", gallery, index=gallery.index(cur), key="cv_tpl",
+                               label_visibility="collapsed")
+            if g2.button("Apply", key="cv_tpl_apply", use_container_width=True):
+                _apply_cover_design(shell, reports, report_id, template_design(tpl))
+            p1, p2 = st.columns([3, 1])
+            preset = p1.selectbox("Report-type preset", list(COVER_PRESETS), key="cv_preset",
+                                  label_visibility="collapsed")
+            if p2.button("Use", key="cv_preset_apply", use_container_width=True):
+                _apply_cover_design(shell, reports, report_id, template_design(COVER_PRESETS[preset]))
+
+            suggestions = _branding_suggestions(shell)
+            if suggestions:
+                s1, s2 = st.columns([3, 1])
+                sug = s1.selectbox("Club branding suggestions", list(suggestions), key="cv_sug",
+                                   label_visibility="collapsed")
+                if s2.button("Apply", key="cv_sug_apply", use_container_width=True):
+                    _apply_cover_design(shell, reports, report_id, suggestions[sug])
+
+            # -- content (title/subtitle + images) --
+            st.markdown("**Content**")
             title = st.text_input("Title", value=cover.title, key="cv_title")
             subtitle = st.text_input("Subtitle", value=cover.subtitle, key="cv_sub")
-            cc = st.columns(2)
-            cover_tpl = cc[0].selectbox("Cover style", list(COVER_TEMPLATES),
-                                        index=_cover_index(pub), key="cv_style")
-            photo = cc[1].file_uploader("Photo", type=["png", "jpg", "jpeg", "webp"], key="cv_photo")
-            if st.button("Apply cover", type="primary", key="cv_apply"):
-                image_id = cover.cover_image
-                if photo is not None:
-                    img = reports.upload_image(shell.user, photo.getvalue(), photo.name,
-                                               photo.type or "image/png",
-                                               workspace_id=_ws(reports, report_id))
-                    image_id = img.id
+            ic = st.columns(2)
+            photo = ic[0].file_uploader("Player / background photo",
+                                        type=["png", "jpg", "jpeg", "webp"], key="cv_photo")
+            badge = ic[1].file_uploader("Club badge", type=["png", "jpg", "jpeg", "webp", "svg"],
+                                        key="cv_badge")
+            fed = st.file_uploader("Competition / federation logo",
+                                   type=["png", "jpg", "jpeg", "webp", "svg"], key="cv_fed")
 
-                def m(s, t=title, sub=subtitle, style=COVER_TEMPLATES[cover_tpl], iid=image_id):
+            # -- customize the design --
+            with st.expander("Customize design"):
+                d1, d2 = st.columns(2)
+                bg = d1.color_picker("Background", cd.get("background_color") or "#ffffff", key="cd_bg")
+                accent = d2.color_picker("Accent", cd.get("accent_color") or "#E07B2B", key="cd_ac")
+                gradient = d1.checkbox("Gradient", value=cd.get("gradient", False), key="cd_grad")
+                gcolor = d2.color_picker("Gradient 2", cd.get("gradient_color") or "#0b1f3a", key="cd_gc")
+                overlay = d1.slider("Overlay", 0.0, 1.0, float(cd.get("overlay_opacity", 0.0)), 0.05,
+                                    key="cd_ov")
+                talign = d2.selectbox("Title align", ["left", "center", "right"],
+                                      index=_ai(cd.get("title_align") or cd.get("alignment", "left")),
+                                      key="cd_ta")
+                salign = d1.selectbox("Subtitle align", ["left", "center", "right"],
+                                      index=_ai(cd.get("subtitle_align") or cd.get("alignment", "left")),
+                                      key="cd_sa")
+                logo_pos = d2.selectbox("Logo position", ["top", "center", "corner"],
+                                        index=["top", "center", "corner"].index(cd.get("logo_position", "top")),
+                                        key="cd_lp")
+                show_logos = d1.checkbox("Show logos", value=cd.get("show_logos", True), key="cd_sl")
+                divider = d2.checkbox("Accent divider", value=cd.get("divider", True), key="cd_dv")
+
+            if st.button("Apply cover", type="primary", key="cv_apply"):
+                photo_id = cover.cover_image
+                badge_id = cover.club_logo
+                fed_id = cover.organization_logo
+                if photo is not None:
+                    photo_id = _upload(shell, reports, report_id, photo)
+                if badge is not None:
+                    badge_id = _upload(shell, reports, report_id, badge)
+                if fed is not None:
+                    fed_id = _upload(shell, reports, report_id, fed)
+                design = {**cd, "background_color": bg, "accent_color": accent, "gradient": gradient,
+                          "gradient_color": gcolor, "overlay_opacity": overlay, "title_align": talign,
+                          "subtitle_align": salign, "logo_position": logo_pos, "show_logos": show_logos,
+                          "divider": divider}
+
+                def m(s, t=title, sub=subtitle, pid=photo_id, bid=badge_id, fid=fed_id, d=design):
                     s.document.cover.title = t
                     s.document.cover.subtitle = sub
-                    s.document.cover.cover_image = iid
-                    p = _publish(s)
-                    p.setdefault("cover", {})["alignment"] = style
-                    _set_publish(s, p)
+                    s.document.cover.cover_image = pid
+                    s.document.cover.club_logo = bid
+                    s.document.cover.organization_logo = fid
+                    _set_cover_design(s, d)
                 _apply(shell, reports, report_id, m, push=False)
+
+            # -- save / reuse custom cover templates (reuses WorkspaceManager presets) --
+            _custom_cover_templates(shell, reports, report_id, cd)
         with colp:
             st.caption("Preview")
-            st.markdown(_cover_preview_html(reports, cover, pub), unsafe_allow_html=True)
+            st.markdown(_cover_preview_html(reports, cover, cd), unsafe_allow_html=True)
 
 
 # ================================================================ body
@@ -139,13 +189,77 @@ def _body_editor(shell, reports, report_id, studio) -> None:
     for i, b in enumerate(blocks):
         _block_card(shell, reports, report_id, b, i, len(blocks))
 
-    st.markdown("**Add block**")
-    cols = st.columns([3, 1])
-    choice = cols[0].selectbox("Block type", list(BLOCK_MENU), key="add_block_type",
-                               label_visibility="collapsed")
-    if cols[1].button("＋ Add", use_container_width=True, key="add_block_btn"):
-        factory = BLOCK_MENU[choice]
-        _apply(shell, reports, report_id, lambda s, f=factory: _add(s, f()))
+    _add_content(shell, reports, report_id)
+
+
+# ================================================================ add content picker
+def _add_content(shell, reports, report_id) -> None:
+    """The single Add Content button -> a categorized picker. Nothing is inserted
+    unless the user explicitly chooses it (empty-report philosophy)."""
+    with st.expander("➕ Add Content", expanded=False):
+        cats = ["Text", "Charts", "Media", "Data", "Custom"]
+        tabs = st.tabs(cats)
+        with tabs[0]:
+            _insert_grid(shell, reports, report_id, _text_items())
+        with tabs[1]:
+            _chart_picker_grid(shell, reports, report_id)
+        with tabs[2]:
+            _insert_grid(shell, reports, report_id, _media_items())
+        with tabs[3]:
+            _insert_grid(shell, reports, report_id, _data_items())
+        with tabs[4]:
+            _insert_grid(shell, reports, report_id, {"Empty block": lambda: text_block("", title="Block")})
+
+
+def _insert_grid(shell, reports, report_id, items: dict) -> None:
+    cols = st.columns(3)
+    for i, (label, factory) in enumerate(items.items()):
+        if cols[i % 3].button(label, key=f"ins_{label}", use_container_width=True):
+            _apply(shell, reports, report_id, lambda s, f=factory: _add(s, f()))
+
+
+def _text_items() -> dict:
+    return {
+        "Title": lambda: _variant(text_block("Title", title="Title"), SECTION_HEADER),
+        "Heading": lambda: _variant(text_block("Heading", title="Heading"), SECTION_HEADER),
+        "Paragraph": lambda: text_block("Write here…", title="Paragraph"),
+        "Quote": lambda: _variant(text_block("“Quote…”", title="Quote"), NOTES),
+        "Divider": lambda: _variant(text_block("", title="Divider"), DIVIDER),
+        "Table": lambda: text_block("| Metric | Value |\n| --- | --- |\n| xG | 1.8 |", title="Table"),
+    }
+
+
+def _media_items() -> dict:
+    return {
+        "Image": lambda: image_block("", title="Image"),
+        "Video link": lambda: text_block("Video: paste link (YouTube / Hudl / Wyscout)", title="Video"),
+    }
+
+
+def _data_items() -> dict:
+    def card(name):
+        return lambda: _variant(text_block(f"{name} details…", title=name), SECTION_HEADER)
+    return {
+        "Player Card": card("Player Card"), "Match Card": card("Match Card"),
+        "Team Card": card("Team Card"), "Comparison": card("Comparison"),
+        "Statistics Table": lambda: text_block("| Stat | Value |\n| --- | --- |\n| Goals | 0 |",
+                                               title="Statistics"),
+    }
+
+
+def _chart_picker_grid(shell, reports, report_id) -> None:
+    from fap.visuals.base import load_builtin_visuals, visual_registry
+    load_builtin_visuals()
+    infos = visual_registry.infos()
+    cats = sorted({i.category or "Other" for i in infos})
+    cat = st.selectbox("Chart category", cats, key="add_chart_cat")
+    options = [i for i in infos if (i.category or "Other") == cat]
+    labels = {i.id: i.name for i in options}
+    viz_id = st.selectbox("Chart", list(labels), format_func=lambda i: labels[i], key="add_chart_viz")
+    if st.button("Insert chart (renders at Export/Refresh)", key="add_chart_ins"):
+        name = labels.get(viz_id, "Chart")
+        _apply(shell, reports, report_id,
+               lambda s, v=viz_id, n=name: _add(s, chart_block(v, {}, title=n)))
 
 
 def _block_card(shell, reports, report_id, block, index, total) -> None:
@@ -424,16 +538,76 @@ def _set_publish(studio, data: dict) -> None:
     studio.document.meta = meta
 
 
-def _cover_index(pub: dict) -> int:
-    align = (pub.get("cover") or {}).get("alignment", "center")
-    for i, slug in enumerate(COVER_TEMPLATES.values()):
-        if slug == align:
-            return i
-    return 0
+# ---------------------------------------------------------------- cover design
+_COVER_DEFAULTS = {
+    "template": "minimal_white", "background_color": "", "gradient": False, "gradient_color": "",
+    "accent_color": "", "overlay_color": "#0b1f3a", "overlay_opacity": 0.0, "alignment": "left",
+    "title_align": "", "subtitle_align": "", "logo_position": "top", "show_logos": True,
+    "divider": True, "text_color": "",
+}
 
 
-def _cover_preview_html(reports, cover, pub) -> str:
-    align = (pub.get("cover") or {}).get("alignment", "center")
+def _cover_design(studio) -> dict:
+    return {**_COVER_DEFAULTS, **(_publish(studio).get("cover") or {})}
+
+
+def _set_cover_design(studio, design: dict) -> None:
+    pub = _publish(studio)
+    pub["cover"] = {**_COVER_DEFAULTS, **(pub.get("cover") or {}), **design}
+    _set_publish(studio, pub)
+
+
+def _apply_cover_design(shell, reports, report_id, design: dict) -> None:
+    _apply(shell, reports, report_id, lambda s, d=dict(design): _set_cover_design(s, d), push=False)
+
+
+def _branding_suggestions(shell) -> dict:
+    try:
+        from fap.theme import DEFAULT_PALETTE
+        p = DEFAULT_PALETTE
+        return suggest_from_palette(p.primary, getattr(p, "secondary", ""), getattr(p, "accent", ""),
+                                    getattr(p, "on_primary", "#ffffff"))
+    except Exception:
+        return {}
+
+
+def _custom_cover_templates(shell, reports, report_id, cd: dict) -> None:
+    wm = getattr(shell, "wm", None)
+    if wm is None:
+        return
+    st.markdown("**My cover templates**")
+    c1, c2 = st.columns([3, 1])
+    name = c1.text_input("Save current cover as…", key="cv_save_name", label_visibility="collapsed",
+                         placeholder="e.g. My Club Cover")
+    if c2.button("Save", key="cv_save_btn", use_container_width=True) and name.strip():
+        try:
+            wm.save_preset(shell.user, kind="cover_template", name=name.strip(), document=dict(cd))
+            st.toast(f"Saved “{name.strip()}”")
+        except Exception as exc:
+            st.error(str(exc))
+    try:
+        saved = wm.list_presets(shell.user, kind="cover_template")
+    except Exception:
+        saved = []
+    if saved:
+        names = {p.id: p.name for p in saved}
+        l1, l2 = st.columns([3, 1])
+        chosen = l1.selectbox("Reuse saved cover", list(names), format_func=lambda i: names[i],
+                              key="cv_load", label_visibility="collapsed")
+        if l2.button("Apply", key="cv_load_apply", use_container_width=True):
+            preset = next((p for p in saved if p.id == chosen), None)
+            if preset:
+                _apply_cover_design(shell, reports, report_id, preset.document)
+
+
+def _cover_preview_html(reports, cover, cd: dict) -> str:
+    talign = cd.get("title_align") or cd.get("alignment", "left")
+    salign = cd.get("subtitle_align") or cd.get("alignment", "left")
+    text_color = cd.get("text_color") or ("#ffffff" if _is_dark(cd.get("background_color")) else "#16181d")
+    accent = cd.get("accent_color") or "#E07B2B"
+    bg = cd.get("background_color") or "#ffffff"
+    if cd.get("gradient") and cd.get("gradient_color"):
+        bg = f"linear-gradient(135deg, {bg}, {cd['gradient_color']})"
     photo = ""
     if cover.cover_image:
         data = reports.image_bytes(cover.cover_image)
@@ -441,13 +615,56 @@ def _cover_preview_html(reports, cover, pub) -> str:
             import base64
             mime = reports.image_mime(cover.cover_image) or "image/png"
             photo = (f"<img src='data:{mime};base64,{base64.b64encode(data).decode()}' "
-                     f"style='width:100%;height:120px;object-fit:cover;border-radius:6px'/>")
-    return (f"<div style='border:1px solid #d8dee9;border-radius:10px;padding:14px;"
-            f"text-align:{align};background:#fff;color:#16181d'>{photo}"
-            f"<div style='font-size:20px;font-weight:800;margin-top:8px'>{_esc(cover.title)}</div>"
-            f"<div style='color:#6b7280;font-size:13px'>{_esc(cover.subtitle)}</div>"
-            f"<div style='color:#9aa3b2;font-size:11px;margin-top:6px'>"
-            f"{_esc(cover.club)} · {_esc(cover.competition)}</div></div>")
+                     f"style='width:100%;height:110px;object-fit:cover;border-radius:6px;margin-bottom:8px'/>")
+    logos = ""
+    if cd.get("show_logos"):
+        for lid in (cover.club_logo, cover.organization_logo):
+            b = _logo_uri(reports, lid)
+            if b:
+                logos += f"<img src='{b}' style='height:26px;margin-right:8px'/>"
+    divider = (f"<div style='height:3px;width:60px;background:{accent};margin:8px 0;"
+               f"{'margin-left:auto;margin-right:auto' if talign=='center' else ''}'></div>"
+               if cd.get("divider") else "")
+    return (f"<div style='border:1px solid #d8dee9;border-radius:10px;padding:16px;"
+            f"background:{bg};color:{text_color};min-height:230px;text-align:{talign}'>"
+            f"<div style='text-align:{cd.get('logo_position')=='center' and 'center' or 'left'}'>{logos}</div>"
+            f"{photo}"
+            f"<div style='font-size:22px;font-weight:850;margin-top:6px'>{_esc(cover.title)}</div>"
+            f"{divider}"
+            f"<div style='opacity:.85;font-size:13px;text-align:{salign}'>{_esc(cover.subtitle)}</div>"
+            f"<div style='opacity:.6;font-size:11px;margin-top:8px'>"
+            f"{_esc(cover.club)} · {_esc(cover.competition)} · {_esc(cover.season)}</div></div>")
+
+
+def _logo_uri(reports, image_id: str) -> str:
+    if not image_id:
+        return ""
+    data = reports.image_bytes(image_id)
+    if not data:
+        return ""
+    import base64
+    mime = reports.image_mime(image_id) or "image/png"
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+def _is_dark(color: str | None) -> bool:
+    if not color or not color.startswith("#") or len(color) < 7:
+        return False
+    try:
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        return (0.299 * r + 0.587 * g + 0.114 * b) < 140
+    except Exception:
+        return False
+
+
+def _ai(align: str) -> int:
+    return {"left": 0, "center": 1, "right": 2}.get(align, 0)
+
+
+def _upload(shell, reports, report_id, file) -> str:
+    img = reports.upload_image(shell.user, file.getvalue(), file.name, file.type or "image/png",
+                               workspace_id=_ws(reports, report_id))
+    return img.id
 
 
 def _esc(s: Any) -> str:

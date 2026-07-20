@@ -92,8 +92,19 @@ class CoverDesign:
     background_image: str = ""       # image_id; falls back to Cover.cover_image
     overlay_color: str = "#0b1f3a"
     overlay_opacity: float = 0.35
-    alignment: str = "left"          # left | center | right
+    alignment: str = "left"          # left | center | right (title default)
     show_logos: bool = True
+    # -- designer fields (Phase 6E; all optional, back-compatible) --------
+    template: str = "minimal_white"  # named cover template this design came from
+    background_color: str = ""       # solid page background (design)
+    gradient: bool = False           # two-colour background (preview + solid fallback in export)
+    gradient_color: str = ""
+    accent_color: str = ""           # divider / rule colour
+    title_align: str = ""            # overrides alignment for the title
+    subtitle_align: str = ""         # overrides alignment for the subtitle
+    logo_position: str = "top"       # top | center | corner
+    divider: bool = True             # show an accent divider under the title
+    text_color: str = ""             # cover text colour (design)
 
 
 # ---------------------------------------------------------------- settings root
