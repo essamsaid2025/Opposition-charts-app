@@ -18,10 +18,13 @@ decision so the identity layer stays testable without a database.
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
 import streamlit as st
+
+logger = logging.getLogger("fap.identity.session")
 
 from fap.identity import enterprise
 from fap.identity.builtin.dev import DevProvider
@@ -58,9 +61,24 @@ def _secrets() -> dict[str, Any]:
         return {}
 
 
+def _dev_from_secrets(secrets: dict[str, Any]) -> bool:
+    """Streamlit Cloud puts config in st.secrets, NOT os.environ - so honour the
+    dev-mode switch from secrets too (FAP_AUTH_PROVIDER='dev' / FAP_ENVIRONMENT=
+    'development' as top-level secrets, or [identity].development). Mirrors the
+    owner-email resolution so a Cloud-only deployment behaves like a local one."""
+    if str(secrets.get("FAP_AUTH_PROVIDER", "")).strip().lower() == "dev":
+        return True
+    if str(secrets.get("FAP_ENVIRONMENT", "")).strip().lower() == "development":
+        return True
+    ident = secrets.get("identity") or {}
+    return bool(ident.get("development")) or str(ident.get("environment", "")).strip().lower() == "development"
+
+
 def _config() -> IdentityConfig:
     load_builtin_identity_providers()
-    return load_identity_config(_secrets(), development=development_mode())
+    secrets = _secrets()
+    development = development_mode() or _dev_from_secrets(secrets)
+    return load_identity_config(secrets, development=development)
 
 
 def _service() -> IdentityService:
@@ -161,11 +179,19 @@ def _authorize(cfg: IdentityConfig, identity: Identity, provider_id: str) -> Use
         _decision, user = _service().resolve(provider_id, identity.claims or {"email": email})
         return user
 
+    # Runtime trace (visible in the app logs): the exact values that decide the
+    # owner bypass. Read these in Streamlit Cloud -> Manage app -> logs.
+    logger.info("AUTH TRACE login_email=%r is_owner=%s owner_emails=%s super_admin=%r "
+                "development=%s providers=%s configured=%s",
+                email, cfg.is_owner(email), sorted(cfg.owner_emails), cfg.super_admin,
+                cfg.development, list(cfg.providers), cfg.configured)
+
     # THE OWNER INVARIANT: the configured platform owner is ALWAYS admitted as an
     # active Super Admin, independent of allowed_domains/email_whitelist. The
     # directory row is (re)created on demand, so a missing seed after a restart /
     # sleep-wake / cache clear self-heals on the very next login.
     if cfg.is_owner(email):
+        logger.info("AUTH TRACE -> OWNER BRANCH (ensure_owner) for %r", email)
         entry = be.ensure_owner(email, identity.name)
     else:
         entry = be.directory(email)
@@ -203,6 +229,8 @@ def _admit_unknown(cfg: IdentityConfig, be: Any, identity: Identity, provider_id
     """An authenticated user with no directory row and no invitation: enforce the
     access policy (domain/whitelist = organization restriction), then the
     configured unknown-user policy."""
+    logger.info("AUTH TRACE -> _admit_unknown for %r (email is NOT a configured owner)",
+                identity.email)
     decision = _service().authorize(identity)
     if not decision.allowed:
         _deny(be, identity.email, "not_admitted", provider_id, decision.reason)
