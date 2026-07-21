@@ -28,7 +28,8 @@ import streamlit as st
 from fap.reports import chart_block, image_block, text_block
 from fap.ui.studio import history
 from fap.ui.studio.covers import (
-    COVER_PRESETS, COVER_TEMPLATES, suggest_from_palette, template_design,
+    COVER_PRESETS, COVER_TEMPLATES, palette_from_image, suggest_from_logo,
+    suggest_from_palette, template_design,
 )
 
 # block "variants" layered on the text block kind (kept identical to 6C so the
@@ -109,10 +110,24 @@ def _cover_editor(shell, reports, report_id, studio) -> None:
                 _apply_cover_design(shell, reports, report_id, template_design(COVER_PRESETS[preset]))
 
             suggestions = _branding_suggestions(shell)
+            # palettes extracted from the club logo, if one is set on the cover
+            logo_suggestions = {}
+            if cover.club_logo:
+                data = reports.image_bytes(cover.club_logo)
+                if data:
+                    logo_suggestions = suggest_from_logo(data)
+                    pal = palette_from_image(data)
+                    if pal:
+                        swatches = "".join(
+                            f"<span style='display:inline-block;width:16px;height:16px;background:{c};"
+                            f"border-radius:3px;margin-right:4px;vertical-align:middle'></span>" for c in pal)
+                        st.markdown(f"<small>Club logo palette: {swatches}</small>",
+                                    unsafe_allow_html=True)
+            suggestions = {**suggestions, **logo_suggestions}
             if suggestions:
                 s1, s2 = st.columns([3, 1])
-                sug = s1.selectbox("Club branding suggestions", list(suggestions), key="cv_sug",
-                                   label_visibility="collapsed")
+                sug = s1.selectbox("Club branding suggestions (logo + palette)", list(suggestions),
+                                   key="cv_sug", label_visibility="collapsed")
                 if s2.button("Apply", key="cv_sug_apply", use_container_width=True):
                     _apply_cover_design(shell, reports, report_id, suggestions[sug])
 
@@ -196,18 +211,20 @@ def _body_editor(shell, reports, report_id, studio) -> None:
 def _add_content(shell, reports, report_id) -> None:
     """The single Add Content button -> a categorized picker. Nothing is inserted
     unless the user explicitly chooses it (empty-report philosophy)."""
-    with st.expander("➕ Add Content", expanded=False):
-        cats = ["Text", "Charts", "Media", "Data", "Custom"]
+    with st.expander("➕ Add Section", expanded=False):
+        cats = ["Text", "Charts", "Data", "Media", "Analysis", "Custom"]
         tabs = st.tabs(cats)
         with tabs[0]:
             _insert_grid(shell, reports, report_id, _text_items())
         with tabs[1]:
             _chart_picker_grid(shell, reports, report_id)
         with tabs[2]:
-            _insert_grid(shell, reports, report_id, _media_items())
-        with tabs[3]:
             _insert_grid(shell, reports, report_id, _data_items())
+        with tabs[3]:
+            _insert_grid(shell, reports, report_id, _media_items())
         with tabs[4]:
+            _insert_grid(shell, reports, report_id, _analysis_items())
+        with tabs[5]:
             _insert_grid(shell, reports, report_id, {"Empty block": lambda: text_block("", title="Block")})
 
 
@@ -218,32 +235,52 @@ def _insert_grid(shell, reports, report_id, items: dict) -> None:
             _apply(shell, reports, report_id, lambda s, f=factory: _add(s, f()))
 
 
+def _section(label: str, body: str = "") -> Callable:
+    """A titled section block: the label is a heading in the exported body, with an
+    editable placeholder underneath. Renders through the existing text path."""
+    return lambda: text_block(f"## {label}\n{body}", title=label)
+
+
 def _text_items() -> dict:
     return {
-        "Title": lambda: _variant(text_block("Title", title="Title"), SECTION_HEADER),
         "Heading": lambda: _variant(text_block("Heading", title="Heading"), SECTION_HEADER),
         "Paragraph": lambda: text_block("Write here…", title="Paragraph"),
+        "Bullet List": lambda: text_block("- point one\n- point two\n- point three", title="List"),
+        "Numbered List": lambda: text_block("1. first\n2. second\n3. third", title="List"),
         "Quote": lambda: _variant(text_block("“Quote…”", title="Quote"), NOTES),
         "Divider": lambda: _variant(text_block("", title="Divider"), DIVIDER),
         "Table": lambda: text_block("| Metric | Value |\n| --- | --- |\n| xG | 1.8 |", title="Table"),
     }
 
 
-def _media_items() -> dict:
+def _data_items() -> dict:
     return {
-        "Image": lambda: image_block("", title="Image"),
-        "Video link": lambda: text_block("Video: paste link (YouTube / Hudl / Wyscout)", title="Video"),
+        "KPI Card": _section("KPIs", "| Metric | Value |\n| --- | --- |\n| xG | 1.8 |\n| Passes | 92% |"),
+        "Statistics Table": lambda: text_block("| Stat | Value |\n| --- | --- |\n| Goals | 0 |",
+                                               title="Statistics"),
+        "Player Card": _section("Player", "Name · Position · Club · Age"),
+        "Match Card": _section("Match", "Home vs Away · Competition · Date"),
+        "Team Card": _section("Team", "Formation · Style · Key players"),
+        "Comparison": _section("Comparison", "| Player | A | B |\n| --- | --- | --- |\n| xG | | |"),
     }
 
 
-def _data_items() -> dict:
-    def card(name):
-        return lambda: _variant(text_block(f"{name} details…", title=name), SECTION_HEADER)
+def _media_items() -> dict:
     return {
-        "Player Card": card("Player Card"), "Match Card": card("Match Card"),
-        "Team Card": card("Team Card"), "Comparison": card("Comparison"),
-        "Statistics Table": lambda: text_block("| Stat | Value |\n| --- | --- |\n| Goals | 0 |",
-                                               title="Statistics"),
+        "Image": lambda: image_block("", title="Image"),
+        "Video": lambda: text_block("[Video](paste YouTube / Hudl / Wyscout link)", title="Video"),
+        "Attachment": lambda: text_block("📎 Attachment: describe the file / paste a link", title="Attachment"),
+    }
+
+
+def _analysis_items() -> dict:
+    return {
+        "Recommendation": _section("Recommendation", "- "),
+        "Observation": _section("Observation", "- "),
+        "Scout Opinion": _section("Scout Opinion", "- "),
+        "Strengths": _section("Strengths", "- "),
+        "Weaknesses": _section("Weaknesses", "- "),
+        "Tactical Notes": _section("Tactical Notes", "- "),
     }
 
 

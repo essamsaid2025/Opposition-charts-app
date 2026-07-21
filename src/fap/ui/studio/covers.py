@@ -66,6 +66,44 @@ def template_design(name: str) -> dict[str, Any]:
     return dict(COVER_TEMPLATES.get(name, COVER_TEMPLATES["Minimal White"]))
 
 
+def palette_from_image(data: bytes, k: int = 5) -> list[str]:
+    """Extract the dominant colours from a club logo/image (hex), most common
+    first, skipping near-white/near-black backgrounds. Pure (PIL); returns [] if
+    the image can't be read."""
+    try:
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        img.thumbnail((80, 80))
+        quant = img.quantize(colors=max(2, k * 3))
+        pal = quant.getpalette() or []
+        counts = sorted(quant.getcolors() or [], reverse=True)  # (count, index)
+        out: list[str] = []
+        for _count, idx in counts:
+            r, g, b = pal[idx * 3:idx * 3 + 3]
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            if lum > 240 or lum < 12:          # skip white/black backgrounds
+                continue
+            hexc = f"#{r:02x}{g:02x}{b:02x}"
+            if hexc not in out:
+                out.append(hexc)
+            if len(out) >= k:
+                break
+        return out
+    except Exception:
+        return []
+
+
+def suggest_from_logo(data: bytes) -> dict[str, dict[str, Any]]:
+    """Cover designs generated from the colours found in the club logo."""
+    cols = palette_from_image(data, k=3)
+    if not cols:
+        return {}
+    primary = cols[0]
+    accent = cols[1] if len(cols) > 1 else primary
+    return suggest_from_palette(primary, accent, accent)
+
+
 def suggest_from_palette(primary: str, secondary: str = "", accent: str = "",
                          on_primary: str = "#ffffff") -> dict[str, dict[str, Any]]:
     """Two or three cover designs generated from the club identity, so the club
