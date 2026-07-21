@@ -153,20 +153,29 @@ def _pending_identity(cfg: IdentityConfig) -> tuple[str | None, dict[str, Any] |
 
 
 def _authorize(cfg: IdentityConfig, identity: Identity, provider_id: str) -> User | None:
+    email = identity.email
     be = enterprise.backend()
     if be is None:                                    # policy-only fallback (tests/headless)
-        _decision, user = _service().resolve(provider_id, identity.claims or {"email": identity.email})
+        if cfg.is_owner(email):
+            return _owner_user(cfg, identity, provider_id)   # owner never locked out
+        _decision, user = _service().resolve(provider_id, identity.claims or {"email": email})
         return user
 
-    email = identity.email
-    entry = be.directory(email)
-    if entry is None:
-        entry = be.accept_invitation(email, identity.name, provider_id)   # pending invite
-    if entry is None:
-        entry = _admit_unknown(cfg, be, identity, provider_id)
+    # THE OWNER INVARIANT: the configured platform owner is ALWAYS admitted as an
+    # active Super Admin, independent of allowed_domains/email_whitelist. The
+    # directory row is (re)created on demand, so a missing seed after a restart /
+    # sleep-wake / cache clear self-heals on the very next login.
+    if cfg.is_owner(email):
+        entry = be.ensure_owner(email, identity.name)
+    else:
+        entry = be.directory(email)
+        if entry is None:
+            entry = be.accept_invitation(email, identity.name, provider_id)   # pending invite
+        if entry is None:
+            entry = _admit_unknown(cfg, be, identity, provider_id)
     if entry is None:
         return None
-    if getattr(entry, "status", "active") != "active":
+    if not cfg.is_owner(email) and getattr(entry, "status", "active") != "active":
         _deny(be, email, f"status_{entry.status}", provider_id)
         return None
 
@@ -211,6 +220,14 @@ def _admit_unknown(cfg: IdentityConfig, be: Any, identity: Identity, provider_id
     return None
 
 
+def _owner_user(cfg: IdentityConfig, identity: Identity, provider_id: str) -> User:
+    """The platform owner as a Super Admin, for the no-backend fallback path
+    (tests/headless). In the real app the backend path self-heals the directory."""
+    return User(email=identity.email, name=identity.name or identity.email,
+                role=Role.SUPER_ADMIN, provider_id=provider_id, subject=identity.subject,
+                organization=cfg.policy.organization, groups=identity.groups)
+
+
 def _deny(be: Any, email: str, reason: str, provider_id: str, message: str = "") -> None:
     be.audit_failed_login(email, reason, provider_id)
     st.session_state[_DENIED_KEY] = message or reason.replace("_", " ")
@@ -252,10 +269,29 @@ def _render_dev_login(cfg: IdentityConfig) -> None:
 def _render_login(cfg: IdentityConfig) -> None:
     st.title("Sign in")
     if not cfg.configured:
-        st.error("Sign-in is not configured. An administrator must set up an identity "
-                 "provider (e.g. Microsoft Entra ID) in `.streamlit/secrets.toml`.")
-        st.caption("For local development, set `FAP_AUTH_PROVIDER=dev` (or "
-                   "`FAP_ENVIRONMENT=development`) to sign in with an email instead of OAuth.")
+        # Production with no identity provider configured. We NEVER silently fall
+        # back to the dev bypass here - we show exactly what to configure.
+        st.error("Microsoft sign-in is not configured yet.")
+        st.markdown(
+            "An administrator needs to add the identity provider to "
+            "**`.streamlit/secrets.toml`** (Streamlit Cloud: *App → Settings → Secrets*):\n\n"
+            "```toml\n"
+            "[auth]\n"
+            'redirect_uri = "https://<your-app>.streamlit.app/oauth2callback"\n'
+            'cookie_secret = "<random-32+ chars>"\n\n'
+            "[auth.microsoft]\n"
+            'client_id = "<Azure app (client) id>"\n'
+            'client_secret = "<Azure client secret>"\n'
+            'server_metadata_url = '
+            '"https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration"\n\n'
+            "[identity]\n"
+            'providers = ["microsoft"]\n'
+            'allowed_domains = ["yourclub.com"]\n'
+            'super_admin = "you@yourclub.com"\n'
+            "```\n"
+            "Microsoft sign-in appears automatically once these secrets exist — no code change.")
+        st.caption("Local development only: set `FAP_ENVIRONMENT=development` to sign in "
+                   "with an email form instead of OAuth.")
         return
     if cfg.policy.fail_closed and cfg.policy.admits_no_one and cfg.unknown_user_policy == "reject":
         st.info("Sign in with your Microsoft work account. If you have not been invited, "

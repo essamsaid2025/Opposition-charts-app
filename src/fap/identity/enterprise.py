@@ -58,6 +58,16 @@ class AuthBackend:
             logger.exception("invitation acceptance failed for %s", email)
             return None
 
+    def ensure_owner(self, email: str, name: str) -> PlatformUser | None:
+        """Guarantee the platform owner exists as an active Super Admin, creating
+        or repairing the directory row on demand (self-healing). Reuses the
+        existing AdministrationService seed - no new subsystem, no new storage."""
+        try:
+            return self._admin.ensure_super_admin(email, name)
+        except Exception:
+            logger.exception("could not ensure owner %s", email)
+            return None
+
     def provision_read_only(self, email: str, name: str, provider_id: str) -> PlatformUser | None:
         try:
             return self._admin.provision_user(email, name=name, provider_id=provider_id,

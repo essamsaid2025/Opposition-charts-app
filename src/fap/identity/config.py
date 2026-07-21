@@ -71,11 +71,17 @@ class IdentityConfig:
     development: bool = False
     unknown_user_policy: str = "reject"       # reject | pending | read_only
     base_url: str = ""                        # for invitation links
+    super_admin: str = ""                     # platform owner email; ALWAYS admitted
 
     @property
     def configured(self) -> bool:
         """Is at least one real (non-dev) provider offered?"""
         return any(p != "dev" for p in self.providers)
+
+    def is_owner(self, email: str) -> bool:
+        """True when ``email`` is the configured platform owner (case-insensitive).
+        The owner is never subject to allowed_domains/email_whitelist."""
+        return bool(self.super_admin) and (email or "").strip().lower() == self.super_admin
 
 
 def _configured_auth_sections(secrets: Mapping[str, Any]) -> list[str]:
@@ -109,4 +115,8 @@ def load_identity_config(secrets: Mapping[str, Any], *, development: bool = Fals
         development=development,
         unknown_user_policy=policy_name,
         base_url=str(identity.get("base_url", os.environ.get("FAP_BASE_URL", ""))).strip(),
+        # platform owner: [identity].super_admin in secrets, else FAP_SUPER_ADMIN env.
+        # This is config, not one-shot bootstrap state, so it survives restarts.
+        super_admin=str(identity.get("super_admin",
+                                    os.environ.get("FAP_SUPER_ADMIN", ""))).strip().lower(),
     )
