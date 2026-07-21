@@ -71,7 +71,8 @@ class IdentityConfig:
     development: bool = False
     unknown_user_policy: str = "reject"       # reject | pending | read_only
     base_url: str = ""                        # for invitation links
-    super_admin: str = ""                     # platform owner email; ALWAYS admitted
+    super_admin: str = ""                     # primary owner email (for display)
+    owner_emails: frozenset[str] = frozenset()  # ALL configured owners; ALWAYS admitted
 
     @property
     def configured(self) -> bool:
@@ -79,9 +80,12 @@ class IdentityConfig:
         return any(p != "dev" for p in self.providers)
 
     def is_owner(self, email: str) -> bool:
-        """True when ``email`` is the configured platform owner (case-insensitive).
-        The owner is never subject to allowed_domains/email_whitelist."""
-        return bool(self.super_admin) and (email or "").strip().lower() == self.super_admin
+        """True when ``email`` is a configured platform owner (case-insensitive).
+        Owners are never subject to allowed_domains/email_whitelist. Membership is
+        checked against EVERY configured source (env, top-level secret,
+        [identity].super_admin), so a stale placeholder can never lock the real
+        owner out."""
+        return (email or "").strip().lower() in self.owner_emails
 
 
 def _configured_auth_sections(secrets: Mapping[str, Any]) -> list[str]:
@@ -107,6 +111,7 @@ def load_identity_config(secrets: Mapping[str, Any], *, development: bool = Fals
                                   os.environ.get("FAP_UNKNOWN_USER_POLICY", "reject"))).strip().lower()
     if policy_name not in VALID_UNKNOWN_POLICIES:
         policy_name = "reject"
+    owners = _resolve_owners(secrets, identity)
     return IdentityConfig(
         providers=tuple(dict.fromkeys(providers)),   # de-dup, keep order
         policy=AccessPolicy.from_mapping(identity),
@@ -115,8 +120,22 @@ def load_identity_config(secrets: Mapping[str, Any], *, development: bool = Fals
         development=development,
         unknown_user_policy=policy_name,
         base_url=str(identity.get("base_url", os.environ.get("FAP_BASE_URL", ""))).strip(),
-        # platform owner: [identity].super_admin in secrets, else FAP_SUPER_ADMIN env.
-        # This is config, not one-shot bootstrap state, so it survives restarts.
-        super_admin=str(identity.get("super_admin",
-                                    os.environ.get("FAP_SUPER_ADMIN", ""))).strip().lower(),
+        super_admin=(next(iter(owners)) if owners else ""),
+        owner_emails=owners,
     )
+
+
+def _resolve_owners(secrets: Mapping[str, Any], identity: Mapping[str, Any]) -> frozenset[str]:
+    """Every configured platform-owner email, normalized (strip+lower), from ALL
+    sources - so it works whether the owner is set under [identity].super_admin,
+    as a TOP-LEVEL secret (Streamlit Cloud puts FAP_SUPER_ADMIN in st.secrets, not
+    os.environ), or as an actual environment variable. Blanks are skipped, so a
+    leftover placeholder or an empty key never shadows a real value.
+    """
+    candidates = [
+        identity.get("super_admin", ""),          # [identity].super_admin
+        secrets.get("FAP_SUPER_ADMIN", ""),       # top-level secret (Streamlit Cloud)
+        secrets.get("super_admin", ""),           # top-level secret alias
+        os.environ.get("FAP_SUPER_ADMIN", ""),    # real environment variable
+    ]
+    return frozenset(str(c).strip().lower() for c in candidates if str(c).strip())
