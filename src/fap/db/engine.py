@@ -435,7 +435,134 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_watchlist_members ON watchlist_members(player_id);
     """),
-    # (10, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 9.0 - Professional Set Piece Analysis (Foundation). Additive only: a
+    # provider-agnostic set-piece event store plus the per-delivery player
+    # positions (box occupancy), contact events (first contact / second ball /
+    # shot) and import provenance. Reuses the existing reports, images, storage,
+    # permissions and audit; no existing table is touched. Corners, free kicks,
+    # throw-ins, penalties and kick-offs; offensive & defensive; own & opposition.
+    (10, """
+        CREATE TABLE IF NOT EXISTS set_pieces (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            match_id TEXT NOT NULL DEFAULT '',
+            match_label TEXT NOT NULL DEFAULT '',
+            season TEXT NOT NULL DEFAULT '',
+            competition TEXT NOT NULL DEFAULT '',
+            team TEXT NOT NULL DEFAULT '',               -- the taking team
+            opponent TEXT NOT NULL DEFAULT '',
+            match_date TEXT NOT NULL DEFAULT '',
+            venue TEXT NOT NULL DEFAULT '',              -- home|away|neutral
+            perspective TEXT NOT NULL DEFAULT 'own',     -- own|opposition
+            phase TEXT NOT NULL DEFAULT 'offensive',     -- offensive|defensive
+            type TEXT NOT NULL DEFAULT 'corner',         -- corner|free_kick|throw_in|penalty|kick_off
+            subtype TEXT NOT NULL DEFAULT '',            -- routine-ish label (near_post_flick, short, ...)
+            side TEXT NOT NULL DEFAULT '',               -- left|right|central
+            taker TEXT NOT NULL DEFAULT '',
+            taker_id TEXT NOT NULL DEFAULT '',           -- optional scouting player id
+            foot TEXT NOT NULL DEFAULT '',               -- left|right
+            minute INTEGER,
+            period INTEGER,
+            -- delivery (canonical 0-100 pitch, attacking toward x=100)
+            start_x REAL, start_y REAL,
+            end_x REAL, end_y REAL,
+            delivery_type TEXT NOT NULL DEFAULT '',      -- inswing|outswing|straight|driven|lofted|ground|short|long
+            delivery_height TEXT NOT NULL DEFAULT '',    -- ground|low|high|lofted
+            delivery_length TEXT NOT NULL DEFAULT '',    -- short|long
+            delivery_speed TEXT NOT NULL DEFAULT '',     -- fast|slow
+            players_in_box INTEGER,
+            -- outcome
+            first_contact_team TEXT NOT NULL DEFAULT '', -- attack|defence|none
+            first_contact_x REAL, first_contact_y REAL,
+            outcome TEXT NOT NULL DEFAULT '',            -- goal|shot|clearance|retained|lost|blocked|off_target|other
+            shot INTEGER NOT NULL DEFAULT 0,
+            goal INTEGER NOT NULL DEFAULT 0,
+            xg REAL,
+            second_ball_team TEXT NOT NULL DEFAULT '',   -- attack|defence|none
+            retained INTEGER NOT NULL DEFAULT 0,
+            time_to_first_contact REAL,
+            time_to_shot REAL,
+            routine TEXT NOT NULL DEFAULT '',            -- assigned/detected routine (9.3 fills)
+            marking TEXT NOT NULL DEFAULT '',            -- man|zonal|hybrid|mixed (defensive)
+            video_url TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'manual',       -- manual|import|tracking
+            import_id TEXT NOT NULL DEFAULT '',
+            owner TEXT NOT NULL DEFAULT '',
+            archived INTEGER NOT NULL DEFAULT 0,
+            tags TEXT NOT NULL DEFAULT '[]',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_setpieces_workspace ON set_pieces(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_setpieces_type ON set_pieces(type);
+        CREATE INDEX IF NOT EXISTS idx_setpieces_phase ON set_pieces(phase);
+        CREATE INDEX IF NOT EXISTS idx_setpieces_perspective ON set_pieces(perspective);
+        CREATE INDEX IF NOT EXISTS idx_setpieces_team ON set_pieces(team);
+        CREATE INDEX IF NOT EXISTS idx_setpieces_match ON set_pieces(match_id);
+        CREATE INDEX IF NOT EXISTS idx_setpieces_archived ON set_pieces(archived);
+
+        -- one row per player position at a set piece (box occupancy / movement /
+        -- defensive shape / marking). moment supports before/at/after delivery.
+        CREATE TABLE IF NOT EXISTS set_piece_positions (
+            id TEXT PRIMARY KEY,
+            set_piece_id TEXT NOT NULL,
+            moment TEXT NOT NULL DEFAULT 'delivery',     -- before|delivery|after
+            team TEXT NOT NULL DEFAULT 'attack',         -- attack|defence
+            player TEXT NOT NULL DEFAULT '',
+            player_id TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',               -- near_post|far_post|penalty_spot|six_yard|edge_box|gk_area|back_post|central|half_space_left|half_space_right
+            zone TEXT NOT NULL DEFAULT '',               -- computed occupancy zone
+            x REAL, y REAL,
+            is_gk INTEGER NOT NULL DEFAULT 0,
+            marking TEXT NOT NULL DEFAULT '',            -- man|zonal|none
+            run_type TEXT NOT NULL DEFAULT '',           -- near_post|far_post|screen|block|late|edge|decoy
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (set_piece_id) REFERENCES set_pieces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_sp_positions ON set_piece_positions(set_piece_id);
+        CREATE INDEX IF NOT EXISTS idx_sp_positions_role ON set_piece_positions(role);
+
+        -- contact / ball events attached to a set piece (first contact, second
+        -- ball, shot, clearance, save, rebound) - the map/first-contact analytics.
+        CREATE TABLE IF NOT EXISTS set_piece_contacts (
+            id TEXT PRIMARY KEY,
+            set_piece_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'first_contact',  -- first_contact|second_ball|shot|clearance|save|rebound
+            sequence INTEGER NOT NULL DEFAULT 0,
+            team TEXT NOT NULL DEFAULT '',               -- attack|defence
+            player TEXT NOT NULL DEFAULT '',
+            player_id TEXT NOT NULL DEFAULT '',
+            x REAL, y REAL,
+            body_part TEXT NOT NULL DEFAULT '',          -- head|foot|other
+            outcome TEXT NOT NULL DEFAULT '',            -- success|miss|loss|save|goal|clearance|block
+            won INTEGER NOT NULL DEFAULT 0,
+            distance REAL,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (set_piece_id) REFERENCES set_pieces(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_sp_contacts ON set_piece_contacts(set_piece_id);
+
+        -- import provenance: one row per file/batch ingested (CSV/Excel/JSON).
+        CREATE TABLE IF NOT EXISTS set_piece_imports (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT,
+            filename TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL DEFAULT '',           -- generic|opta|statsbomb|wyscout|manual
+            rows INTEGER NOT NULL DEFAULT 0,
+            imported INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            mapping TEXT NOT NULL DEFAULT '{}',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sp_imports_ws ON set_piece_imports(workspace_id);
+    """),
+    # (11, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

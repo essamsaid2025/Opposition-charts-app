@@ -30,12 +30,10 @@ class MatchAnalysisPage(_Placeholder):
     _blurb = "Single-match breakdowns will build on the Open Play engine."
 
 
-@page_registry.register
-class SetPieceAnalysisPage(_Placeholder):
-    info = PluginInfo(id="set_piece_analysis", name="Set Piece Analysis", category="page")
-    section = "Analysis"; icon = "setpiece"; order = 20
-    _blurb = "Corners, free kicks and throw-ins."
-
+# NOTE: the Set Piece Analysis page is no longer a placeholder - the real
+# implementation lives in fap.ui.builtin.setpieces (Phase 9.0), registered under
+# id="set_piece_analysis". The placeholder was removed so it no longer collides
+# with (and shadows) the real page during plugin discovery.
 
 # NOTE: the Scouting page is no longer a placeholder - the real implementation
 # lives in fap.ui.builtin.scouting (Phase 8.0), registered under id="scouting".

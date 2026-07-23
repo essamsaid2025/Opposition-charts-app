@@ -1,0 +1,189 @@
+"""Set-piece -> Report Studio bridge (Phase 9.1) - PURE.
+
+Turns an analytics bundle (from fap.setpieces.analytics) into a list of report
+``Section`` objects using the EXISTING report models. The service injects these
+into a report created through ReportsManager, so a set-piece report opens in the
+existing Report Studio, fully editable - no second reporting engine, no second
+editor. Richer auto-reports (heatmap images, recommendations, video links) are
+Phase 9.5; this establishes the integration with statistics sections.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from fap.reports.models import Insight, KPI, Section, Table
+from fap.setpieces.models import SET_PIECE_TYPE_LABELS
+
+
+def _n(value: Any, suffix: str = "") -> str:
+    if value is None:
+        return "—"
+    return f"{value}{suffix}"
+
+
+def build_setpiece_sections(bundle: dict[str, Any]) -> list[Section]:
+    """bundle = {overview, derived, by_type, delivery, outcome} (see
+    SetPieceService.analytics_overview)."""
+    ov = bundle.get("overview", {})
+    dr = bundle.get("derived", {})
+    bt = bundle.get("by_type", {})
+    dl = bundle.get("delivery", {})
+    oc = bundle.get("outcome", {})
+
+    sections: list[Section] = []
+
+    # -- overview -------------------------------------------------------------
+    overview_kpis = [
+        KPI("Total Set Pieces", _n(ov.get("total", 0))),
+        KPI("Goals", _n(ov.get("goals", 0))),
+        KPI("Shots", _n(ov.get("shots", 0))),
+        KPI("xG", _n(ov.get("xg", 0.0))),
+        KPI("Shot %", _n(ov.get("shot_pct", 0.0), "%")),
+        KPI("Goal %", _n(ov.get("goal_pct", 0.0), "%")),
+        KPI("First Contact %", _n(ov.get("first_contact_pct", 0.0), "%")),
+        KPI("Second Ball %", _n(ov.get("second_ball_pct", 0.0), "%")),
+        KPI("Retention %", _n(ov.get("retention_pct", 0.0), "%")),
+        KPI("Avg Players in Box", _n(ov.get("avg_players_in_box"))),
+        KPI("Avg Time to Shot", _n(ov.get("avg_time_to_shot"), "s")),
+        KPI("Success Rate", _n(dr.get("success_rate", 0.0), "%")),
+        KPI("Goal Contribution", _n(dr.get("goal_contribution", 0.0), "%")),
+        KPI("Chance Creation", _n(dr.get("chance_creation", 0.0), "%")),
+    ]
+    sections.append(Section(id="sp_overview", title="Set Piece Overview",
+                            subtitle="Headline KPIs", kpis=overview_kpis,
+                            insights=_overview_insights(ov, dr, dl)))
+
+    # -- by type --------------------------------------------------------------
+    if bt:
+        rows = [[SET_PIECE_TYPE_LABELS.get(t, t), s["count"], s["shots"], s["goals"],
+                 f"{s['shot_pct']}%", f"{s['goal_pct']}%", f"{s['first_contact_pct']}%", s["xg"]]
+                for t, s in sorted(bt.items(), key=lambda kv: -kv[1]["count"])]
+        sections.append(Section(
+            id="sp_by_type", title="By Set Piece Type",
+            tables=[Table(title="Per-type breakdown",
+                          columns=["Type", "Count", "Shots", "Goals", "Shot %",
+                                   "Goal %", "1st Contact %", "xG"], rows=rows)]))
+
+    # -- delivery & outcomes --------------------------------------------------
+    tables: list[Table] = []
+    if dl.get("delivery_type"):
+        tables.append(Table(title="Delivery type",
+                            columns=["Delivery", "Count"],
+                            rows=[[k.title(), v] for k, v in dl["delivery_type"].items()]))
+    if oc:
+        tables.append(Table(title="Outcomes", columns=["Outcome", "Count"],
+                            rows=[[k.title(), v] for k, v in oc.items()]))
+    if tables:
+        sections.append(Section(id="sp_delivery", title="Delivery & Outcomes", tables=tables))
+
+    return sections
+
+
+def build_intelligence_sections(intel: Any) -> list[Section]:
+    """Turn an IntelligenceReport (Phase 9.3) into report Sections: narrative,
+    detected routines, key insights and coach recommendations. Reuses the report
+    models - no second report engine, no duplicated intelligence."""
+    from fap.setpieces.intelligence import ROUTINE_LABELS
+
+    sections: list[Section] = []
+
+    # narrative (deterministic prose)
+    if intel.narrative:
+        sections.append(Section(id="sp_narrative", title="Scouting Narrative",
+                                markdown="\n\n".join(intel.narrative)))
+
+    # detected routines
+    if intel.routines:
+        rows = [[ROUTINE_LABELS.get(r, r), n]
+                for r, n in sorted(intel.routines.items(), key=lambda kv: -kv[1])]
+        sections.append(Section(id="sp_routines", title="Detected Routines",
+                                tables=[Table(title="Routine usage",
+                                              columns=["Routine", "Count"], rows=rows)]))
+
+    # key insights (offensive + defensive + automatic)
+    all_insights = list(intel.offensive_tendencies) + list(intel.defensive_tendencies) + list(intel.insights)
+    if all_insights:
+        sections.append(Section(
+            id="sp_insights", title="Key Insights",
+            insights=[Insight(f"{i.title}: {i.text}", _kind(i.kind)) for i in all_insights]))
+
+    # recommendations with why + confidence
+    if intel.recommendations:
+        rows = [[r.action, r.rationale, r.priority, f"{int(r.confidence * 100)}%"]
+                for r in intel.recommendations]
+        sections.append(Section(
+            id="sp_recommendations", title="Coach Recommendations",
+            tables=[Table(title="Recommendations (with rationale)",
+                          columns=["Action", "Why", "Priority", "Confidence"], rows=rows)]))
+    return sections
+
+
+def _kind(kind: str) -> str:
+    return kind if kind in ("neutral", "success", "warning", "danger") else "neutral"
+
+
+def build_penalty_sections(summary: dict[str, Any], intel: Any, team: dict[str, Any],
+                           shootouts: list[dict[str, Any]]) -> list[Section]:
+    """Penalty report sections (Phase 9.4) from the penalty analytics +
+    intelligence. Reuses the report models - no second report engine."""
+    sections: list[Section] = []
+
+    sections.append(Section(
+        id="pen_overview", title="Penalty Overview",
+        kpis=[KPI("Penalties", _s(summary.get("n", 0))),
+              KPI("Conversion", _s(summary.get("conversion_pct", 0.0), "%")),
+              KPI("Goals", _s(summary.get("goals", 0))),
+              KPI("Saved", _s(summary.get("saved", 0))),
+              KPI("Missed", _s(summary.get("missed", 0)))]))
+
+    all_insights = (list(intel.shooter_insights) + list(intel.goalkeeper_insights)
+                    + list(intel.team_insights))
+    if all_insights:
+        sections.append(Section(
+            id="pen_insights", title="Penalty Intelligence",
+            insights=[Insight(f"{i.title}: {i.text}", _kind(i.kind)) for i in all_insights]))
+
+    if intel.recommendations:
+        rows = [[r.action, r.rationale, r.priority, f"{int(r.confidence * 100)}%"]
+                for r in intel.recommendations]
+        sections.append(Section(
+            id="pen_recommendations", title="Penalty Recommendations",
+            tables=[Table(title="Recommendations (with rationale)",
+                          columns=["Action", "Why", "Priority", "Confidence"], rows=rows)]))
+
+    if team.get("preferred_takers"):
+        rows = [[name, st["attempts"], st["goals"], f"{st['conversion_pct']}%"]
+                for name, st in team["preferred_takers"]]
+        sections.append(Section(
+            id="pen_takers", title="Preferred Takers",
+            tables=[Table(title="Takers", columns=["Player", "Penalties", "Goals", "Conversion"],
+                          rows=rows)]))
+
+    if shootouts:
+        rows = [[s["shootout_id"][:8], " vs ".join(s["teams"]),
+                 "-".join(str(v) for v in s["score"].values()), s["winner"],
+                 "Yes" if s["sudden_death"] else "No"] for s in shootouts]
+        sections.append(Section(
+            id="pen_shootouts", title="Shootouts",
+            tables=[Table(title="Shootout results",
+                          columns=["ID", "Teams", "Score", "Winner", "Sudden death"], rows=rows)]))
+    return sections
+
+
+def _s(value: Any, suffix: str = "") -> str:
+    return "—" if value is None else f"{value}{suffix}"
+
+
+def _overview_insights(ov: dict, dr: dict, dl: dict) -> list[Insight]:
+    out: list[Insight] = []
+    top_delivery = next(iter(dl.get("delivery_type", {})), None)
+    if top_delivery and top_delivery != "unknown":
+        out.append(Insight(f"Most common delivery: {top_delivery.title()}.", "neutral"))
+    sr = dr.get("success_rate", 0.0)
+    if ov.get("total"):
+        kind = "success" if sr >= 40 else ("warning" if sr >= 20 else "danger")
+        out.append(Insight(f"Success rate {sr}% across {ov['total']} set pieces.", kind))
+    if ov.get("goals"):
+        out.append(Insight(f"{ov['goals']} goal(s) from set pieces "
+                           f"({ov.get('goal_pct', 0.0)}%).", "success"))
+    return out

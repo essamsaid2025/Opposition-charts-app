@@ -166,6 +166,13 @@ class PlatformContext:
         attachments, watchlists and Studio-integrated reports (Phase 8.0)."""
         return self.services.get("scouting")
 
+    @property
+    def setpieces(self):
+        """Professional set-piece analysis platform: provider-agnostic set-piece
+        event store, box-occupancy positions, contact events, manual tagging and
+        CSV/Excel/JSON import; analytics/reports extend it in 9.1+ (Phase 9.0)."""
+        return self.services.get("setpieces")
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -218,6 +225,7 @@ def init_platform(root: Path | None = None, *,
     services.register("permissions", _permissions)
     services.register("administration", lambda reg: _administration(reg, settings))
     services.register("scouting", _scouting)
+    services.register("setpieces", _setpieces)
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())
@@ -243,6 +251,22 @@ def _scouting(reg: "ServiceRegistry"):
         audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
         images=reg.get("image_storage"), videos=reg.get("video_storage"),
         attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"))
+
+
+def _setpieces(reg: "ServiceRegistry"):
+    """The set-piece platform (Phase 9.0), wired to the shared platform services
+    it reuses: permissions, audit, reports (Studio), image/video/attachment
+    storage, the workspace manager and the cache. No service is duplicated."""
+    from fap.setpieces.service import SetPieceService
+    from fap.workspaces.audit import AuditService
+    from fap.workspaces.repositories import AuditRepository
+    db = reg.get("db")
+    return SetPieceService(
+        db, permissions=reg.get("permissions"),
+        audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
+        images=reg.get("image_storage"), videos=reg.get("video_storage"),
+        attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"),
+        cache=reg.get("cache"), themes=reg.get("themes"))
 
 
 def _permissions(reg: "ServiceRegistry"):
