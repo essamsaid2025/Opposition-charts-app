@@ -79,6 +79,49 @@ def build_setpiece_sections(bundle: dict[str, Any]) -> list[Section]:
     return sections
 
 
+def build_intelligence_sections(intel: Any) -> list[Section]:
+    """Turn an IntelligenceReport (Phase 9.3) into report Sections: narrative,
+    detected routines, key insights and coach recommendations. Reuses the report
+    models - no second report engine, no duplicated intelligence."""
+    from fap.setpieces.intelligence import ROUTINE_LABELS
+
+    sections: list[Section] = []
+
+    # narrative (deterministic prose)
+    if intel.narrative:
+        sections.append(Section(id="sp_narrative", title="Scouting Narrative",
+                                markdown="\n\n".join(intel.narrative)))
+
+    # detected routines
+    if intel.routines:
+        rows = [[ROUTINE_LABELS.get(r, r), n]
+                for r, n in sorted(intel.routines.items(), key=lambda kv: -kv[1])]
+        sections.append(Section(id="sp_routines", title="Detected Routines",
+                                tables=[Table(title="Routine usage",
+                                              columns=["Routine", "Count"], rows=rows)]))
+
+    # key insights (offensive + defensive + automatic)
+    all_insights = list(intel.offensive_tendencies) + list(intel.defensive_tendencies) + list(intel.insights)
+    if all_insights:
+        sections.append(Section(
+            id="sp_insights", title="Key Insights",
+            insights=[Insight(f"{i.title}: {i.text}", _kind(i.kind)) for i in all_insights]))
+
+    # recommendations with why + confidence
+    if intel.recommendations:
+        rows = [[r.action, r.rationale, r.priority, f"{int(r.confidence * 100)}%"]
+                for r in intel.recommendations]
+        sections.append(Section(
+            id="sp_recommendations", title="Coach Recommendations",
+            tables=[Table(title="Recommendations (with rationale)",
+                          columns=["Action", "Why", "Priority", "Confidence"], rows=rows)]))
+    return sections
+
+
+def _kind(kind: str) -> str:
+    return kind if kind in ("neutral", "success", "warning", "danger") else "neutral"
+
+
 def _overview_insights(ov: dict, dr: dict, dl: dict) -> list[Insight]:
     out: list[Insight] = []
     top_delivery = next(iter(dl.get("delivery_type", {})), None)

@@ -51,7 +51,7 @@ class SetPieceAnalysisPage(Page):
             return
 
         tabs = st.tabs(["Overview", "Offensive", "Defensive", "Visuals",
-                        "Tag Set Piece", "Import", "Browse"])
+                        "Intelligence", "Tag Set Piece", "Import", "Browse"])
         with tabs[0]:
             self._overview(shell, svc)
         with tabs[1]:
@@ -61,10 +61,12 @@ class SetPieceAnalysisPage(Page):
         with tabs[3]:
             self._visuals(shell, svc)
         with tabs[4]:
-            self._tag(shell, svc)
+            self._intelligence(shell, svc)
         with tabs[5]:
-            self._import(shell, svc)
+            self._tag(shell, svc)
         with tabs[6]:
+            self._import(shell, svc)
+        with tabs[7]:
             self._browse(shell, svc)
 
     # ---------------------------------------------------------------- dashboards
@@ -160,6 +162,91 @@ class SetPieceAnalysisPage(Page):
             st.caption("Outcomes")
             st.dataframe([{"Outcome": k.title(), "Count": v} for k, v in bundle["outcome"].items()]
                          or [{"Outcome": "—", "Count": 0}], use_container_width=True, hide_index=True)
+
+    # ---------------------------------------------------------------- intelligence (9.3)
+    def _intelligence(self, shell, svc) -> None:
+        if not svc.dashboard(shell.user)["total"]:
+            st.info("Add or import set pieces first — intelligence needs tagged data.")
+            return
+        st.caption("Deterministic, rule-based intelligence — routines, tendencies, insights and "
+                   "coach recommendations derived from the analytics (no AI service).")
+        filt = self._filter_bar(shell, svc, key="intel")
+        intel = svc.intelligence(shell.user, filt, workspace_id=shell.workspace_id)
+        if not intel.n_set_pieces:
+            st.info("No set pieces match the current filters.")
+            return
+
+        if intel.narrative:
+            st.subheader("Scouting narrative")
+            for line in intel.narrative:
+                st.markdown(f"> {line}")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Detected routines")
+            from fap.setpieces.intelligence import ROUTINE_LABELS
+            st.dataframe([{"Routine": ROUTINE_LABELS.get(r, r), "Count": n}
+                          for r, n in sorted(intel.routines.items(), key=lambda kv: -kv[1])],
+                         use_container_width=True, hide_index=True)
+        with c2:
+            st.subheader("Routine clusters")
+            st.dataframe([{"Cluster": c.label, "Size": c.size, "Conv %": c.conversion_pct,
+                           "xG": c.xg, "Conf": f"{int(c.confidence * 100)}%"}
+                          for c in intel.clusters] or [{"Cluster": "—", "Size": 0}],
+                         use_container_width=True, hide_index=True)
+
+        st.subheader("Tendencies")
+        ta, tb = st.columns(2)
+        with ta:
+            st.caption("Offensive")
+            for i in intel.offensive_tendencies:
+                self._insight(i)
+        with tb:
+            st.caption("Defensive")
+            for i in intel.defensive_tendencies:
+                self._insight(i)
+
+        if intel.insights:
+            st.subheader("Automatic insights")
+            for i in intel.insights:
+                self._insight(i)
+
+        if intel.recommendations:
+            st.subheader("Coach recommendations")
+            for r in intel.recommendations:
+                self._recommendation(r)
+
+        st.divider()
+        if self._can_report and getattr(shell.platform, "reports", None) is not None:
+            if st.button("📄 Create intelligence report (Studio)", key="intel_report"):
+                try:
+                    rec = svc.create_intelligence_report(shell.user, filt=filt,
+                                                         workspace_id=shell.workspace_id)
+                    st.success(f"Report created: {rec.title}. Open Report Studio to edit.")
+                except Exception as exc:
+                    st.error(f"Could not create report: {exc}")
+
+    @staticmethod
+    def _insight(i) -> None:
+        icon = {"success": "🟢", "warning": "🟡", "danger": "🔴"}.get(i.kind, "🔵")
+        st.markdown(f"{icon} **{i.title}** — {i.text}  \n"
+                    f"<span style='color:gray;font-size:0.85em'>confidence "
+                    f"{int(i.confidence * 100)}% · evidence: {'; '.join(i.evidence) or '—'}</span>",
+                    unsafe_allow_html=True)
+
+    @staticmethod
+    def _recommendation(r) -> None:
+        badge = {"high": "🔴 HIGH", "medium": "🟡 MED", "low": "⚪ LOW"}.get(r.priority, r.priority)
+        with st.container(border=True):
+            st.markdown(f"**{r.action}**  ·  {badge}  ·  confidence {int(r.confidence * 100)}%")
+            st.markdown(f"*Why:* {r.rationale}")
+            meta = []
+            if r.evidence:
+                meta.append("evidence: " + "; ".join(r.evidence))
+            if r.visualization_references:
+                meta.append("see: " + ", ".join(r.visualization_references))
+            if meta:
+                st.caption("  ·  ".join(meta))
 
     # ---------------------------------------------------------------- visuals (9.2)
     def _visuals(self, shell, svc) -> None:

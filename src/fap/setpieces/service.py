@@ -472,6 +472,80 @@ class SetPieceService:
         self.audit.record(user, "setpiece.visual.embed", target_type="report",
                           target_id=report_id, detail={"viz": viz_id})
 
+    # =============================================================== intelligence (9.3)
+    def intelligence(self, user: User, filt: SetPieceFilter | None = None, *,
+                     workspace_id: str | None = None):
+        """Full deterministic intelligence pass: routines, clusters, tendencies,
+        insights, recommendations and narrative (AI-ready). Reuses analytics."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import intelligence as INTEL
+        sps = self._filtered(user, filt, workspace_id)
+        return INTEL.build_report(sps, self._positions_of(sps), self._contacts_of(sps))
+
+    def detect_routine_for(self, user: User, set_piece_id: str):
+        """Classify a single set piece's attacking routine."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import intelligence as INTEL
+        sp = self._or_raise(set_piece_id)
+        return INTEL.detect_routine(sp, self.positions.list(set_piece_id),
+                                    self.contacts.list(set_piece_id))
+
+    def similar_set_pieces(self, user: User, set_piece_id: str,
+                           filt: SetPieceFilter | None = None, *, top: int = 5,
+                           workspace_id: str | None = None) -> list[dict[str, Any]]:
+        """'Show routines similar to this one' - ranked by feature similarity."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import intelligence as INTEL
+        sps = self._filtered(user, filt, workspace_id)
+        if all(s.id != set_piece_id for s in sps):
+            sp = self.set_pieces.get(set_piece_id)
+            if sp:
+                sps = sps + [sp]
+        detections = INTEL.detect_routines(sps, self._positions_of(sps), self._contacts_of(sps))
+        return INTEL.similar_set_pieces(set_piece_id, detections, top=top)
+
+    def entity_similarity(self, user: User, *, by: str = "team",
+                          filt: SetPieceFilter | None = None,
+                          workspace_id: str | None = None) -> dict[str, dict[str, float]]:
+        """Similarity between teams / takers / matches (mean routine vectors)."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import intelligence as INTEL
+        sps = self._filtered(user, filt, workspace_id)
+        detections = INTEL.detect_routines(sps, self._positions_of(sps), self._contacts_of(sps))
+        return INTEL.entity_similarity(detections, sps, by=by)
+
+    def create_intelligence_report(self, user: User, *, filt: SetPieceFilter | None = None,
+                                   title: str = "", workspace_id: str | None = None):
+        """Create a Studio report combining the 9.1 analytics sections and the 9.3
+        intelligence sections (narrative, routines, insights, recommendations).
+        Reuses ReportsManager - no second engine."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        filt = filt or SetPieceFilter()
+        bundle = self.analytics_overview(user, filt, workspace_id=workspace_id)
+        intel = self.intelligence(user, filt, workspace_id=workspace_id)
+        title = title or "Set Piece Intelligence Report"
+        cover = {"title": title, "subtitle": f"{bundle['count']} set pieces analysed",
+                 "club": filt.team, "opponent": filt.opponent, "competition": filt.competition,
+                 "season": filt.season, "analyst": user.name or user.email, "match_date": ""}
+        df = pd.DataFrame([{"total": bundle["overview"]["total"]}])
+        templates = [t.info.id for t in self._reports.templates()]
+        template = "blank" if "blank" in templates else (templates[0] if templates else "")
+        record = self._reports.create(user, template=template, df=df, title=title,
+                                      workspace_id=workspace_id, cover=cover)
+        from fap.setpieces.reporting import build_intelligence_sections
+        sections = build_setpiece_sections(bundle) + build_intelligence_sections(intel)
+
+        def _inject(doc):
+            doc.sections.extend(sections)
+            doc.meta.update({"setpiece_filter": asdict(filt), "source": "setpieces_intelligence"})
+
+        self._reports.update_blocks(user, record.id, _inject)
+        self.audit.record(user, "setpiece.intel_report.create", target_type="report",
+                          target_id=record.id, detail={"title": title, "count": bundle["count"]})
+        return record
+
     # =============================================================== reports (Studio)
     def create_report(self, user: User, *, filt: SetPieceFilter | None = None,
                       title: str = "", workspace_id: str | None = None):
