@@ -266,7 +266,7 @@ def _setpieces(reg: "ServiceRegistry"):
         audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
         images=reg.get("image_storage"), videos=reg.get("video_storage"),
         attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"),
-        cache=reg.get("cache"))
+        cache=reg.get("cache"), themes=reg.get("themes"))
 
 
 def _permissions(reg: "ServiceRegistry"):

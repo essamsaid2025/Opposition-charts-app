@@ -35,7 +35,7 @@ from fap.setpieces.repository import (
 class SetPieceService:
     def __init__(self, db: Any, *, permissions: Any, audit: Any, reports: Any = None,
                  images: Any = None, videos: Any = None, attachments: Any = None,
-                 workspaces: Any = None, cache: Any = None) -> None:
+                 workspaces: Any = None, cache: Any = None, themes: Any = None) -> None:
         self._db = db
         self.set_pieces = SetPieceRepository(db)
         self.positions = PositionRepository(db)
@@ -49,6 +49,7 @@ class SetPieceService:
         self._attach_storage = attachments
         self._wm = workspaces
         self._cache = cache
+        self._themes = themes
 
     # ---------------------------------------------------------------- guards
     def _require(self, user: User, cap: Capability, scope: str | None = None) -> None:
@@ -368,6 +369,108 @@ class SetPieceService:
         return {col: r.distinct_values(col) for col in
                 ("team", "opponent", "competition", "season", "match_id",
                  "taker", "delivery_type", "outcome", "type", "side")}
+
+    # =============================================================== visualizations (9.2)
+    def visual_dataset(self, user: User, kind: str, filt: SetPieceFilter | None = None, *,
+                       workspace_id: str | None = None) -> list[dict[str, Any]]:
+        """Viz-ready rows for a dataset ``kind`` (the frame a set-piece
+        visualization renders). Every plugin declares its kind via ``sp_dataset``;
+        this is the single bridge between the analytics datasets and the engine."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import build_frames as BF
+        sps = self._filtered(user, filt, workspace_id)
+        return BF.rows(self, sps, kind)
+
+    def _positions_of(self, sps: list[SetPiece]) -> list[SetPiecePosition]:
+        return self.positions.list_many([s.id for s in sps])
+
+    def _contacts_of(self, sps: list[SetPiece]) -> list[SetPieceContact]:
+        return self.contacts.list_many([s.id for s in sps])
+
+    def visual_catalog(self, user: User) -> list[dict[str, str]]:
+        """Every registered set-piece visualization (id, name, category), grouped
+        for the picker. Loads the set-piece visuals into the shared registry."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.visuals.setpieces import load_setpiece_visuals, setpiece_visual_ids
+        load_setpiece_visuals()
+        from fap.visuals.base import visual_registry
+        out = []
+        for viz_id in setpiece_visual_ids():
+            viz = visual_registry.create(viz_id)
+            out.append({"id": viz.info.id, "name": viz.info.name,
+                        "category": getattr(viz, "sp_category", viz.info.category)})
+        return sorted(out, key=lambda v: (v["category"], v["name"]))
+
+    def render_visual(self, user: User, viz_id: str, filt: SetPieceFilter | None = None, *,
+                      controls: dict[str, Any] | None = None, theme_id: str = "opta_light",
+                      dpi: int = 200, fmt: str = "png", workspace_id: str | None = None) -> bytes:
+        """Render one set-piece visualization to PNG or PDF bytes, reusing the
+        platform Renderer (pitch, theme, tokens, legend, export, figure cache).
+        Individual export + interactive preview both go through here."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        fig, _ = self._figure(user, viz_id, filt, controls, theme_id, workspace_id)
+        from io import BytesIO
+        import matplotlib.pyplot as plt
+        buf = BytesIO()
+        fig.savefig(buf, format="pdf" if fmt == "pdf" else "png", dpi=dpi,
+                    bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.close(fig)
+        return buf.getvalue()
+
+    def _figure(self, user: User, viz_id: str, filt, controls, theme_id, workspace_id):
+        from fap.core.types import RenderContext
+        from fap.visuals.base import visual_registry
+        from fap.visuals.renderer import Renderer
+        from fap.visuals.setpieces import load_setpiece_visuals
+        load_setpiece_visuals()
+        if viz_id not in visual_registry:
+            raise ValueError(f"unknown set-piece visualization {viz_id!r}")
+        viz = visual_registry.create(viz_id)
+        rows = self.visual_dataset(user, getattr(viz, "sp_dataset", ""), filt,
+                                   workspace_id=workspace_id)
+        frame = pd.DataFrame(rows) if rows else pd.DataFrame()
+        # guarantee the columns this viz needs exist, so an empty/partial dataset
+        # renders an empty pitch instead of raising in a layer's dropna(subset=...)
+        for col in getattr(viz, "requires", ()) or ():
+            if col not in frame.columns:
+                frame[col] = pd.NA
+        theme = self._theme(theme_id)
+        ctx = RenderContext(df=frame, theme=theme, controls=dict(controls or {}))
+        return Renderer(self._cache).render(viz, ctx), frame
+
+    def _theme(self, theme_id: str):
+        if self._themes is None:
+            raise ValueError("Theme manager is not configured.")
+        return self._themes.get(theme_id)
+
+    def theme_ids(self, user: User) -> list[str]:
+        self._require(user, Capability.VIEW_SETPIECE)
+        if self._themes is None:
+            return []
+        try:
+            return list(self._themes.ids())
+        except Exception:
+            return []
+
+    def embed_visual(self, user: User, report_id: str, viz_id: str,
+                     filt: SetPieceFilter | None = None, *, controls: dict[str, Any] | None = None,
+                     theme_id: str = "opta_light", title: str = "",
+                     workspace_id: str | None = None) -> None:
+        """Embed a set-piece visualization into an existing Studio report with NO
+        per-viz code: pre-render the PNG through the engine, store it once via the
+        report ImageStorage, and append an image block. Works for every viz."""
+        self._require(user, Capability.EDIT_SETPIECE)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        png = self.render_visual(user, viz_id, filt, controls=controls, theme_id=theme_id,
+                                 dpi=200, fmt="png", workspace_id=workspace_id)
+        image = self._reports.upload_image(user, png, f"{viz_id}.png", "image/png",
+                                           workspace_id=workspace_id)
+        from fap.reports.blocks import image_block
+        block = image_block(image.id, caption=title or viz_id, title=title)
+        self._reports.update_blocks(user, report_id, lambda doc: doc.blocks.append(block))
+        self.audit.record(user, "setpiece.visual.embed", target_type="report",
+                          target_id=report_id, detail={"viz": viz_id})
 
     # =============================================================== reports (Studio)
     def create_report(self, user: User, *, filt: SetPieceFilter | None = None,

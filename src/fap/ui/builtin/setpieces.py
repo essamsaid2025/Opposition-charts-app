@@ -50,8 +50,8 @@ class SetPieceAnalysisPage(Page):
             self._detail(shell, svc, selected)
             return
 
-        tabs = st.tabs(["Overview", "Offensive", "Defensive", "Tag Set Piece",
-                        "Import", "Browse"])
+        tabs = st.tabs(["Overview", "Offensive", "Defensive", "Visuals",
+                        "Tag Set Piece", "Import", "Browse"])
         with tabs[0]:
             self._overview(shell, svc)
         with tabs[1]:
@@ -59,10 +59,12 @@ class SetPieceAnalysisPage(Page):
         with tabs[2]:
             self._phase_dashboard(shell, svc, "defensive")
         with tabs[3]:
-            self._tag(shell, svc)
+            self._visuals(shell, svc)
         with tabs[4]:
-            self._import(shell, svc)
+            self._tag(shell, svc)
         with tabs[5]:
+            self._import(shell, svc)
+        with tabs[6]:
             self._browse(shell, svc)
 
     # ---------------------------------------------------------------- dashboards
@@ -158,6 +160,67 @@ class SetPieceAnalysisPage(Page):
             st.caption("Outcomes")
             st.dataframe([{"Outcome": k.title(), "Count": v} for k, v in bundle["outcome"].items()]
                          or [{"Outcome": "—", "Count": 0}], use_container_width=True, hide_index=True)
+
+    # ---------------------------------------------------------------- visuals (9.2)
+    def _visuals(self, shell, svc) -> None:
+        if not svc.dashboard(shell.user)["total"]:
+            st.info("Add or import set pieces first, then generate visualizations here.")
+            return
+        st.caption("Professional set-piece visualizations — rendered through the platform "
+                   "visualization engine (theme-aware, high-resolution, Studio-embeddable).")
+        try:
+            catalog = svc.visual_catalog(shell.user)
+        except Exception as exc:
+            st.error(f"Visualization library unavailable: {exc}")
+            return
+        cats = sorted({v["category"] for v in catalog})
+        a, b, c = st.columns([2, 2, 1])
+        category = a.selectbox("Category", cats, key="spv_cat")
+        in_cat = [v for v in catalog if v["category"] == category]
+        viz = b.selectbox("Visualization", in_cat, format_func=lambda v: v["name"], key="spv_viz")
+        themes = svc.theme_ids(shell.user) or ["opta_light", "opta_dark"]
+        theme = c.selectbox("Theme", themes, key="spv_theme")
+        filt = self._filter_bar(shell, svc, key="viz")
+
+        if st.button("Render preview", type="primary", key="spv_render"):
+            try:
+                png = svc.render_visual(shell.user, viz["id"], filt, theme_id=theme, dpi=200,
+                                        fmt="png", workspace_id=shell.workspace_id)
+                st.image(png, use_container_width=True)
+                d1, d2 = st.columns(2)
+                d1.download_button("⬇ PNG (hi-res)", data=png, file_name=f"{viz['id']}.png",
+                                   mime="image/png", key="spv_dlpng")
+                d2.download_button(
+                    "⬇ PDF", key="spv_dlpdf", file_name=f"{viz['id']}.pdf", mime="application/pdf",
+                    data=svc.render_visual(shell.user, viz["id"], filt, theme_id=theme, dpi=300,
+                                           fmt="pdf", workspace_id=shell.workspace_id))
+            except Exception as exc:
+                st.error(f"Render failed: {exc}")
+
+        st.divider()
+        self._add_to_report(shell, svc, viz, filt, theme)
+
+    def _add_to_report(self, shell, svc, viz, filt, theme) -> None:
+        if not (self._can_edit and self._can_report):
+            return
+        reports = getattr(shell.platform, "reports", None)
+        if reports is None:
+            return
+        recs = reports.list(shell.user, workspace_id=shell.workspace_id)
+        options = ["➕ New report"] + [r.title for r in recs]
+        choice = st.selectbox("Embed into report", options, key="spv_report")
+        if st.button("Add visualization to Report Studio", key="spv_embed"):
+            try:
+                if choice == "➕ New report":
+                    rid = svc.create_report(shell.user, filt=filt, title="Set Piece Report",
+                                            workspace_id=shell.workspace_id).id
+                else:
+                    rid = recs[options.index(choice) - 1].id
+                svc.embed_visual(shell.user, rid, viz["id"], filt, theme_id=theme,
+                                 title=viz["name"], workspace_id=shell.workspace_id)
+                st.success(f"Added “{viz['name']}” to the report. Open Report Studio to edit.")
+            except Exception as exc:
+                st.error(f"Could not embed: {exc}")
 
     def _map_summaries(self, shell, svc, filt, phase: str) -> None:
         """Phase 9.1 exposes the map DATA pipeline; the pitch renderers land in
