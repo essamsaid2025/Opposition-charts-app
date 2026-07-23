@@ -674,6 +674,84 @@ class SetPieceService:
                           target_id=record.id, detail={"title": title, "count": bundle["count"]})
         return record
 
+    # =============================================================== match prep (9.5)
+    def report_profiles(self, user: User) -> list[dict[str, str]]:
+        """Available match-preparation report profiles for the picker."""
+        from fap.setpieces.match_report import PROFILES
+        return [{"id": pid, "label": p["label"], "pages": p["pages"]}
+                for pid, p in PROFILES.items()]
+
+    def _dangerous_players(self, user: User, filt: SetPieceFilter | None = None, *,
+                           workspace_id: str | None = None) -> list[dict[str, Any]]:
+        """Rank attacking players by set-piece threat (goals / shots / first
+        contacts) from tagged contacts. Reused by Key Findings + Dangerous Players."""
+        sps = self._filtered(user, filt, workspace_id)
+        contacts = self._contacts_of(sps)
+        rec: dict[str, dict[str, int]] = {}
+        for c in contacts:
+            if not c.player:
+                continue
+            r = rec.setdefault(c.player, {"goals": 0, "shots": 0, "first_contacts": 0})
+            if c.outcome == "goal":
+                r["goals"] += 1
+            if c.kind == "shot":
+                r["shots"] += 1
+            if c.kind == "first_contact" and c.won:
+                r["first_contacts"] += 1
+        out = [{"player": p, **s} for p, s in rec.items()
+               if s["goals"] or s["shots"] or s["first_contacts"]]
+        return sorted(out, key=lambda d: (-d["goals"], -d["first_contacts"], -d["shots"]))
+
+    def _has_viz_data(self, user: User, viz_id: str, filt: SetPieceFilter | None,
+                      workspace_id: str | None) -> bool:
+        from fap.visuals.base import visual_registry
+        from fap.visuals.setpieces import load_setpiece_visuals
+        load_setpiece_visuals()
+        if viz_id not in visual_registry:
+            return False
+        kind = getattr(visual_registry.create(viz_id), "sp_dataset", "")
+        return bool(self.visual_dataset(user, kind, filt, workspace_id=workspace_id))
+
+    def generate_match_report(self, user: User, *, profile: str = "coach",
+                              filt: SetPieceFilter | None = None, title: str = "",
+                              theme_id: str = "opta_light", workspace_id: str | None = None,
+                              embed_visuals: bool = True):
+        """Generate a complete, EDITABLE match-preparation report in the existing
+        Report Studio. Assembles sections from the reused modules and embeds
+        registered visualizations through the existing Renderer. Smart: skips
+        empty sections/visualizations - no empty pages."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        from fap.setpieces import match_report as MR
+        bp = MR.build_plan(self, user, profile, filt, workspace_id, title=title)
+        df = pd.DataFrame([{"profile": profile}])
+        templates = [t.info.id for t in self._reports.templates()]
+        template = "blank" if "blank" in templates else (templates[0] if templates else "")
+        record = self._reports.create(user, template=template, df=df, title=bp.cover["title"],
+                                      workspace_id=workspace_id, cover=bp.cover)
+
+        def _inject(doc):
+            doc.sections.extend(bp.sections)
+            doc.meta.update({"source": "setpieces_match_prep", "profile": profile})
+
+        self._reports.update_blocks(user, record.id, _inject)
+        embedded = 0
+        if embed_visuals and self._images is not None and self._themes is not None:
+            for emb in bp.embeds:
+                try:
+                    if self._has_viz_data(user, emb.viz_id, emb.filt, workspace_id):
+                        self.embed_visual(user, record.id, emb.viz_id, emb.filt,
+                                          theme_id=theme_id, title=emb.title,
+                                          workspace_id=workspace_id)
+                        embedded += 1
+                except Exception:
+                    pass
+        self.audit.record(user, "setpiece.match_report.create", target_type="report",
+                          target_id=record.id, detail={"profile": profile, "sections": len(bp.sections),
+                                                        "embedded": embedded})
+        return record
+
     # =============================================================== reports (Studio)
     def create_report(self, user: User, *, filt: SetPieceFilter | None = None,
                       title: str = "", workspace_id: str | None = None):

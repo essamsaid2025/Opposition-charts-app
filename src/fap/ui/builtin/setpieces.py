@@ -21,6 +21,22 @@ from fap.setpieces.models import (
 from fap.ui.page import Page, page_registry
 
 SEL = "_setpiece_id"                    # selected set piece (detail view)
+OPEN_REPORT = "_open_report_id"         # the Report Studio navigation key (reused)
+
+_PROFILE_BLURBS = {
+    "coach": "Short, clean and visual (8–12 pages): key threats, routines, dangerous players, "
+             "recommendations and training focus.",
+    "analyst": "The full dossier (30–60 pages): every section, every category, all visualizations "
+               "and the appendix.",
+    "executive": "Management summary (2–4 pages): headline KPIs, key risks and priority actions only.",
+    "opposition": "Complete tactical opposition report across all set-piece categories.",
+    "setpiece": "Set pieces only — every category, routines, intelligence and visualizations.",
+    "penalty": "Penalties only — shooter/goalkeeper intelligence, placement and recommendations.",
+}
+
+
+def _profile_blurb(profile_id: str) -> str:
+    return _PROFILE_BLURBS.get(profile_id, "")
 
 
 @page_registry.register
@@ -50,25 +66,27 @@ class SetPieceAnalysisPage(Page):
             self._detail(shell, svc, selected)
             return
 
-        tabs = st.tabs(["Overview", "Offensive", "Defensive", "Visuals",
+        tabs = st.tabs(["Match Prep", "Overview", "Offensive", "Defensive", "Visuals",
                         "Intelligence", "Penalties", "Tag Set Piece", "Import", "Browse"])
         with tabs[0]:
-            self._overview(shell, svc)
+            self._match_prep(shell, svc)
         with tabs[1]:
-            self._phase_dashboard(shell, svc, "offensive")
+            self._overview(shell, svc)
         with tabs[2]:
-            self._phase_dashboard(shell, svc, "defensive")
+            self._phase_dashboard(shell, svc, "offensive")
         with tabs[3]:
-            self._visuals(shell, svc)
+            self._phase_dashboard(shell, svc, "defensive")
         with tabs[4]:
-            self._intelligence(shell, svc)
+            self._visuals(shell, svc)
         with tabs[5]:
-            self._penalties(shell, svc)
+            self._intelligence(shell, svc)
         with tabs[6]:
-            self._tag(shell, svc)
+            self._penalties(shell, svc)
         with tabs[7]:
-            self._import(shell, svc)
+            self._tag(shell, svc)
         with tabs[8]:
+            self._import(shell, svc)
+        with tabs[9]:
             self._browse(shell, svc)
 
     # ---------------------------------------------------------------- dashboards
@@ -164,6 +182,39 @@ class SetPieceAnalysisPage(Page):
             st.caption("Outcomes")
             st.dataframe([{"Outcome": k.title(), "Count": v} for k, v in bundle["outcome"].items()]
                          or [{"Outcome": "—", "Count": 0}], use_container_width=True, hide_index=True)
+
+    # ---------------------------------------------------------------- match prep (9.5)
+    def _match_prep(self, shell, svc) -> None:
+        st.subheader("Match Preparation & Reporting Center")
+        st.caption("One click builds a complete, professional report from every module — "
+                   "analytics, visualizations, intelligence and penalties — fully editable in "
+                   "the existing Report Studio.")
+        if not svc.dashboard(shell.user)["total"]:
+            st.info("Add or import set pieces first, then generate a match-preparation report.")
+            return
+        if not self._can_report or getattr(shell.platform, "reports", None) is None:
+            st.warning("You need report-creation permission to generate reports.")
+            return
+        profiles = svc.report_profiles(shell.user)
+        a, b = st.columns([2, 1])
+        prof = a.selectbox("Report profile", profiles,
+                           format_func=lambda p: f"{p['label']}  ·  {p['pages']} pages",
+                           key="mp_profile")
+        themes = svc.theme_ids(shell.user) or ["opta_light", "opta_dark"]
+        theme = b.selectbox("Theme", themes, key="mp_theme")
+        with st.expander("Scope (optional filters)"):
+            filt = self._filter_bar(shell, svc, key="mp")
+        st.markdown(_profile_blurb(prof["id"]))
+        if st.button("⚡ Generate Match Preparation Report", type="primary", key="mp_generate"):
+            with st.spinner("Building report from analytics, visualizations and intelligence…"):
+                try:
+                    rec = svc.generate_match_report(shell.user, profile=prof["id"], filt=filt,
+                                                    theme_id=theme, workspace_id=shell.workspace_id)
+                    st.success(f"**{rec.title}** generated. Open it in **Report Studio** to review, "
+                               "edit and export (PDF / HTML / Markdown / DOCX).")
+                    st.session_state[OPEN_REPORT] = rec.id
+                except Exception as exc:
+                    st.error(f"Could not generate report: {exc}")
 
     # ---------------------------------------------------------------- penalties (9.4)
     def _penalties(self, shell, svc) -> None:
