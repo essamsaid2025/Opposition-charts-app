@@ -13,6 +13,7 @@ WorkspaceManager for workspace scoping. No business logic lives in Streamlit.
 from __future__ import annotations
 
 import uuid
+from dataclasses import asdict, replace
 from typing import Any
 
 import pandas as pd
@@ -20,9 +21,12 @@ import pandas as pd
 from fap.identity.capabilities import Capability
 from fap.identity.models import User
 from fap.setpieces import analysis as A
+from fap.setpieces import analytics as AN
 from fap.setpieces.models import (
-    ImportResult, SetPiece, SetPieceContact, SetPieceImport, SetPiecePosition,
+    ImportResult, SetPiece, SetPieceContact, SetPieceFilter, SetPieceImport,
+    SetPiecePosition,
 )
+from fap.setpieces.reporting import build_setpiece_sections
 from fap.setpieces.repository import (
     ContactRepository, ImportRepository, PositionRepository, SetPieceRepository,
 )
@@ -263,6 +267,142 @@ class SetPieceService:
             "opposition": self.set_pieces.count(filters={"perspective": "opposition"}),
             "recent_imports": self.imports.recent(limit=5),
         }
+
+    # =============================================================== analytics (9.1)
+    def _filtered(self, user: User, filt: SetPieceFilter | None,
+                  workspace_id: str | None) -> list[SetPiece]:
+        """Resolve a filter to the matching set pieces. Coarse fields push down to
+        SQL; ``player`` (a player who appears in the box/contacts, distinct from
+        the taker) is resolved here against tagged positions and contacts."""
+        filt = filt or SetPieceFilter()
+        repo_f = filt.to_repo_filters()
+        if filt.half is not None:
+            repo_f["half"] = filt.half
+        sps = self.set_pieces.search(filters=repo_f or None, workspace_id=workspace_id)
+        if filt.has_player:
+            pl = filt.player.strip().lower()
+            ids = [s.id for s in sps]
+            keep = {s.id for s in sps if s.taker.lower() == pl}
+            keep |= {p.set_piece_id for p in self.positions.list_many(ids)
+                     if p.player.lower() == pl}
+            keep |= {c.set_piece_id for c in self.contacts.list_many(ids)
+                     if c.player.lower() == pl}
+            sps = [s for s in sps if s.id in keep]
+        return sps
+
+    def analytics_overview(self, user: User, filt: SetPieceFilter | None = None, *,
+                           workspace_id: str | None = None) -> dict[str, Any]:
+        """The dashboard bundle: overview KPIs, derived rates, per-type stats,
+        delivery and outcome breakdowns. Pure aggregation over filtered rows."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        sps = self._filtered(user, filt, workspace_id)
+        return {
+            "count": len(sps),
+            "overview": AN.overview(sps),
+            "derived": AN.derived_rates(sps),
+            "by_type": AN.by_type(sps),
+            "delivery": AN.delivery_breakdown(sps),
+            "outcome": AN.outcome_breakdown(sps),
+        }
+
+    def offensive_dashboard(self, user: User, filt: SetPieceFilter | None = None, *,
+                            workspace_id: str | None = None) -> dict[str, Any]:
+        return self.analytics_overview(user, replace(filt or SetPieceFilter(),
+                                                     phase="offensive"), workspace_id=workspace_id)
+
+    def defensive_dashboard(self, user: User, filt: SetPieceFilter | None = None, *,
+                            workspace_id: str | None = None) -> dict[str, Any]:
+        return self.analytics_overview(user, replace(filt or SetPieceFilter(),
+                                                     phase="defensive"), workspace_id=workspace_id)
+
+    def map_data(self, user: User, kind: str, filt: SetPieceFilter | None = None, *,
+                 workspace_id: str | None = None, team: str = "attack",
+                 moment: str = "delivery") -> list[dict[str, Any]]:
+        """Coordinate dataset for a map (the backend Phase 9.2 renders). ``kind``:
+        delivery | shot | first_contact | second_ball | delivery_accuracy |
+        occupancy_density | movement | goalkeeper."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        sps = self._filtered(user, filt, workspace_id)
+        ids = [s.id for s in sps]
+        if kind == "delivery":
+            return AN.delivery_points(sps)
+        if kind == "delivery_accuracy":
+            return AN.delivery_accuracy(sps)
+        if kind in ("shot", "first_contact", "second_ball"):
+            contacts = self.contacts.list_many(ids)
+            if kind == "shot":
+                return AN.shot_points(sps, contacts)
+            if kind == "first_contact":
+                return AN.first_contact_points(sps, contacts)
+            return AN.second_ball_points(contacts)
+        if kind in ("occupancy_density", "movement", "goalkeeper"):
+            positions = self.positions.list_many(ids)
+            if kind == "occupancy_density":
+                return AN.occupancy_density_points(positions, team=team, moment=moment)
+            if kind == "movement":
+                return AN.movement_vectors(positions, team=team)
+            return AN.goalkeeper_positions(positions)
+        raise ValueError(f"unknown map kind {kind!r}")
+
+    def occupancy(self, user: User, filt: SetPieceFilter | None = None, *,
+                  team: str = "attack", workspace_id: str | None = None) -> dict[str, Any]:
+        """Box-occupancy analytics bundle (zone counts, player x zone matrix,
+        defensive shape, marking classification) - backend for the 9.2 visuals."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        sps = self._filtered(user, filt, workspace_id)
+        n = len(sps)
+        positions = self.positions.list_many([s.id for s in sps])
+        return {
+            "n_set_pieces": n,
+            "zone_counts": AN.occupancy_zone_counts(positions, team=team, n_set_pieces=n),
+            "matrix": AN.occupancy_matrix(positions, team=team, n_set_pieces=n),
+            "defensive_shape": AN.defensive_shape(positions),
+            "marking": AN.classify_marking(positions),
+        }
+
+    def filter_options(self, user: User) -> dict[str, list[str]]:
+        """Distinct values per filterable column - populates the dashboard filter
+        bar. Cheap: a handful of DISTINCT queries."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        r = self.set_pieces
+        return {col: r.distinct_values(col) for col in
+                ("team", "opponent", "competition", "season", "match_id",
+                 "taker", "delivery_type", "outcome", "type", "side")}
+
+    # =============================================================== reports (Studio)
+    def create_report(self, user: User, *, filt: SetPieceFilter | None = None,
+                      title: str = "", workspace_id: str | None = None):
+        """Create a set-piece analytics report in the EXISTING Report Studio:
+        ReportsManager.create() makes a blank report, then update_blocks() injects
+        the statistics sections. No second reporting engine, no second editor."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        filt = filt or SetPieceFilter()
+        bundle = self.analytics_overview(user, filt, workspace_id=workspace_id)
+        ov = bundle["overview"]
+        title = title or "Set Piece Analysis Report"
+        cover = {"title": title, "subtitle": f"{bundle['count']} set pieces",
+                 "club": filt.team, "opponent": filt.opponent, "competition": filt.competition,
+                 "season": filt.season, "analyst": user.name or user.email, "match_date": ""}
+        df = pd.DataFrame([{"total": ov["total"], "goals": ov["goals"], "shots": ov["shots"],
+                            "xg": ov["xg"]}])
+        templates = [t.info.id for t in self._reports.templates()]
+        template = "blank" if "blank" in templates else (templates[0] if templates else "")
+        record = self._reports.create(user, template=template, df=df, title=title,
+                                      workspace_id=workspace_id, cover=cover)
+        sections = build_setpiece_sections(bundle)
+        filt_meta = asdict(filt)
+
+        def _inject(doc):
+            doc.sections.extend(sections)
+            doc.meta["setpiece_filter"] = filt_meta
+            doc.meta["source"] = "setpieces"
+
+        self._reports.update_blocks(user, record.id, _inject)
+        self.audit.record(user, "setpiece.report.create", target_type="report",
+                          target_id=record.id, detail={"title": title, "count": bundle["count"]})
+        return record
 
     # ---------------------------------------------------------------- helpers
     def _or_raise(self, sp_id: str) -> SetPiece:

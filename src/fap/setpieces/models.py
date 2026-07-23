@@ -175,3 +175,40 @@ class ImportResult:
     @property
     def imported(self) -> int:
         return len(self.set_pieces)
+
+
+@dataclass(slots=True)
+class SetPieceFilter:
+    """The analytics filter (Phase 9.1). Coarse fields push down to SQL via
+    ``to_repo_filters``; ``player`` is resolved against tagged positions/contacts
+    at the service layer (a player who appears in the box, not the taker)."""
+    perspective: str = ""              # own | opposition
+    phase: str = ""                    # offensive | defensive
+    type: str = ""                     # corner | free_kick | throw_in | penalty | kick_off
+    team: str = ""
+    opponent: str = ""
+    competition: str = ""
+    season: str = ""
+    match_id: str = ""
+    half: int | None = None            # 1 | 2 (maps to period)
+    taker: str = ""
+    delivery_type: str = ""
+    outcome: str = ""
+    side: str = ""
+    player: str = ""                   # resolved via positions/contacts (service layer)
+
+    def to_repo_filters(self) -> dict[str, Any]:
+        """Only the fields the repository can push into SQL. ``half`` and
+        ``player`` are applied above the repository."""
+        out: dict[str, Any] = {}
+        for key in ("perspective", "phase", "type", "team", "opponent",
+                    "competition", "season", "match_id", "taker", "delivery_type",
+                    "outcome", "side"):
+            val = getattr(self, key)
+            if val:
+                out[key] = val
+        return out
+
+    @property
+    def has_player(self) -> bool:
+        return bool(self.player.strip())

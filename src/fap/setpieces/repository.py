@@ -16,6 +16,12 @@ def _b(v: Any) -> bool:
     return bool(v)
 
 
+def _chunks(seq: list[Any], size: int):
+    """Batch a list of ids to stay under SQLite's parameter limit."""
+    for i in range(0, len(seq), size):
+        yield seq[i:i + size]
+
+
 def _load(s: str | None) -> Any:
     if not s:
         return None
@@ -88,9 +94,12 @@ class SetPieceRepository:
         if workspace_id:
             clauses.append("workspace_id = ?"); params.append(workspace_id)
         for col in ("perspective", "phase", "type", "team", "opponent", "season",
-                    "competition", "match_id", "side", "delivery_type", "source"):
+                    "competition", "match_id", "side", "delivery_type", "taker",
+                    "outcome", "source"):
             if f.get(col):
                 clauses.append(f"lower({col}) = ?"); params.append(str(f[col]).lower())
+        if f.get("half") is not None:
+            clauses.append("period = ?"); params.append(int(f["half"]))
         if f.get("shot_only"):
             clauses.append("shot = 1")
         if f.get("goal_only"):
@@ -109,6 +118,19 @@ class SetPieceRepository:
         rows = self._db.query(
             f"SELECT COUNT(*) AS n FROM set_pieces WHERE {' AND '.join(clauses)}", tuple(params))
         return int(rows[0]["n"]) if rows else 0
+
+    _DISTINCT_COLS = frozenset({"team", "opponent", "competition", "season", "match_id",
+                                "taker", "delivery_type", "outcome", "type", "side"})
+
+    def distinct_values(self, column: str, *, archived: bool = False) -> list[str]:
+        """Distinct non-empty values for a column - populates filter dropdowns.
+        Column is validated against a whitelist (never interpolate user input)."""
+        if column not in self._DISTINCT_COLS:
+            return []
+        rows = self._db.query(
+            f"SELECT DISTINCT {column} AS v FROM set_pieces "
+            f"WHERE archived = ? AND {column} <> '' ORDER BY {column}", (int(archived),))
+        return [str(r["v"]) for r in rows if r["v"] not in (None, "")]
 
     def type_breakdown(self, *, perspective: str | None = None,
                        archived: bool = False) -> dict[str, int]:
@@ -165,6 +187,17 @@ class PositionRepository:
         sql += " ORDER BY team, role"
         return [self._row(r) for r in self._db.query(sql, tuple(params))]
 
+    def list_many(self, set_piece_ids: list[str]) -> list[SetPiecePosition]:
+        """All positions for a set of set pieces (analytics over a filtered set)."""
+        if not set_piece_ids:
+            return []
+        rows: list[SetPiecePosition] = []
+        for chunk in _chunks(set_piece_ids, 400):
+            marks = ",".join(["?"] * len(chunk))
+            rows.extend(self._row(r) for r in self._db.query(
+                f"SELECT * FROM set_piece_positions WHERE set_piece_id IN ({marks})", tuple(chunk)))
+        return rows
+
     def delete(self, position_id: str) -> None:
         self._db.execute("DELETE FROM set_piece_positions WHERE id = ?", (position_id,))
 
@@ -201,6 +234,19 @@ class ContactRepository:
             sql += " AND kind = ?"; params.append(kind)
         sql += " ORDER BY sequence"
         return [self._row(r) for r in self._db.query(sql, tuple(params))]
+
+    def list_many(self, set_piece_ids: list[str], *, kind: str | None = None) -> list[SetPieceContact]:
+        if not set_piece_ids:
+            return []
+        rows: list[SetPieceContact] = []
+        for chunk in _chunks(set_piece_ids, 400):
+            marks = ",".join(["?"] * len(chunk))
+            sql = f"SELECT * FROM set_piece_contacts WHERE set_piece_id IN ({marks})"
+            params = list(chunk)
+            if kind:
+                sql += " AND kind = ?"; params.append(kind)
+            rows.extend(self._row(r) for r in self._db.query(sql, tuple(params)))
+        return rows
 
     def delete(self, contact_id: str) -> None:
         self._db.execute("DELETE FROM set_piece_contacts WHERE id = ?", (contact_id,))

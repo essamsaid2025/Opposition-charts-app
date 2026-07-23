@@ -16,7 +16,7 @@ from fap.identity.capabilities import Capability
 from fap.identity.roles import Role
 from fap.setpieces.models import (
     DELIVERY_TYPES, OCCUPANCY_ROLE_LABELS, PERSPECTIVES, PHASES,
-    SET_PIECE_TYPE_LABELS, SET_PIECE_TYPES, SIDES,
+    SET_PIECE_TYPE_LABELS, SET_PIECE_TYPES, SIDES, SetPieceFilter,
 )
 from fap.ui.page import Page, page_registry
 
@@ -41,6 +41,7 @@ class SetPieceAnalysisPage(Page):
             st.warning("You do not have permission to view set-piece analysis.")
             return
         self._can_edit = perms.can(shell.user, str(Capability.EDIT_SETPIECE))
+        self._can_report = perms.can(shell.user, str(Capability.CREATE_REPORT))
 
         st.title("Set Piece Analysis")
 
@@ -49,33 +50,145 @@ class SetPieceAnalysisPage(Page):
             self._detail(shell, svc, selected)
             return
 
-        tabs = st.tabs(["Dashboard", "Tag Set Piece", "Import", "Browse"])
+        tabs = st.tabs(["Overview", "Offensive", "Defensive", "Tag Set Piece",
+                        "Import", "Browse"])
         with tabs[0]:
-            self._dashboard(shell, svc)
+            self._overview(shell, svc)
         with tabs[1]:
-            self._tag(shell, svc)
+            self._phase_dashboard(shell, svc, "offensive")
         with tabs[2]:
-            self._import(shell, svc)
+            self._phase_dashboard(shell, svc, "defensive")
         with tabs[3]:
+            self._tag(shell, svc)
+        with tabs[4]:
+            self._import(shell, svc)
+        with tabs[5]:
             self._browse(shell, svc)
 
-    # ---------------------------------------------------------------- dashboard
-    def _dashboard(self, shell, svc) -> None:
-        data = svc.dashboard(shell.user)
-        if not data["total"]:
+    # ---------------------------------------------------------------- dashboards
+    def _overview(self, shell, svc) -> None:
+        if not svc.dashboard(shell.user)["total"]:
             st.info("No set pieces yet. Use **Tag Set Piece** to add one manually, "
-                    "or **Import** a CSV/Excel/JSON file. Analytics dashboards arrive in Phase 9.1.")
+                    "or **Import** a CSV/Excel/JSON file.")
             return
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Set Pieces", data["total"])
-        c2.metric("Offensive", data["offensive"])
-        c3.metric("Defensive", data["defensive"])
-        c4.metric("Opposition", data["opposition"])
-        st.subheader("By type")
-        cols = st.columns(len(SET_PIECE_TYPES))
-        for col, t in zip(cols, SET_PIECE_TYPES):
-            col.metric(SET_PIECE_TYPE_LABELS[t], data["by_type"].get(t, 0))
-        st.caption("KPIs, delivery maps, first-contact and second-ball analytics land in Phase 9.1.")
+        filt = self._filter_bar(shell, svc, key="ov")
+        bundle = svc.analytics_overview(shell.user, filt, workspace_id=shell.workspace_id)
+        self._render_analytics(bundle)
+        self._report_button(shell, svc, filt, key="ov")
+
+    def _phase_dashboard(self, shell, svc, phase: str) -> None:
+        if not svc.dashboard(shell.user)["total"]:
+            st.info("No set pieces yet.")
+            return
+        st.caption(f"{phase.title()} set pieces — "
+                   f"{'your team attacking' if phase == 'offensive' else 'defending against'} dead balls.")
+        filt = self._filter_bar(shell, svc, key=phase)
+        method = svc.offensive_dashboard if phase == "offensive" else svc.defensive_dashboard
+        bundle = method(shell.user, filt, workspace_id=shell.workspace_id)
+        self._render_analytics(bundle)
+        self._map_summaries(shell, svc, filt, phase)
+        self._report_button(shell, svc, filt, key=phase, phase=phase)
+
+    def _filter_bar(self, shell, svc, *, key: str) -> SetPieceFilter:
+        opts = svc.filter_options(shell.user)
+
+        def pick(col_label, col, c):
+            values = opts.get(col, [])
+            choice = c.selectbox(col_label, ["All", *values], key=f"spf_{key}_{col}")
+            return "" if choice == "All" else choice
+
+        a, b, c, d = st.columns(4)
+        team = pick("Team", "team", a)
+        competition = pick("Competition", "competition", b)
+        season = pick("Season", "season", c)
+        match_id = pick("Match", "match_id", d)
+        e, f, g, h = st.columns(4)
+        taker = pick("Taker", "taker", e)
+        delivery_type = pick("Delivery", "delivery_type", f)
+        outcome = pick("Outcome", "outcome", g)
+        sp_type = pick("Type", "type", h)
+        i, j = st.columns(2)
+        half_choice = i.selectbox("Half", ["All", "1", "2"], key=f"spf_{key}_half")
+        player = j.text_input("Player (in box)", key=f"spf_{key}_player")
+        return SetPieceFilter(
+            team=team, competition=competition, season=season, match_id=match_id,
+            taker=taker, delivery_type=delivery_type, outcome=outcome, type=sp_type,
+            half=int(half_choice) if half_choice != "All" else None, player=player.strip())
+
+    def _render_analytics(self, bundle: dict) -> None:
+        if not bundle["count"]:
+            st.info("No set pieces match the current filters.")
+            return
+        ov, dr = bundle["overview"], bundle["derived"]
+        r1 = st.columns(5)
+        r1[0].metric("Total", ov["total"])
+        r1[1].metric("Goals", ov["goals"])
+        r1[2].metric("Shots", ov["shots"])
+        r1[3].metric("xG", ov["xg"])
+        r1[4].metric("Shot %", f"{ov['shot_pct']}%")
+        r2 = st.columns(5)
+        r2[0].metric("Goal %", f"{ov['goal_pct']}%")
+        r2[1].metric("First Contact %", f"{ov['first_contact_pct']}%")
+        r2[2].metric("Second Ball %", f"{ov['second_ball_pct']}%")
+        r2[3].metric("Retention %", f"{ov['retention_pct']}%")
+        r2[4].metric("Success Rate", f"{dr['success_rate']}%")
+        r3 = st.columns(5)
+        r3[0].metric("Goal Contribution", f"{dr['goal_contribution']}%")
+        r3[1].metric("Chance Creation", f"{dr['chance_creation']}%")
+        r3[2].metric("Avg in Box", ov["avg_players_in_box"] if ov["avg_players_in_box"] is not None else "—")
+        r3[3].metric("Avg TT Shot", f"{ov['avg_time_to_shot']}s" if ov["avg_time_to_shot"] is not None else "—")
+        r3[4].metric("Avg TT 1st", f"{ov['avg_time_to_first_contact']}s" if ov["avg_time_to_first_contact"] is not None else "—")
+
+        bt = bundle["by_type"]
+        if bt:
+            st.subheader("By type")
+            st.dataframe(
+                [{"Type": SET_PIECE_TYPE_LABELS.get(t, t), "Count": s["count"],
+                  "Shots": s["shots"], "Goals": s["goals"], "Shot %": s["shot_pct"],
+                  "Goal %": s["goal_pct"], "1st Contact %": s["first_contact_pct"], "xG": s["xg"]}
+                 for t, s in sorted(bt.items(), key=lambda kv: -kv[1]["count"])],
+                use_container_width=True, hide_index=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.caption("Delivery type")
+            dt = bundle["delivery"]["delivery_type"]
+            st.dataframe([{"Delivery": k.title(), "Count": v} for k, v in dt.items()] or
+                         [{"Delivery": "—", "Count": 0}], use_container_width=True, hide_index=True)
+        with col2:
+            st.caption("Outcomes")
+            st.dataframe([{"Outcome": k.title(), "Count": v} for k, v in bundle["outcome"].items()]
+                         or [{"Outcome": "—", "Count": 0}], use_container_width=True, hide_index=True)
+
+    def _map_summaries(self, shell, svc, filt, phase: str) -> None:
+        """Phase 9.1 exposes the map DATA pipeline; the pitch renderers land in
+        9.2. Show the dataset sizes so the data is visible and verifiable."""
+        with st.expander("Map datasets (rendered as pitch maps in Phase 9.2)"):
+            kinds = [("Delivery landing", "delivery"), ("Shots", "shot"),
+                     ("First contact", "first_contact"), ("Second ball", "second_ball"),
+                     ("Delivery accuracy", "delivery_accuracy")]
+            cols = st.columns(len(kinds))
+            for col, (label, kind) in zip(cols, kinds):
+                data = svc.map_data(shell.user, kind, filt, workspace_id=shell.workspace_id)
+                col.metric(label, len(data))
+            st.caption("These coordinate datasets feed the 9.2 delivery/shot/first-contact/"
+                       "second-ball/accuracy maps directly.")
+
+    def _report_button(self, shell, svc, filt, *, key: str, phase: str = "") -> None:
+        if not self._can_report:
+            return
+        if st.button("📄 Create Studio report", key=f"sp_report_{key}"):
+            try:
+                use = filt if not phase else self._with_phase(filt, phase)
+                rec = svc.create_report(shell.user, filt=use, workspace_id=shell.workspace_id,
+                                        title=f"Set Piece Report{' — ' + phase.title() if phase else ''}")
+                st.success(f"Report created: {rec.title}. Open it in Report Studio to edit.")
+            except Exception as exc:
+                st.error(f"Could not create report: {exc}")
+
+    @staticmethod
+    def _with_phase(filt: SetPieceFilter, phase: str) -> SetPieceFilter:
+        from dataclasses import replace
+        return replace(filt, phase=phase)
 
     # ---------------------------------------------------------------- tagging
     def _tag(self, shell, svc) -> None:

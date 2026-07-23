@@ -15,11 +15,12 @@ restart and cache expiry. Analytics, visualizations and report sections arrive i
 Phases 9.1-9.5 and extend this foundation without touching other modules.
 """
 from fap.setpieces.models import (
-    ImportResult, SetPiece, SetPieceContact, SetPieceImport, SetPiecePosition,
+    ImportResult, SetPiece, SetPieceContact, SetPieceFilter, SetPieceImport,
+    SetPiecePosition,
 )
 from fap.setpieces.service import SetPieceService
 
 __all__ = [
     "SetPieceService", "SetPiece", "SetPiecePosition", "SetPieceContact",
-    "SetPieceImport", "ImportResult",
+    "SetPieceImport", "SetPieceFilter", "ImportResult",
 ]
