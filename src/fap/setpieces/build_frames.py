@@ -242,6 +242,52 @@ def _pen_gk(svc, sps):
     return [{"name": k, **v} for k, v in PEN.goalkeeper_preference(sps).items()]
 
 
+# --- Phase 9.4 penalty module datasets (view-based) --------------------------
+def _pviews(sps):
+    from fap.setpieces import penalty_model as PM
+    return PM.views(sps)
+
+
+def _pen_goal(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.placement_points(_pviews(sps), only="goal")
+
+
+def _pen_miss(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.placement_points(_pviews(sps), only="miss")
+
+
+def _pen_shots(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.placement_points(_pviews(sps))
+
+
+def _pen_reach(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.reach_points(_pviews(sps))
+
+
+def _pen_clusters(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.placement_clusters(_pviews(sps))
+
+
+def _pen_height(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.height_distribution(_pviews(sps))
+
+
+def _pen_direction(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.direction_distribution(_pviews(sps))
+
+
+def _pen_zones(svc, sps):
+    from fap.setpieces import penalty_analytics as PA
+    return PA.zone_conversion(_pviews(sps))
+
+
 _KINDS = {
     "occ_attack_density": _occ_density, "occ_attack_avg": _occ_avg,
     "occ_timeline": _occ_timeline, "def_positions": _def_positions,
@@ -259,4 +305,8 @@ _KINDS = {
     "pen_placement": _pen_placement, "pen_dive": _pen_dive,
     "pen_dive_direction": _pen_dive_direction, "pen_outcome": _pen_outcome,
     "pen_shooter": _pen_shooter, "pen_gk": _pen_gk,
+    # Phase 9.4 penalty module
+    "pen_goal": _pen_goal, "pen_miss": _pen_miss, "pen_shots": _pen_shots,
+    "pen_reach": _pen_reach, "pen_clusters": _pen_clusters, "pen_height": _pen_height,
+    "pen_direction": _pen_direction, "pen_zones": _pen_zones,
 }

@@ -134,6 +134,26 @@ _reg(sp_chart("sp_pen_shooter", "Shooter Preference Map", CAT_PENALTIES, "pen_sh
 _reg(sp_chart("sp_pen_gk", "Goalkeeper Preference Map", CAT_PENALTIES, "pen_gk",
               lambda ctx: _bar(ctx, "name", "save_pct", "Goalkeeper save %")))
 
+# --- Phase 9.4 penalty module extensions -------------------------------------
+_reg(sp_chart("sp_pen_goal_heatmap", "Goal Heatmap", CAT_PENALTIES, "pen_goal",
+              lambda ctx: _goal_grid(ctx, "count")))
+_reg(sp_chart("sp_pen_miss_heatmap", "Miss Heatmap", CAT_PENALTIES, "pen_miss",
+              lambda ctx: _goal_grid(ctx, "count")))
+_reg(sp_chart("sp_pen_distribution", "Shot Distribution", CAT_PENALTIES, "pen_shots",
+              lambda ctx: _goal_grid(ctx, "count")))
+_reg(sp_chart("sp_gk_reach", "Goalkeeper Reach Map", CAT_PENALTIES, "pen_reach",
+              lambda ctx: _reach_grid(ctx)))
+_reg(sp_chart("sp_pen_clusters", "Placement Clusters", CAT_PENALTIES, "pen_clusters",
+              lambda ctx: _zone_grid(ctx, "attempts")))
+_reg(sp_chart("sp_pen_height", "Shot Height Distribution", CAT_PENALTIES, "pen_height",
+              lambda ctx: _bar(ctx, "height", "count", "Shot height")))
+_reg(sp_chart("sp_pen_direction", "Shot Direction Distribution", CAT_PENALTIES, "pen_direction",
+              lambda ctx: _bar(ctx, "side", "count", "Shot direction")))
+_reg(sp_chart("sp_pen_success_zones", "Success Zones", CAT_PENALTIES, "pen_zones",
+              lambda ctx: _zone_grid(ctx, "conversion_pct")))
+_reg(sp_chart("sp_pen_failure_zones", "Failure Zones", CAT_PENALTIES, "pen_zones",
+              lambda ctx: _zone_grid(ctx, "conversion_pct", invert=True)))
+
 
 # ------------------------------------------------------------------ chart artists
 def _chart_axes(ctx: LayerContext) -> None:
@@ -196,6 +216,60 @@ def _goal_grid(ctx: LayerContext, value: str) -> None:
 def _cell(gx: int, gy: int, color):
     from matplotlib.patches import Rectangle
     return Rectangle((gx + 0.03, gy + 0.03), 0.94, 0.94, color=color, ec="none")
+
+
+def _zone_grid(ctx: LayerContext, value: str, invert: bool = False) -> None:
+    """3x3 goal grid shaded by a per-cell value (attempts or conversion %).
+    ``invert`` highlights the LOW-value cells (failure zones)."""
+    import numpy as np
+    from matplotlib.colors import to_rgba
+    ax, c = ctx.ax, ctx.theme.colors
+    ax.set_facecolor(c["panel"]); ax.set_xlim(-0.2, 3.2); ax.set_ylim(-0.2, 3.4)
+    ax.set_xticks([]); ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.plot([0, 0, 3, 3], [0, 3, 3, 0], color=c["lines"], lw=3)
+    vals = np.zeros((3, 3))
+    labels = np.zeros((3, 3))
+    df = ctx.df
+    if df is not None and not df.empty and {"gx", "gy", value}.issubset(df.columns):
+        for _, r in df.iterrows():
+            gx, gy = int(r["gx"]), int(r["gy"])
+            if 0 <= gx < 3 and 0 <= gy < 3:
+                v = float(r[value]) if r[value] is not None else 0.0
+                vals[gy, gx] = (100 - v) if invert else v
+                labels[gy, gx] = float(r.get("conversion_pct", r[value]) or 0.0)
+    mx = vals.max() or 1
+    accent = ctx.controls.get("primary_color") or (c["danger"] if invert else c["success"])
+    for gy in range(3):
+        for gx in range(3):
+            ax.add_patch(_cell(gx, gy, to_rgba(accent, 0.12 + 0.8 * vals[gy, gx] / mx)))
+            if vals[gy, gx]:
+                txt = f"{int(labels[gy, gx])}%" if value == "conversion_pct" else f"{int(vals[gy, gx])}"
+                ax.text(gx + 0.5, gy + 0.5, txt, ha="center", va="center",
+                        color=c["text"], fontweight="bold", fontsize=ctx.style("label_size") + 1)
+    ax.set_title("Failure zones" if invert else "Zones", color=c["text"],
+                 fontsize=ctx.style("label_size") + 1)
+
+
+def _reach_grid(ctx: LayerContext) -> None:
+    """Goalkeeper reach/dive endpoints plotted across the goal mouth."""
+    ax, c = ctx.ax, ctx.theme.colors
+    ax.set_facecolor(c["panel"]); ax.set_xlim(-1.0, 4.0); ax.set_ylim(-0.3, 3.4)
+    ax.set_xticks([]); ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.plot([0, 0, 3, 3], [0, 3, 3, 0], color=c["lines"], lw=3)
+    df = ctx.df
+    if df is None or df.empty or "gx" not in df.columns:
+        ax.text(1.5, 1.5, "No data", ha="center", va="center", color=c["muted"])
+        return
+    for _, r in df.iterrows():
+        saved = bool(r.get("saved"))
+        ax.scatter([float(r["gx"]) * 1.5], [float(r.get("gy", 1)) * 1.5],
+                   s=140, color=c["success"] if saved else c["danger"],
+                   edgecolors=c["lines"], alpha=0.8, zorder=5)
+    ax.set_title("Goalkeeper reach", color=c["text"], fontsize=ctx.style("label_size") + 1)
 
 
 def _dive_bars(ctx: LayerContext) -> None:

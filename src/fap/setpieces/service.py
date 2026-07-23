@@ -472,6 +472,134 @@ class SetPieceService:
         self.audit.record(user, "setpiece.visual.embed", target_type="report",
                           target_id=report_id, detail={"viz": viz_id})
 
+    # =============================================================== penalties (9.4)
+    def _penalty_views(self, user: User, filt: SetPieceFilter | None, workspace_id):
+        from fap.setpieces import penalty_model as PM
+        pf = replace(filt or SetPieceFilter(), type="penalty")
+        return PM.views(self._filtered(user, pf, workspace_id))
+
+    def tag_penalty(self, user: User, set_piece_id: str, **fields: Any):
+        """Write penalty-specific detail (shooter technique, GK timing, shootout
+        context) into the penalty's document. Whitelisted; no schema change."""
+        self._require(user, Capability.EDIT_SETPIECE)
+        from fap.setpieces.penalty_model import penalty_document
+        sp = self._or_raise(set_piece_id)
+        doc = dict(sp.document or {})
+        doc.update(penalty_document(**fields))
+        sp.document = doc
+        # promote common columns when supplied
+        for col in ("outcome", "xg", "foot", "minute"):
+            if fields.get(col) not in (None, ""):
+                setattr(sp, col, fields[col])
+        if fields.get("outcome") == "goal":
+            sp.goal, sp.shot = True, True
+        self.set_pieces.save(sp)
+        self.audit.record(user, "setpiece.penalty.tag", target_type="set_piece",
+                          target_id=set_piece_id, detail={"fields": sorted(fields)})
+        return sp
+
+    def record_shootout(self, user: User, *, shootout_id: str, attempts: list[dict[str, Any]],
+                        team: str = "", opponent: str = "", competition: str = "",
+                        workspace_id: str | None = None) -> list[str]:
+        """Create the penalties of a shootout in order (each a set piece with
+        shootout context in its document)."""
+        self._require(user, Capability.EDIT_SETPIECE)
+        from fap.setpieces.penalty_model import penalty_document
+        ids: list[str] = []
+        for i, a in enumerate(attempts, start=1):
+            doc = penalty_document(shootout_id=shootout_id, shootout_order=a.get("order", i),
+                                   sudden_death=a.get("sudden_death", False), **{
+                                       k: v for k, v in a.items()
+                                       if k not in ("order", "sudden_death", "shooter", "team",
+                                                    "outcome", "xg")})
+            sp = self.create_set_piece(
+                user, type="penalty", phase="offensive", perspective="own",
+                team=a.get("team", team), opponent=opponent, competition=competition,
+                taker=a.get("shooter", ""), outcome=a.get("outcome", ""),
+                goal=(a.get("outcome") == "goal"), shot=True, xg=a.get("xg"),
+                document=doc, workspace_id=workspace_id)
+            ids.append(sp.id)
+        self.audit.record(user, "setpiece.shootout.record", target_type="shootout",
+                          target_id=shootout_id, detail={"attempts": len(ids)})
+        return ids
+
+    def penalty_shooter(self, user: User, shooter: str, filt: SetPieceFilter | None = None, *,
+                        workspace_id: str | None = None) -> dict[str, Any]:
+        from fap.setpieces import penalty_analytics as PA
+        vs = [v for v in self._penalty_views(user, filt, workspace_id) if v.shooter == shooter]
+        return PA.shooter_profile(vs)
+
+    def penalty_goalkeeper(self, user: User, goalkeeper: str, filt: SetPieceFilter | None = None, *,
+                           workspace_id: str | None = None) -> dict[str, Any]:
+        from fap.setpieces import penalty_analytics as PA
+        vs = [v for v in self._penalty_views(user, filt, workspace_id) if v.goalkeeper == goalkeeper]
+        return PA.goalkeeper_profile(vs)
+
+    def penalty_team(self, user: User, filt: SetPieceFilter | None = None, *,
+                     workspace_id: str | None = None) -> dict[str, Any]:
+        from fap.setpieces import penalty_analytics as PA
+        return PA.team_analysis(self._penalty_views(user, filt, workspace_id))
+
+    def penalty_shootouts(self, user: User, filt: SetPieceFilter | None = None, *,
+                          workspace_id: str | None = None) -> list[dict[str, Any]]:
+        from fap.setpieces import penalty_analytics as PA
+        return PA.shootout_analysis(self._penalty_views(user, filt, workspace_id))
+
+    def penalty_intelligence(self, user: User, filt: SetPieceFilter | None = None, *,
+                             workspace_id: str | None = None):
+        from fap.setpieces import penalty_intelligence as PI
+        return PI.build_penalty_intelligence(self._penalty_views(user, filt, workspace_id))
+
+    def penalty_shooters(self, user: User, filt: SetPieceFilter | None = None, *,
+                         workspace_id: str | None = None) -> list[str]:
+        return sorted({v.shooter for v in self._penalty_views(user, filt, workspace_id) if v.shooter})
+
+    def penalty_goalkeepers(self, user: User, filt: SetPieceFilter | None = None, *,
+                            workspace_id: str | None = None) -> list[str]:
+        return sorted({v.goalkeeper for v in self._penalty_views(user, filt, workspace_id) if v.goalkeeper})
+
+    def create_penalty_report(self, user: User, *, filt: SetPieceFilter | None = None,
+                              title: str = "", workspace_id: str | None = None,
+                              embed_visuals: bool = True):
+        """A complete penalty report in the EXISTING Report Studio: analytics +
+        intelligence sections, with key penalty visualizations embedded as images."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        from fap.setpieces import penalty_analytics as PA, penalty_intelligence as PI
+        from fap.setpieces.reporting import build_penalty_sections
+        pf = replace(filt or SetPieceFilter(), type="penalty")
+        vs = self._penalty_views(user, filt, workspace_id)
+        summary = {"n": len(vs), "goals": sum(v.goal for v in vs), "saved": sum(v.saved for v in vs),
+                   "missed": sum(v.missed for v in vs),
+                   "conversion_pct": round(100.0 * sum(v.goal for v in vs) / len(vs), 1) if vs else 0.0}
+        team = PA.team_analysis(vs)
+        intel = PI.build_penalty_intelligence(vs)
+        shootouts = PA.shootout_analysis(vs)
+        title = title or "Penalty Analysis Report"
+        cover = {"title": title, "subtitle": f"{summary['n']} penalties · {summary['conversion_pct']}% conversion",
+                 "club": pf.team, "opponent": pf.opponent, "competition": pf.competition,
+                 "analyst": user.name or user.email}
+        df = pd.DataFrame([{"penalties": summary["n"]}])
+        templates = [t.info.id for t in self._reports.templates()]
+        template = "blank" if "blank" in templates else (templates[0] if templates else "")
+        record = self._reports.create(user, template=template, df=df, title=title,
+                                      workspace_id=workspace_id, cover=cover)
+        sections = build_penalty_sections(summary, intel, team, shootouts)
+        self._reports.update_blocks(user, record.id, lambda doc: (
+            doc.sections.extend(sections), doc.meta.update({"source": "setpieces_penalty"})))
+        if embed_visuals and self._images is not None and self._themes is not None:
+            for viz_id, cap in (("sp_pen_placement", "Placement"), ("sp_pen_goal_heatmap", "Goals"),
+                                ("sp_gk_dive_heatmap", "GK dives"), ("sp_pen_success_zones", "Success zones")):
+                try:
+                    self.embed_visual(user, record.id, viz_id, pf, title=cap,
+                                      workspace_id=workspace_id)
+                except Exception:
+                    pass
+        self.audit.record(user, "setpiece.penalty_report.create", target_type="report",
+                          target_id=record.id, detail={"title": title, "penalties": summary["n"]})
+        return record
+
     # =============================================================== intelligence (9.3)
     def intelligence(self, user: User, filt: SetPieceFilter | None = None, *,
                      workspace_id: str | None = None):

@@ -51,7 +51,7 @@ class SetPieceAnalysisPage(Page):
             return
 
         tabs = st.tabs(["Overview", "Offensive", "Defensive", "Visuals",
-                        "Intelligence", "Tag Set Piece", "Import", "Browse"])
+                        "Intelligence", "Penalties", "Tag Set Piece", "Import", "Browse"])
         with tabs[0]:
             self._overview(shell, svc)
         with tabs[1]:
@@ -63,10 +63,12 @@ class SetPieceAnalysisPage(Page):
         with tabs[4]:
             self._intelligence(shell, svc)
         with tabs[5]:
-            self._tag(shell, svc)
+            self._penalties(shell, svc)
         with tabs[6]:
-            self._import(shell, svc)
+            self._tag(shell, svc)
         with tabs[7]:
+            self._import(shell, svc)
+        with tabs[8]:
             self._browse(shell, svc)
 
     # ---------------------------------------------------------------- dashboards
@@ -162,6 +164,123 @@ class SetPieceAnalysisPage(Page):
             st.caption("Outcomes")
             st.dataframe([{"Outcome": k.title(), "Count": v} for k, v in bundle["outcome"].items()]
                          or [{"Outcome": "—", "Count": 0}], use_container_width=True, hide_index=True)
+
+    # ---------------------------------------------------------------- penalties (9.4)
+    def _penalties(self, shell, svc) -> None:
+        st.caption("Complete penalty scouting: shooter & goalkeeper intelligence, team patterns "
+                   "and shootout analysis. Penalty visualizations live in the Visuals tab.")
+        filt = self._filter_bar(shell, svc, key="pen")
+        shooters = svc.penalty_shooters(shell.user, filt, workspace_id=shell.workspace_id)
+        keepers = svc.penalty_goalkeepers(shell.user, filt, workspace_id=shell.workspace_id)
+        if not shooters and not keepers:
+            st.info("No penalties tagged yet. Add penalties (Tag Set Piece → type Penalty) or "
+                    "import them, then fill placement/goalkeeper detail.")
+            return
+        inner = st.tabs(["Shooter", "Goalkeeper", "Team", "Shootouts", "Intelligence"])
+        with inner[0]:
+            self._penalty_shooter(shell, svc, filt, shooters)
+        with inner[1]:
+            self._penalty_gk(shell, svc, filt, keepers)
+        with inner[2]:
+            self._penalty_team(shell, svc, filt)
+        with inner[3]:
+            self._penalty_shootouts(shell, svc, filt)
+        with inner[4]:
+            self._penalty_intel(shell, svc, filt)
+
+    def _penalty_shooter(self, shell, svc, filt, shooters) -> None:
+        if not shooters:
+            st.info("No shooters tagged."); return
+        who = st.selectbox("Shooter", shooters, key="pen_shooter_sel")
+        p = svc.penalty_shooter(shell.user, who, filt, workspace_id=shell.workspace_id)
+        if not p.get("n"):
+            st.info("No penalties for this shooter."); return
+        c = st.columns(5)
+        c[0].metric("Penalties", p["n"]); c[1].metric("Conversion", f"{p['conversion_pct']}%")
+        c[2].metric("xG vs Goals", p["xg_vs_goals"]); c[3].metric("Pref. corner", p["preferred_corner"] or "—")
+        c[4].metric("Pref. height", p["preferred_height"] or "—")
+        d = st.columns(4)
+        d[0].metric("Power/placement", p["power_vs_placement"])
+        d[1].metric("Body", p["body_orientation"] or "—")
+        d[2].metric("Technique", p["technique"] or "—")
+        d[3].metric("Under pressure", f"{p['pressure']['conversion_pct']}%")
+        if p["pressure"]["changes_direction"]:
+            st.warning(f"Changes direction under pressure: {p['pressure']['preferred_side_pressure']} "
+                       f"(pressure) vs {p['pressure']['preferred_side_calm']} (calm).")
+
+    def _penalty_gk(self, shell, svc, filt, keepers) -> None:
+        if not keepers:
+            st.info("No goalkeepers tagged."); return
+        who = st.selectbox("Goalkeeper", keepers, key="pen_gk_sel")
+        p = svc.penalty_goalkeeper(shell.user, who, filt, workspace_id=shell.workspace_id)
+        if not p.get("n"):
+            st.info("No penalties for this goalkeeper."); return
+        c = st.columns(5)
+        c[0].metric("Faced", p["n"]); c[1].metric("Save %", f"{p['save_pct']}%")
+        c[2].metric("Dive pref", p["dive_preference"] or "—")
+        c[3].metric("Stays central", f"{p['central_stay_freq']}%")
+        c[4].metric("Correct guess", f"{p['correct_guess_pct']}%")
+        d = st.columns(3)
+        d[0].metric("Early dive", f"{p['early_dive_freq']}%")
+        d[1].metric("Late dive", f"{p['late_dive_freq']}%")
+        d[2].metric("Distribution", p["distribution_after"] or "—")
+
+    def _penalty_team(self, shell, svc, filt) -> None:
+        t = svc.penalty_team(shell.user, filt, workspace_id=shell.workspace_id)
+        if not t.get("n"):
+            st.info("No penalties."); return
+        st.metric("Team conversion", f"{t['conversion_pct']}%")
+        st.caption("Preferred takers")
+        st.dataframe([{"Player": n, "Penalties": s["attempts"], "Goals": s["goals"],
+                       "Conversion": f"{s['conversion_pct']}%"} for n, s in t["preferred_takers"]],
+                     use_container_width=True, hide_index=True)
+        cc = st.columns(2)
+        with cc[0]:
+            st.caption("By venue")
+            st.dataframe([{"Venue": k, "Conv %": v["conversion_pct"]}
+                          for k, v in t["home_vs_away"].items()] or [{"Venue": "—", "Conv %": 0}],
+                         use_container_width=True, hide_index=True)
+        with cc[1]:
+            st.caption("League vs cup")
+            st.dataframe([{"Context": k, "Conv %": v["conversion_pct"]}
+                          for k, v in t["league_vs_cup"].items()] or [{"Context": "—", "Conv %": 0}],
+                         use_container_width=True, hide_index=True)
+
+    def _penalty_shootouts(self, shell, svc, filt) -> None:
+        shootouts = svc.penalty_shootouts(shell.user, filt, workspace_id=shell.workspace_id)
+        if not shootouts:
+            st.info("No shootouts recorded."); return
+        for s in shootouts:
+            with st.container(border=True):
+                st.markdown(f"**{' vs '.join(s['teams'])}** — score "
+                            f"{'-'.join(str(v) for v in s['score'].values())}"
+                            f"  ·  winner: {s['winner'] or '—'}"
+                            f"{'  ·  sudden death' if s['sudden_death'] else ''}")
+                st.dataframe([{"#": a["order"], "Team": a["team"], "Shooter": a["shooter"],
+                               "Outcome": a["outcome"], "Pressure": a["pressure_index"]}
+                              for a in s["sequence"]], use_container_width=True, hide_index=True)
+
+    def _penalty_intel(self, shell, svc, filt) -> None:
+        intel = svc.penalty_intelligence(shell.user, filt, workspace_id=shell.workspace_id)
+        for group, title in (("shooter_insights", "Shooter"), ("goalkeeper_insights", "Goalkeeper"),
+                             ("team_insights", "Team")):
+            items = getattr(intel, group)
+            if items:
+                st.caption(title)
+                for i in items:
+                    self._insight(i)
+        if intel.recommendations:
+            st.subheader("Recommendations")
+            for r in intel.recommendations:
+                self._recommendation(r)
+        if self._can_report and getattr(shell.platform, "reports", None) is not None:
+            if st.button("📄 Create penalty report (Studio)", key="pen_report"):
+                try:
+                    rec = svc.create_penalty_report(shell.user, filt=filt,
+                                                    workspace_id=shell.workspace_id)
+                    st.success(f"Report created: {rec.title}. Open Report Studio to edit.")
+                except Exception as exc:
+                    st.error(f"Could not create report: {exc}")
 
     # ---------------------------------------------------------------- intelligence (9.3)
     def _intelligence(self, shell, svc) -> None:

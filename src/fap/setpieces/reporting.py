@@ -122,6 +122,58 @@ def _kind(kind: str) -> str:
     return kind if kind in ("neutral", "success", "warning", "danger") else "neutral"
 
 
+def build_penalty_sections(summary: dict[str, Any], intel: Any, team: dict[str, Any],
+                           shootouts: list[dict[str, Any]]) -> list[Section]:
+    """Penalty report sections (Phase 9.4) from the penalty analytics +
+    intelligence. Reuses the report models - no second report engine."""
+    sections: list[Section] = []
+
+    sections.append(Section(
+        id="pen_overview", title="Penalty Overview",
+        kpis=[KPI("Penalties", _s(summary.get("n", 0))),
+              KPI("Conversion", _s(summary.get("conversion_pct", 0.0), "%")),
+              KPI("Goals", _s(summary.get("goals", 0))),
+              KPI("Saved", _s(summary.get("saved", 0))),
+              KPI("Missed", _s(summary.get("missed", 0)))]))
+
+    all_insights = (list(intel.shooter_insights) + list(intel.goalkeeper_insights)
+                    + list(intel.team_insights))
+    if all_insights:
+        sections.append(Section(
+            id="pen_insights", title="Penalty Intelligence",
+            insights=[Insight(f"{i.title}: {i.text}", _kind(i.kind)) for i in all_insights]))
+
+    if intel.recommendations:
+        rows = [[r.action, r.rationale, r.priority, f"{int(r.confidence * 100)}%"]
+                for r in intel.recommendations]
+        sections.append(Section(
+            id="pen_recommendations", title="Penalty Recommendations",
+            tables=[Table(title="Recommendations (with rationale)",
+                          columns=["Action", "Why", "Priority", "Confidence"], rows=rows)]))
+
+    if team.get("preferred_takers"):
+        rows = [[name, st["attempts"], st["goals"], f"{st['conversion_pct']}%"]
+                for name, st in team["preferred_takers"]]
+        sections.append(Section(
+            id="pen_takers", title="Preferred Takers",
+            tables=[Table(title="Takers", columns=["Player", "Penalties", "Goals", "Conversion"],
+                          rows=rows)]))
+
+    if shootouts:
+        rows = [[s["shootout_id"][:8], " vs ".join(s["teams"]),
+                 "-".join(str(v) for v in s["score"].values()), s["winner"],
+                 "Yes" if s["sudden_death"] else "No"] for s in shootouts]
+        sections.append(Section(
+            id="pen_shootouts", title="Shootouts",
+            tables=[Table(title="Shootout results",
+                          columns=["ID", "Teams", "Score", "Winner", "Sudden death"], rows=rows)]))
+    return sections
+
+
+def _s(value: Any, suffix: str = "") -> str:
+    return "—" if value is None else f"{value}{suffix}"
+
+
 def _overview_insights(ov: dict, dr: dict, dl: dict) -> list[Insight]:
     out: list[Insight] = []
     top_delivery = next(iter(dl.get("delivery_type", {})), None)
