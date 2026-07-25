@@ -41,11 +41,10 @@ class MatchAnalysisPage(_Placeholder):
 # real page during plugin discovery.
 
 
-@page_registry.register
-class PlayersPage(_Placeholder):
-    info = PluginInfo(id="players", name="Players", category="page")
-    section = "Squad"; icon = "players"; order = 10
-    _blurb = "Per-player profiles across datasets."
+# NOTE: the Players page is no longer a placeholder - the real First Team
+# Players implementation lives in fap.ui.builtin.players (Phase 10), registered
+# under id="players". The placeholder was removed so it no longer collides with
+# (and shadows) the real page during plugin discovery.
 
 
 @page_registry.register

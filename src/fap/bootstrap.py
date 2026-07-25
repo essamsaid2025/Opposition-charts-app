@@ -173,6 +173,13 @@ class PlatformContext:
         CSV/Excel/JSON import; analytics/reports extend it in 9.1+ (Phase 9.0)."""
         return self.services.get("setpieces")
 
+    @property
+    def players(self):
+        """First Team Players platform: our own squad — roster, contracts, medical,
+        training/GPS, media, notes, career and link-only match references. Reuses
+        reports/visualization/storage; independent of scouting (Phase 10)."""
+        return self.services.get("players")
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -226,6 +233,7 @@ def init_platform(root: Path | None = None, *,
     services.register("administration", lambda reg: _administration(reg, settings))
     services.register("scouting", _scouting)
     services.register("setpieces", _setpieces)
+    services.register("players", _players)
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())
@@ -251,6 +259,23 @@ def _scouting(reg: "ServiceRegistry"):
         audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
         images=reg.get("image_storage"), videos=reg.get("video_storage"),
         attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"))
+
+
+def _players(reg: "ServiceRegistry"):
+    """The First Team Players platform (Phase 10), wired to the shared services it
+    reuses: permissions, audit, reports (Studio), image storage, the file storage
+    tier (documents/videos), workspaces and cache. The scouting service is injected
+    read-only for the optional promote-from-scouting bridge. No service duplicated."""
+    from fap.players.service import PlayersService
+    from fap.workspaces.audit import AuditService
+    from fap.workspaces.repositories import AuditRepository
+    db = reg.get("db")
+    return PlayersService(
+        db, permissions=reg.get("permissions"),
+        audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
+        images=reg.get("image_storage"), files=reg.get("attachment_storage"),
+        workspaces=reg.get("workspace_manager"), scouting=reg.get("scouting"),
+        cache=reg.get("cache"))
 
 
 def _setpieces(reg: "ServiceRegistry"):

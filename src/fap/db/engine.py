@@ -562,7 +562,202 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_sp_imports_ws ON set_piece_imports(workspace_id);
     """),
-    # (11, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Phase 10 (players module) - First Team Players. Additive only: a first-team
+    # roster (distinct from scouting's `players` table) plus contracts, medical,
+    # training/GPS, documents, images, videos, notes, career history and
+    # LINK-ONLY match references. Match statistics are never duplicated - they stay
+    # in the existing event/match datasets and are reached through player_match_links.
+    (11, """
+        CREATE TABLE IF NOT EXISTS first_team_players (
+            id TEXT PRIMARY KEY,
+            first_name TEXT NOT NULL DEFAULT '',
+            last_name TEXT NOT NULL DEFAULT '',
+            display_name TEXT NOT NULL DEFAULT '',
+            shirt_number INTEGER,
+            dob TEXT NOT NULL DEFAULT '',
+            nationality TEXT NOT NULL DEFAULT '',
+            foot TEXT NOT NULL DEFAULT '',
+            primary_position TEXT NOT NULL DEFAULT '',
+            secondary_positions TEXT NOT NULL DEFAULT '[]',
+            height INTEGER,
+            weight INTEGER,
+            join_date TEXT NOT NULL DEFAULT '',
+            captain INTEGER NOT NULL DEFAULT 0,
+            vice_captain INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'active',        -- active|injured|suspended|loan|archived
+            availability TEXT NOT NULL DEFAULT 'available',
+            profile_image_id TEXT NOT NULL DEFAULT '',
+            club_logo_id TEXT NOT NULL DEFAULT '',
+            flag TEXT NOT NULL DEFAULT '',
+            source_scout_player_id TEXT NOT NULL DEFAULT '',  -- optional link to a scouting record (never modified)
+            tags TEXT NOT NULL DEFAULT '[]',
+            custom_fields TEXT NOT NULL DEFAULT '{}',
+            workspace_id TEXT,
+            owner TEXT NOT NULL DEFAULT '',
+            favorite INTEGER NOT NULL DEFAULT 0,
+            archived INTEGER NOT NULL DEFAULT 0,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_by TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ftp_name ON first_team_players(display_name);
+        CREATE INDEX IF NOT EXISTS idx_ftp_position ON first_team_players(primary_position);
+        CREATE INDEX IF NOT EXISTS idx_ftp_status ON first_team_players(status);
+        CREATE INDEX IF NOT EXISTS idx_ftp_number ON first_team_players(shirt_number);
+        CREATE INDEX IF NOT EXISTS idx_ftp_workspace ON first_team_players(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_ftp_archived ON first_team_players(archived);
+
+        CREATE TABLE IF NOT EXISTS player_contracts (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            contract_start TEXT NOT NULL DEFAULT '',
+            contract_end TEXT NOT NULL DEFAULT '',
+            salary REAL, market_value REAL,
+            agent TEXT NOT NULL DEFAULT '',
+            loan INTEGER NOT NULL DEFAULT 0,
+            loan_club TEXT NOT NULL DEFAULT '',
+            release_clause REAL,
+            status TEXT NOT NULL DEFAULT 'active',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pcontract_player ON player_contracts(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_medical (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            injury TEXT NOT NULL DEFAULT '',
+            injury_type TEXT NOT NULL DEFAULT '',
+            date TEXT NOT NULL DEFAULT '',
+            expected_return TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'open',            -- open|recovering|returned
+            availability TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT '',
+            medical_notes TEXT NOT NULL DEFAULT '',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pmed_player ON player_medical(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_training (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            date TEXT NOT NULL DEFAULT '',
+            attendance TEXT NOT NULL DEFAULT '',            -- present|absent|partial|rest
+            sprint_distance REAL, hsr REAL,
+            accelerations INTEGER, decelerations INTEGER,
+            load REAL, rpe REAL, wellness REAL,
+            coach_notes TEXT NOT NULL DEFAULT '',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ptrain_player ON player_training(player_id);
+        CREATE INDEX IF NOT EXISTS idx_ptrain_date ON player_training(date);
+
+        CREATE TABLE IF NOT EXISTS player_documents (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            file_id TEXT NOT NULL DEFAULT '',               -- FileStorage id
+            filename TEXT NOT NULL DEFAULT '',
+            mime TEXT NOT NULL DEFAULT '',
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            kind TEXT NOT NULL DEFAULT 'document',           -- passport|contract|medical|document
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pdoc_player ON player_documents(player_id);
+
+        CREATE TABLE IF NOT EXISTS player_images (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            image_id TEXT NOT NULL,                          -- ImageStorage id
+            kind TEXT NOT NULL DEFAULT 'profile',
+            caption TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pimg_player ON player_images(player_id);
+
+        -- NOTE: ft_ prefix avoids a collision with the scouting module, which
+        -- already owns tables named player_videos / player_notes (migration 9).
+        CREATE TABLE IF NOT EXISTS ft_player_videos (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'external',           -- training|match|tagged|coach|opponent|external
+            provider TEXT NOT NULL DEFAULT '',
+            url TEXT NOT NULL DEFAULT '',
+            file_id TEXT NOT NULL DEFAULT '',
+            filename TEXT NOT NULL DEFAULT '',
+            mime TEXT NOT NULL DEFAULT '',
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            title TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ftvid_player ON ft_player_videos(player_id);
+
+        CREATE TABLE IF NOT EXISTS ft_player_notes (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            body TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'note',
+            pinned INTEGER NOT NULL DEFAULT 0,
+            private INTEGER NOT NULL DEFAULT 0,
+            author TEXT NOT NULL DEFAULT '',
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ftnote_player ON ft_player_notes(player_id);
+
+        -- career history (aggregate season rows the club records; distinct from
+        -- live event datasets)
+        CREATE TABLE IF NOT EXISTS player_career (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            season TEXT NOT NULL DEFAULT '',
+            club TEXT NOT NULL DEFAULT '',
+            competition TEXT NOT NULL DEFAULT '',
+            appearances INTEGER NOT NULL DEFAULT 0,
+            goals INTEGER NOT NULL DEFAULT 0,
+            assists INTEGER NOT NULL DEFAULT 0,
+            minutes INTEGER NOT NULL DEFAULT 0,
+            yellow INTEGER NOT NULL DEFAULT 0,
+            red INTEGER NOT NULL DEFAULT 0,
+            document TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pcareer_player ON player_career(player_id);
+        CREATE INDEX IF NOT EXISTS idx_pcareer_season ON player_career(season);
+
+        -- LINK ONLY: connects a player to an existing match/dataset. Carries no
+        -- match statistics - those come from the linked event dataset.
+        CREATE TABLE IF NOT EXISTS player_match_links (
+            id TEXT PRIMARY KEY,
+            player_id TEXT NOT NULL,
+            match_id TEXT NOT NULL DEFAULT '',
+            dataset_id TEXT NOT NULL DEFAULT '',
+            minutes INTEGER,
+            role TEXT NOT NULL DEFAULT '',
+            availability TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (player_id) REFERENCES first_team_players(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_pmatch_player ON player_match_links(player_id);
+        CREATE INDEX IF NOT EXISTS idx_pmatch_dataset ON player_match_links(dataset_id);
+    """),
+    # (12, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

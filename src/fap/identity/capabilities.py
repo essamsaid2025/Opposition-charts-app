@@ -43,6 +43,12 @@ class Capability(str, Enum):
     EDIT_SCOUTING = "EDIT_SCOUTING"
     VIEW_SETPIECE = "VIEW_SETPIECE"
     EDIT_SETPIECE = "EDIT_SETPIECE"
+    # first team players (own squad — distinct from scouting)
+    VIEW_PLAYERS = "VIEW_PLAYERS"
+    EDIT_PLAYERS = "EDIT_PLAYERS"
+    DELETE_PLAYERS = "DELETE_PLAYERS"
+    VIEW_MEDICAL = "VIEW_MEDICAL"          # sensitive: medical records
+    EDIT_MEDICAL = "EDIT_MEDICAL"
     # administration
     VIEW_ADMIN = "VIEW_ADMIN"
     EDIT_USERS = "EDIT_USERS"
@@ -68,13 +74,15 @@ ALL_CAPABILITIES: frozenset[str] = frozenset(c.value for c in Capability)
 
 # -- capability groups (used to derive built-in roles by rank) ---------------
 _VIEW = frozenset({Capability.VIEW_PROJECT, Capability.VIEW_REPORTS, Capability.VIEW_DATASET,
-                   Capability.VIEW_SCOUTING, Capability.VIEW_SETPIECE})
+                   Capability.VIEW_SCOUTING, Capability.VIEW_SETPIECE,
+                   Capability.VIEW_PLAYERS, Capability.VIEW_MEDICAL})
 _CONTENT = frozenset({Capability.CREATE_PROJECT, Capability.EDIT_PROJECT,
                       Capability.CREATE_REPORT, Capability.EDIT_REPORTS,
                       Capability.EXPORT_REPORT, Capability.SHARE_REPORT,
-                      Capability.UPLOAD_DATASET, Capability.EXPORT_DATA})
+                      Capability.UPLOAD_DATASET, Capability.EXPORT_DATA,
+                      Capability.EDIT_PLAYERS, Capability.EDIT_MEDICAL})
 _DELETE_CONTENT = frozenset({Capability.DELETE_PROJECT, Capability.DELETE_REPORT,
-                             Capability.DELETE_DATASET})
+                             Capability.DELETE_DATASET, Capability.DELETE_PLAYERS})
 _SCOUT = frozenset({Capability.EDIT_SCOUTING})
 _ADMIN = frozenset({Capability.VIEW_ADMIN, Capability.EDIT_USERS, Capability.INVITE_USER,
                     Capability.EDIT_ROLES, Capability.VIEW_AUDIT, Capability.VIEW_STORAGE,
