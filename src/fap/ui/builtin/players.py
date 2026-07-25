@@ -22,6 +22,7 @@ from fap.ui.page import Page, page_registry
 
 SEL = "_ftp_id"            # selected first-team player
 ADD = "_ftp_add"           # add-player wizard open flag
+OPEN_REPORT = "_open_report_id"   # Report Studio navigation key (reused)
 
 _AVAIL_BADGE = {"available": "🟢 Available", "doubtful": "🟡 Doubtful",
                 "injured": "🔴 Injured", "suspended": "🟠 Suspended",
@@ -48,6 +49,7 @@ class FirstTeamPlayersPage(Page):
         self._can_edit = perms.can(shell.user, str(Capability.EDIT_PLAYERS))
         self._can_delete = perms.can(shell.user, str(Capability.DELETE_PLAYERS))
         self._can_medical = perms.can(shell.user, str(Capability.VIEW_MEDICAL))
+        self._can_report = perms.can(shell.user, str(Capability.CREATE_REPORT))
 
         st.title("First Team")
 
@@ -86,38 +88,96 @@ class FirstTeamPlayersPage(Page):
 
             position = pick("Position", "primary_position")
             nationality = pick("Nationality", "nationality")
-            availability = pick("Availability", "availability")
             foot = pick("Preferred foot", "foot")
-            status = pick("Status", "status")
             aa, ab = st.columns(2)
             min_age = aa.number_input("Min age", 14, 45, 14, key="ftp_minage")
             max_age = ab.number_input("Max age", 14, 45, 45, key="ftp_maxage")
-            expiring = st.checkbox("Contract expiring (≤6 months)", key="ftp_exp")
+            st.caption("STATUS")
+            f1, f2 = st.columns(2)
+            injured = f1.checkbox("Injured", key="ftp_inj")
+            suspended = f2.checkbox("Suspended", key="ftp_susp")
+            loan = f1.checkbox("On loan", key="ftp_loan")
+            expiring = f2.checkbox("Expiring", key="ftp_exp")
+            captain = f1.checkbox("Captain", key="ftp_cap")
+            vice = f2.checkbox("Vice-captain", key="ftp_vice")
+            st.caption("SQUAD TYPE")
+            g1, g2 = st.columns(2)
+            academy = g1.checkbox("Academy graduate", key="ftp_acad")
+            homegrown = g2.checkbox("Homegrown", key="ftp_hg")
+            foreign = g1.checkbox("Foreign", key="ftp_for")
             sort = st.selectbox("Sort by", ["Shirt number", "Name", "Position", "Age"], key="ftp_sort")
 
+        status = ("injured" if injured else "suspended" if suspended else "loan" if loan else "")
         filters = {k: v for k, v in (("primary_position", position), ("nationality", nationality),
-                                     ("availability", availability), ("foot", foot),
-                                     ("status", status)) if v}
+                                     ("foot", foot), ("status", status)) if v}
         if min_age > 14:
             filters["min_age"] = min_age
         if max_age < 45:
             filters["max_age"] = max_age
         if expiring:
-            soon = (_dt.date.today() + _dt.timedelta(days=180)).isoformat()
-            filters["contract_expiring_before"] = soon
+            filters["contract_expiring_before"] = (_dt.date.today() + _dt.timedelta(days=180)).isoformat()
+        if captain:
+            filters["captain"] = True
+        if vice:
+            filters["vice_captain"] = True
         players = svc.search(shell.user, query=query, filters=filters or None,
                              workspace_id=shell.workspace_id)
+        # document-flag filters (Academy/U21/Women-ready) applied in Python
+        if academy:
+            players = [p for p in players if p.document.get("academy_graduate")]
+        if homegrown:
+            players = [p for p in players if p.document.get("homegrown")]
+        if foreign:
+            players = [p for p in players if p.document.get("foreign") or
+                       (p.nationality and not p.document.get("homegrown"))]
         players = self._sort(players, sort)
 
         with grid:
+            view = st.radio("View", ["Grid", "List", "Table"], horizontal=True, key="ftp_view",
+                            label_visibility="collapsed")
             if not players:
                 st.info("No players match. Add players or adjust filters.")
                 return
             index = svc.card_index(shell.user, players)
-            cols = st.columns(3)
-            for i, p in enumerate(players):
-                with cols[i % 3]:
-                    self._card(shell, svc, p, index.get(p.id, {}))
+            if view == "Table":
+                self._table(players, index)
+            elif view == "List":
+                for p in players:
+                    self._list_row(shell, svc, p, index.get(p.id, {}))
+            else:
+                cols = st.columns(3)
+                for i, p in enumerate(players):
+                    with cols[i % 3]:
+                        self._card(shell, svc, p, index.get(p.id, {}))
+
+    def _list_row(self, shell, svc, p, agg) -> None:
+        with st.container(border=True):
+            c = st.columns([1, 3, 2, 1])
+            photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
+            if photo:
+                c[0].image(photo, use_container_width=True)
+            else:
+                c[0].markdown(f"**{self._initials(p)}**")
+            num = f"#{p.shirt_number} " if p.shirt_number is not None else ""
+            c[1].markdown(f"**{num}{p.name}**  \n{p.primary_position or '—'} · "
+                          f"{age_from_dob(p.dob) or '—'} · {p.nationality or '—'}")
+            avail = "injured" if agg.get("injured") else p.availability
+            c[2].markdown(f"{_AVAIL_BADGE.get(avail, avail.title() or '—')}  \n"
+                          f"⏱ {agg.get('minutes', 0)} min · 📄 {agg.get('contract_end') or '—'}")
+            if c[3].button("Open", key=f"ftp_lopen_{p.id}"):
+                st.session_state[SEL] = p.id
+                st.rerun()
+
+    @staticmethod
+    def _table(players, index) -> None:
+        rows = []
+        for p in players:
+            agg = index.get(p.id, {})
+            rows.append({"#": p.shirt_number, "Name": p.name, "Pos": p.primary_position,
+                         "Age": age_from_dob(p.dob), "Nat": p.nationality, "Foot": p.foot,
+                         "Availability": ("Injured" if agg.get("injured") else p.availability),
+                         "Minutes": agg.get("minutes", 0), "Contract": agg.get("contract_end") or "—"})
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
     @staticmethod
     def _sort(players, sort):
@@ -248,7 +308,7 @@ class FirstTeamPlayersPage(Page):
         except Exception as exc:
             st.error(f"Could not create player: {exc}")
 
-    # ---------------------------------------------------------------- profile (foundation)
+    # ---------------------------------------------------------------- profile hub
     def _profile(self, shell, svc, player_id) -> None:
         if st.button("← Back to squad", key="ftp_prof_back"):
             st.session_state.pop(SEL, None)
@@ -271,27 +331,375 @@ class FirstTeamPlayersPage(Page):
             st.subheader(f"{num}{p.name}{cap}")
             st.caption(f"{p.primary_position or '—'} · {ov['age'] if ov['age'] is not None else '—'} yrs "
                        f"· {p.nationality or '—'} · {p.foot.title() or '—'} foot")
-            st.markdown(f"**{ov['availability']}**")
+            st.markdown(f"**{_AVAIL_BADGE.get('injured' if ov.get('injury') else p.availability, ov['availability'])}**")
 
-        k = st.columns(4)
+        tabs = st.tabs(["Overview", "Analysis", "Statistics", "Career", "Matches", "Training",
+                        "Medical", "Videos", "Reports", "Settings"])
+        with tabs[0]:
+            self._tab_overview(shell, svc, player_id, ov)
+        with tabs[1]:
+            self._tab_analysis(shell, svc, player_id, ov)
+        with tabs[2]:
+            self._tab_statistics(shell, svc, player_id)
+        with tabs[3]:
+            self._tab_career(shell, svc, player_id)
+        with tabs[4]:
+            self._tab_matches(shell, svc, player_id)
+        with tabs[5]:
+            self._tab_training(shell, svc, player_id)
+        with tabs[6]:
+            self._tab_medical(shell, svc, player_id)
+        with tabs[7]:
+            self._tab_videos(shell, svc, player_id)
+        with tabs[8]:
+            self._tab_reports(shell, svc, player_id)
+        with tabs[9]:
+            self._tab_settings(shell, svc, player_id, p)
+
+    # ---- Overview (live dashboard) --------------------------------------
+    def _tab_overview(self, shell, svc, player_id, ov) -> None:
         c = ov["contract"]
-        k[0].metric("Contract ends", (c.contract_end if c and c.contract_end else "—"))
-        k[1].metric("Career minutes", ov["career_totals"]["minutes"])
-        k[2].metric("Goals", ov["career_totals"]["goals"])
-        k[3].metric("Assists", ov["career_totals"]["assists"])
+        wl = ov["workload"]
+        r1 = st.columns(4)
+        r1[0].metric("Availability", ov["availability"])
+        r1[1].metric("Medical", ov["medical_status"])
+        r1[2].metric("Training", ov["training_status"])
+        r1[3].metric("Contract ends", (c.contract_end if c and c.contract_end else "—"))
+        r2 = st.columns(4)
+        r2[0].metric("Career minutes", ov["career_totals"]["minutes"])
+        r2[1].metric("Goals", ov["career_totals"]["goals"])
+        r2[2].metric("Assists", ov["career_totals"]["assists"])
+        r2[3].metric("Matches linked", ov["matches"])
+        st.subheader("Workload")
+        w = st.columns(4)
+        w[0].metric("Load 7d", wl["load_7d"]); w[1].metric("Load 28d", wl["load_28d"])
+        w[2].metric("Sprint 7d", wl["sprint_7d"]); w[3].metric("Sessions 7d", wl["sessions_7d"])
+        cc = st.columns(2)
+        with cc[0]:
+            st.subheader("Recent form")
+            form = ov["recent_form"]
+            if form:
+                st.dataframe([{"Availability": f["availability"] or "—", "Role": f["role"] or "—",
+                               "Minutes": f["minutes"]} for f in form],
+                             use_container_width=True, hide_index=True)
+            else:
+                st.caption("No linked matches yet.")
+        with cc[1]:
+            st.subheader("Fixtures")
+            lm = ov["last_match"]
+            st.markdown(f"**Last match:** {('%d min · %s' % (lm.minutes or 0, lm.role or '—')) if lm else '—'}")
+            st.markdown("**Next match:** — (fixtures feed not connected)")
         if ov.get("injury"):
-            st.warning(f"Injury: {ov['injury'].injury} — expected return "
+            st.warning(f"Current injury: {ov['injury'].injury} — expected return "
                        f"{ov['injury'].expected_return or 'TBD'}")
-        st.caption("Full profile tabs (Overview / Stats / Analysis / Charts / Reports / Medical / "
-                   "Training / Videos / Career / Matches / Settings) arrive in the P-Profile milestone.")
+        st.subheader("Timeline")
+        self._timeline(svc, shell, player_id)
 
-        if self._can_edit or self._can_delete:
-            with st.expander("Settings"):
-                if self._can_edit and st.button("Archive player", key="ftp_arch"):
-                    svc.archive_player(shell.user, player_id)
-                    st.session_state.pop(SEL, None)
-                    st.rerun()
-                if self._can_delete and st.button("Delete player", key="ftp_del"):
-                    svc.delete_player(shell.user, player_id)
-                    st.session_state.pop(SEL, None)
-                    st.rerun()
+    def _timeline(self, svc, shell, player_id) -> None:
+        events = svc.timeline(shell.user, player_id)
+        if not events:
+            st.caption("No timeline events yet.")
+            return
+        icon = {"signing": "✍️", "contract": "📄", "loan": "🔁", "injury": "🩹",
+                "recovery": "✅", "match": "⚽", "video": "🎬", "award": "🏆", "report": "📊"}
+        for e in events[:40]:
+            st.markdown(f"{icon.get(e['type'], '•')} **{e['date'] or '—'}** — {e['label']}")
+
+    # ---- Analysis (central hub, reuses existing modules) ----------------
+    def _tab_analysis(self, shell, svc, player_id, ov) -> None:
+        st.caption("Central analysis hub — every section reuses an existing module. Nothing is recomputed here.")
+        sections = [
+            ("Open Play", "Match event maps for this player.", "opponent_analysis", "opponent_analysis"),
+            ("Set Pieces", "Set-piece involvement & routines.", "set_piece_analysis", "set_piece_analysis"),
+            ("Opponent Analysis", "Opponent breakdowns.", "opponent_analysis", "opponent_analysis"),
+            ("Match Reports", "Match analysis pages.", "match_analysis", "match_analysis"),
+        ]
+        cols = st.columns(2)
+        for i, (title, desc, page_id, _) in enumerate(sections):
+            with cols[i % 2]:
+                with st.container(border=True):
+                    st.markdown(f"**{title}**")
+                    st.caption(desc)
+                    if st.button(f"Open {title}", key=f"an_{page_id}_{i}"):
+                        try:
+                            shell.goto(page_id)
+                        except Exception:
+                            st.info("Open this module from the navigation.")
+        st.subheader("Physical & GPS")
+        wl = ov["workload"]
+        g = st.columns(4)
+        g[0].metric("Load 7d", wl["load_7d"]); g[1].metric("Load 28d", wl["load_28d"])
+        g[2].metric("Sprint 7d", wl["sprint_7d"]); g[3].metric("HSR 7d", wl["hsr_7d"])
+        st.caption("GPS / physical figures are drawn from the Training tab data.")
+        st.subheader("Medical & Training")
+        st.markdown(f"Medical status: **{ov['medical_status']}** · Training status: **{ov['training_status']}**")
+
+    # ---- Statistics (reuse analytics + dynamic charts) ------------------
+    def _tab_statistics(self, shell, svc, player_id) -> None:
+        st.caption("Career statistics are the stored figures; charts render the linked match data through "
+                   "the existing visualization engine — the chart list is pulled live from the registry.")
+        career = svc.list_career(player_id)
+        if career:
+            st.dataframe([{"Season": c.season, "Competition": c.competition, "Apps": c.appearances,
+                           "Goals": c.goals, "Assists": c.assists, "Minutes": c.minutes,
+                           "Yellow": c.yellow, "Red": c.red} for c in career],
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("No career statistics recorded yet.")
+        st.subheader("Charts")
+        try:
+            catalog = svc.available_visualizations(shell.user)
+        except Exception as exc:
+            st.caption(f"Visualization registry unavailable: {exc}")
+            return
+        cats = sorted({v["category"] for v in catalog})
+        a, b, c = st.columns([2, 2, 1])
+        cat = a.selectbox("Category", cats, key="ftp_chart_cat")
+        in_cat = [v for v in catalog if v["category"] == cat]
+        viz = b.selectbox("Visualization", in_cat, format_func=lambda v: v["name"], key="ftp_chart_viz")
+        themes = ["opta_light", "opta_dark"]
+        theme = c.selectbox("Theme", themes, key="ftp_chart_theme")
+        if st.button("Render chart", key="ftp_chart_render"):
+            png = svc.render_player_chart(shell.user, player_id, viz["id"], theme_id=theme)
+            if png:
+                st.image(png, use_container_width=True)
+            else:
+                st.info("No linked match data to render. Link this player to a match dataset in the "
+                        "Matches tab, then render charts here.")
+
+    # ---- Career --------------------------------------------------------
+    def _tab_career(self, shell, svc, player_id) -> None:
+        career = svc.list_career(player_id)
+        if career:
+            st.dataframe([{"Season": c.season, "Club": c.club, "Competition": c.competition,
+                           "Apps": c.appearances, "Goals": c.goals, "Assists": c.assists,
+                           "Minutes": c.minutes} for c in career],
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("No career history yet.")
+        if self._can_edit:
+            with st.expander("Add career row"):
+                with st.form("ftp_career", clear_on_submit=True):
+                    a, b, c = st.columns(3)
+                    season = a.text_input("Season"); club = b.text_input("Club")
+                    comp = c.text_input("Competition")
+                    d, e, f, g = st.columns(4)
+                    apps = d.number_input("Apps", 0, 100, 0); goals = e.number_input("Goals", 0, 100, 0)
+                    ass = f.number_input("Assists", 0, 100, 0); mins = g.number_input("Minutes", 0, 10000, 0)
+                    if st.form_submit_button("Add"):
+                        svc.add_career(shell.user, player_id, season=season, club=club, competition=comp,
+                                       appearances=int(apps), goals=int(goals), assists=int(ass),
+                                       minutes=int(mins))
+                        st.rerun()
+
+    # ---- Matches (link-only) -------------------------------------------
+    def _tab_matches(self, shell, svc, player_id) -> None:
+        links = svc.list_match_links(player_id)
+        if links:
+            st.dataframe([{"Dataset": l.dataset_id or "—", "Match": l.match_id or "—",
+                           "Minutes": l.minutes, "Role": l.role, "Availability": l.availability}
+                          for l in links], use_container_width=True, hide_index=True)
+            st.caption("Match statistics come from the linked datasets — open Match Analysis to explore them.")
+        else:
+            st.info("No matches linked. Match data is never duplicated here — link an existing dataset below.")
+        if self._can_edit:
+            with st.expander("Link a match / dataset"):
+                with st.form("ftp_link", clear_on_submit=True):
+                    a, b = st.columns(2)
+                    dataset_id = a.text_input("Dataset id")
+                    minutes = b.number_input("Minutes", 0, 130, 90)
+                    role = st.text_input("Role / position")
+                    if st.form_submit_button("Link match"):
+                        svc.link_match(shell.user, player_id, dataset_id=dataset_id,
+                                       minutes=int(minutes), role=role)
+                        st.rerun()
+
+    # ---- Training ------------------------------------------------------
+    def _tab_training(self, shell, svc, player_id) -> None:
+        sessions = svc.list_training(player_id)
+        if sessions:
+            st.dataframe([{"Date": t.date, "Attendance": t.attendance, "Load": t.load, "RPE": t.rpe,
+                           "Sprint": t.sprint_distance, "HSR": t.hsr, "Wellness": t.wellness}
+                          for t in sessions], use_container_width=True, hide_index=True)
+        else:
+            st.info("No training sessions recorded (GPS/load can be imported in P-Import).")
+        if self._can_edit:
+            with st.expander("Add training session"):
+                with st.form("ftp_train", clear_on_submit=True):
+                    a, b, c = st.columns(3)
+                    date = a.text_input("Date (YYYY-MM-DD)")
+                    attendance = b.selectbox("Attendance", ["present", "partial", "absent", "rest"])
+                    load = c.number_input("Load", 0.0, 2000.0, 0.0)
+                    d, e, f = st.columns(3)
+                    rpe = d.number_input("RPE", 0.0, 10.0, 0.0)
+                    sprint = e.number_input("Sprint distance", 0.0, 2000.0, 0.0)
+                    wellness = f.number_input("Wellness", 0.0, 10.0, 0.0)
+                    if st.form_submit_button("Add"):
+                        svc.add_training(shell.user, player_id, date=date, attendance=attendance,
+                                         load=load, rpe=rpe, sprint_distance=sprint, wellness=wellness)
+                        st.rerun()
+
+    # ---- Medical (gated) -----------------------------------------------
+    def _tab_medical(self, shell, svc, player_id) -> None:
+        if not self._can_medical:
+            st.warning("You do not have permission to view medical records (VIEW_MEDICAL).")
+            return
+        records = svc.list_medical(shell.user, player_id)
+        if records:
+            st.dataframe([{"Date": m.date, "Injury": m.injury, "Type": m.injury_type,
+                           "Status": m.status, "Return": m.expected_return, "Severity": m.severity}
+                          for m in records], use_container_width=True, hide_index=True)
+        else:
+            st.success("No medical records — player has no logged injuries.")
+        if self._can_edit:
+            with st.expander("Log injury / update"):
+                with st.form("ftp_med", clear_on_submit=True):
+                    a, b = st.columns(2)
+                    injury = a.text_input("Injury"); itype = b.text_input("Type")
+                    c, d, e = st.columns(3)
+                    date = c.text_input("Date (YYYY-MM-DD)")
+                    ret = d.text_input("Expected return")
+                    status = e.selectbox("Status", ["open", "recovering", "returned"])
+                    notes = st.text_area("Medical notes", height=68)
+                    if st.form_submit_button("Save"):
+                        svc.add_medical(shell.user, player_id, injury=injury, injury_type=itype,
+                                        date=date, expected_return=ret, status=status,
+                                        availability="injured", medical_notes=notes)
+                        st.rerun()
+
+    # ---- Videos (grouped timeline) -------------------------------------
+    def _tab_videos(self, shell, svc, player_id) -> None:
+        videos = svc.list_videos(player_id)
+        groups = {"training": "Training", "match": "Matches", "tagged": "Tagged clips",
+                  "coach": "Coach clips", "opponent": "Opponent clips", "external": "External"}
+        by_kind = {k: [v for v in videos if v.kind == k] for k in groups}
+        for k, label in groups.items():
+            items = by_kind[k]
+            if items:
+                st.markdown(f"**{label}**")
+                for v in items:
+                    link = f"[{v.title or v.url}]({v.url})" if v.url else (v.title or v.filename)
+                    st.markdown(f"- 🎬 {link}")
+        if not videos:
+            st.info("No videos yet.")
+        if self._can_edit:
+            with st.expander("Add video"):
+                with st.form("ftp_vid", clear_on_submit=True):
+                    a, b = st.columns(2)
+                    kind = a.selectbox("Group", list(groups), format_func=lambda k: groups[k])
+                    title = b.text_input("Title")
+                    url = st.text_input("Link (YouTube / Hudl / Veo / …)")
+                    if st.form_submit_button("Add"):
+                        svc.add_video(shell.user, player_id, url=url, kind=kind, title=title)
+                        st.rerun()
+
+    # ---- Reports (ReportsManager) --------------------------------------
+    def _tab_reports(self, shell, svc, player_id) -> None:
+        data = svc.player_reports(shell.user, player_id)
+        if data["pinned"]:
+            st.markdown("**📌 Pinned**")
+            for r in data["pinned"]:
+                self._report_row(shell, svc, player_id, r)
+        st.markdown("**Recent**")
+        recent = [r for r in data["reports"] if not r["pinned"]]
+        if recent:
+            for r in recent[:10]:
+                self._report_row(shell, svc, player_id, r)
+        elif not data["pinned"]:
+            st.caption("No reports yet.")
+        if self._can_report:
+            a, b = st.columns(2)
+            if a.button("➕ Create report", key="ftp_rep_create"):
+                self._make_report(shell, svc, player_id, generate=False)
+            if b.button("⚡ Generate performance report", key="ftp_rep_gen"):
+                self._make_report(shell, svc, player_id, generate=True)
+
+    def _make_report(self, shell, svc, player_id, generate) -> None:
+        try:
+            rec = svc.create_player_report(shell.user, player_id, generate=generate)
+            st.session_state[OPEN_REPORT] = rec.id
+            st.success(f"{'Generated' if generate else 'Created'} “{rec.title}”. Open in Report Studio.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not create report: {exc}")
+
+    def _report_row(self, shell, svc, player_id, r) -> None:
+        c = st.columns([4, 1, 1])
+        c[0].markdown(f"📊 {r['title']}")
+        if c[1].button("Open", key=f"ftp_ropen_{r['id']}"):
+            st.session_state[OPEN_REPORT] = r["id"]
+            shell.goto("reports") if hasattr(shell, "goto") else None
+        if self._can_edit and c[2].button("📌" if not r["pinned"] else "Unpin",
+                                          key=f"ftp_rpin_{r['id']}"):
+            svc.pin_report(shell.user, player_id, r["id"], on=not r["pinned"])
+            st.rerun()
+
+    # ---- Settings ------------------------------------------------------
+    def _tab_settings(self, shell, svc, player_id, p) -> None:
+        if not self._can_edit:
+            st.caption("You need edit permission to change settings.")
+            return
+        st.markdown("**Squad flags**")
+        with st.form("ftp_flags"):
+            a, b, c = st.columns(3)
+            captain = a.checkbox("Captain", value=p.captain)
+            vice = b.checkbox("Vice-captain", value=p.vice_captain)
+            academy = c.checkbox("Academy graduate", value=bool(p.document.get("academy_graduate")))
+            d, e = st.columns(2)
+            homegrown = d.checkbox("Homegrown", value=bool(p.document.get("homegrown")))
+            foreign = e.checkbox("Foreign", value=bool(p.document.get("foreign")))
+            if st.form_submit_button("Save flags"):
+                svc.update_player(shell.user, player_id, captain=captain, vice_captain=vice)
+                svc.set_flags(shell.user, player_id, academy_graduate=academy, homegrown=homegrown,
+                              foreign=foreign)
+                st.success("Saved.")
+                st.rerun()
+
+        st.markdown("**Player image**")
+        up = st.file_uploader("Upload / replace image", type=["png", "jpg", "jpeg", "webp"],
+                              key="ftp_img_up")
+        if up is not None:
+            square = st.checkbox("Crop to square (centered)", value=True, key="ftp_img_crop")
+            zoom = st.slider("Zoom", 1.0, 2.5, 1.0, 0.1, key="ftp_img_zoom")
+            if st.button("Save image", key="ftp_img_save"):
+                data = self._process_image(up.getvalue(), square, zoom)
+                svc.add_image(shell.user, player_id, data, "image/png", kind="profile")
+                st.rerun()
+        if p.profile_image_id and st.button("Remove image", key="ftp_img_del"):
+            svc.update_player(shell.user, player_id, profile_image_id="")
+            st.rerun()
+
+        st.divider()
+        st.markdown("**Danger zone**")
+        a, b = st.columns(2)
+        if a.button("Archive player", key="ftp_arch2"):
+            svc.archive_player(shell.user, player_id)
+            st.session_state.pop(SEL, None)
+            st.rerun()
+        if self._can_delete and b.button("Delete player", key="ftp_del2"):
+            svc.delete_player(shell.user, player_id)
+            st.session_state.pop(SEL, None)
+            st.rerun()
+
+    @staticmethod
+    def _process_image(data: bytes, square: bool, zoom: float) -> bytes:
+        """Crop/zoom the uploaded image with Pillow (already a platform dependency).
+        Falls back to the original bytes if processing is unavailable."""
+        try:
+            import io
+            from PIL import Image
+            img = Image.open(io.BytesIO(data)).convert("RGB")
+            w, h = img.size
+            if zoom > 1.0:
+                cw, ch = int(w / zoom), int(h / zoom)
+                left, top = (w - cw) // 2, (h - ch) // 2
+                img = img.crop((left, top, left + cw, top + ch))
+                w, h = img.size
+            if square:
+                s = min(w, h)
+                img = img.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
+            out = io.BytesIO()
+            img.save(out, format="PNG")
+            return out.getvalue()
+        except Exception:
+            return data

@@ -30,6 +30,25 @@ from fap.players.repository import (
 _ALLOWED_IMAGE = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 
 
+def _player_report_sections(p: Player, ov: dict[str, Any]) -> list[Any]:
+    """Auto-generated player report sections, reusing the report models (no new
+    reporting engine). Kept module-level so it never imports at service import."""
+    from fap.reports.models import KPI, Section, Table
+    ct = ov["career_totals"]
+    profile = Section(
+        id="pl_profile", title=f"{p.name}",
+        subtitle=f"{p.primary_position or '—'} · {ov['age'] or '—'} yrs · {p.nationality or '—'}",
+        kpis=[KPI("Availability", ov["availability"]),
+              KPI("Career apps", str(ct["appearances"])), KPI("Goals", str(ct["goals"])),
+              KPI("Assists", str(ct["assists"])), KPI("Minutes", str(ct["minutes"]))])
+    wl = ov["workload"]
+    workload = Section(
+        id="pl_workload", title="Workload",
+        kpis=[KPI("Load 7d", str(wl["load_7d"])), KPI("Load 28d", str(wl["load_28d"])),
+              KPI("Sessions 7d", str(wl["sessions_7d"])), KPI("Sprint 7d", str(wl["sprint_7d"]))])
+    return [profile, workload]
+
+
 class PlayersService:
     def __init__(self, db: Any, *, permissions: Any, audit: Any, reports: Any = None,
                  images: Any = None, files: Any = None, workspaces: Any = None,
@@ -376,21 +395,197 @@ class PlayersService:
                           target_id=player.id, detail={"scout_player_id": scout_player_id})
         return player
 
+    # ================================================================ flags (Academy/Homegrown/…)
+    def set_flags(self, user: User, player_id: str, **flags: Any) -> None:
+        """Set boolean player flags (academy_graduate, homegrown, …) in the
+        player document without a schema change - future-proof for Academy/U21/
+        Women modules that read the same flags."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document)
+        doc.update({k: bool(v) for k, v in flags.items()})
+        p.document = doc
+        self.players.save(p)
+
     # ================================================================ profile bundle
     def overview(self, user: User, player_id: str) -> dict[str, Any]:
-        """Everything the Overview tab needs, assembled once."""
+        """A live Overview dashboard bundle, assembled once."""
         self._require(user, Capability.VIEW_PLAYERS)
         p = self._player_or_raise(player_id)
         contracts = self.contracts.list(player_id)
+        training = self.training.list(player_id)
+        links = self.match_links.list(player_id)
         can_medical = self.perms.can(user, str(Capability.VIEW_MEDICAL))
         medical = self.medical.list(player_id) if can_medical else []
+        injury = A.current_injury(medical) if can_medical else None
+        wl = A.workload(training)
         return {
             "player": p, "age": A.age_from_dob(p.dob),
             "contract": A.current_contract(contracts),
             "contract_expiring": A.contract_expiring(contracts),
-            "injury": A.current_injury(medical) if can_medical else None,
+            "injury": injury, "medical_status": ("Injured" if injury else "Fit"),
             "availability": A.availability_label(p.status, p.availability, medical),
-            "workload": A.workload(self.training.list(player_id)),
+            "workload": wl,
+            "training_status": ("In training" if wl["sessions_7d"] else "No recent session data"),
+            "recent_form": [{"minutes": l.minutes, "availability": l.availability, "role": l.role}
+                            for l in links[:5]],
+            "last_match": (links[0] if links else None),
+            "next_match": None,     # fixtures feed not wired; shown as "—"
             "career_totals": A.career_totals(self.career.list(player_id)),
-            "matches": len(self.match_links.list(player_id)),
+            "matches": len(links),
         }
+
+    # ================================================================ timeline
+    def timeline(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """A chronological player timeline: signing, contracts, loans, injuries,
+        recoveries, matches, reports, videos and awards - assembled from the data
+        already stored (no new tables)."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        p = self._player_or_raise(player_id)
+        events: list[dict[str, Any]] = []
+        if p.join_date:
+            events.append({"date": p.join_date, "type": "signing", "label": "Signed for the club"})
+        for c in self.contracts.list(player_id):
+            if c.contract_start:
+                events.append({"date": c.contract_start, "type": "contract", "label": "Contract start"})
+            if c.contract_end:
+                events.append({"date": c.contract_end, "type": "contract", "label": "Contract end"})
+            if c.loan:
+                events.append({"date": c.contract_start, "type": "loan",
+                               "label": f"Loan{' — ' + c.loan_club if c.loan_club else ''}"})
+        if self.perms.can(user, str(Capability.VIEW_MEDICAL)):
+            for m in self.medical.list(player_id):
+                if m.date:
+                    events.append({"date": m.date, "type": "injury", "label": f"Injury: {m.injury}"})
+                if m.status == "returned" and m.expected_return:
+                    events.append({"date": m.expected_return, "type": "recovery", "label": "Returned to play"})
+        for l in self.match_links.list(player_id):
+            events.append({"date": (l.created_at or "")[:10], "type": "match",
+                           "label": f"Match ({l.minutes or 0} min{', ' + l.role if l.role else ''})"})
+        for v in self.videos.list(player_id):
+            events.append({"date": (v.created_at or "")[:10], "type": "video",
+                           "label": f"Video: {v.title}"})
+        for a in (p.document.get("awards") or []):
+            events.append({"date": a.get("date", ""), "type": "award",
+                           "label": f"Award: {a.get('label', '')}"})
+        if self._reports is not None:
+            for rid in (p.document.get("report_ids") or []):
+                rec = self._reports.get(rid)
+                if rec:
+                    events.append({"date": (rec.created_at or "")[:10], "type": "report",
+                                   "label": f"Report: {rec.title}"})
+        return sorted(events, key=lambda e: e["date"] or "", reverse=True)
+
+    # ================================================================ charts (dynamic, reused engine)
+    def available_visualizations(self, user: User) -> list[dict[str, str]]:
+        """Every registered visualization, pulled LIVE from the visual registry
+        (never a hardcoded list). Grouped for the picker; rendered by the existing
+        engine over the player's event frame."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        from fap.visuals.base import load_builtin_visuals, visual_registry
+        load_builtin_visuals()
+        out = []
+        for cls in visual_registry:
+            try:
+                info = cls.info
+                out.append({"id": info.id, "name": info.name,
+                            "category": getattr(info, "category", "") or "General"})
+            except Exception:
+                continue
+        return sorted(out, key=lambda v: (v["category"], v["name"]))
+
+    def player_event_frame(self, user: User, player_id: str):
+        """Best-effort event frame for the player: concatenate the frames of the
+        datasets this player is linked to, filtered to their name. Reuses the
+        reports manager's dataset frame provider - no new data access."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        if self._reports is None:
+            return None
+        import pandas as pd
+        p = self._player_or_raise(player_id)
+        frames = []
+        for l in self.match_links.list(player_id):
+            if l.dataset_id:
+                f = self._reports.dataset_frame(l.dataset_id)
+                if f is not None and not f.empty:
+                    frames.append(f)
+        if not frames:
+            return None
+        frame = pd.concat(frames, ignore_index=True)
+        if "player" in frame.columns:
+            names = {p.name.lower(), p.last_name.lower(), p.display_name.lower()} - {""}
+            match = frame[frame["player"].astype(str).str.lower().isin(names)]
+            if not match.empty:
+                return match
+        return frame
+
+    def render_player_chart(self, user: User, player_id: str, viz_id: str, *,
+                            controls: dict[str, Any] | None = None, theme_id: str = "opta_light",
+                            dpi: int = 150) -> bytes | None:
+        """Render one registered visualization for the player through the EXISTING
+        engine (ReportsManager.preview_chart). Returns None when there is no
+        linked event data to render."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        frame = self.player_event_frame(user, player_id)
+        if frame is None or self._reports is None:
+            return None
+        try:
+            return self._reports.preview_chart(viz_id, frame, controls or {}, theme_id=theme_id, dpi=dpi)
+        except TypeError:
+            return self._reports.preview_chart(viz_id, frame, controls or {}, dpi=dpi)
+
+    # ================================================================ reports (Studio, document-linked)
+    def player_reports(self, user: User, player_id: str) -> dict[str, Any]:
+        self._require(user, Capability.VIEW_PLAYERS)
+        p = self._player_or_raise(player_id)
+        pinned = set(p.document.get("pinned_reports") or [])
+        out = []
+        if self._reports is not None:
+            for rid in (p.document.get("report_ids") or []):
+                rec = self._reports.get(rid)
+                if rec:
+                    out.append({"id": rid, "title": rec.title, "pinned": rid in pinned,
+                                "created_at": rec.created_at})
+        out.sort(key=lambda r: (not r["pinned"], r["created_at"]), reverse=False)
+        return {"reports": out, "pinned": [r for r in out if r["pinned"]]}
+
+    def create_player_report(self, user: User, player_id: str, *, generate: bool = False,
+                             title: str = ""):
+        """Create (or auto-generate) a player report through the EXISTING
+        ReportsManager and link it to the player via the player document. No
+        second report engine, no player_reports table needed."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        import pandas as pd
+        p = self._player_or_raise(player_id)
+        ov = self.overview(user, player_id)
+        title = title or f"{p.name} — {'Performance Report' if generate else 'Report'}"
+        cover = {"title": title, "subtitle": p.primary_position, "club": "",
+                 "analyst": user.name or user.email}
+        templates = [t.info.id for t in self._reports.templates()]
+        template = "blank" if "blank" in templates else (templates[0] if templates else "")
+        df = pd.DataFrame([{"player": p.name}])
+        record = self._reports.create(user, template=template, df=df, title=title,
+                                      workspace_id=p.workspace_id, cover=cover)
+        if generate:
+            sections = _player_report_sections(p, ov)
+            self._reports.update_blocks(user, record.id, lambda doc: (
+                doc.sections.extend(sections), doc.meta.update({"source": "players"})))
+        doc = dict(p.document)
+        doc.setdefault("report_ids", []).append(record.id)
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, "players.report.create", target_type="player", target_id=player_id,
+                          detail={"report_id": record.id, "generated": generate})
+        return record
+
+    def pin_report(self, user: User, player_id: str, report_id: str, on: bool = True) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document)
+        pinned = set(doc.get("pinned_reports") or [])
+        pinned.add(report_id) if on else pinned.discard(report_id)
+        doc["pinned_reports"] = sorted(pinned)
+        p.document = doc
+        self.players.save(p)

@@ -111,6 +111,8 @@ class PlayerRepository:
             params.append(str(f["contract_expiring_before"]))
         if f.get("captain"):
             clauses.append("captain = 1")
+        if f.get("vice_captain"):
+            clauses.append("vice_captain = 1")
         if favorite is not None:
             clauses.append("favorite = ?"); params.append(int(favorite))
         sql = (f"SELECT * FROM first_team_players WHERE {' AND '.join(clauses)} "
