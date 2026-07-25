@@ -420,11 +420,8 @@ class SetPieceAnalysisPage(Page):
 
     # ---------------------------------------------------------------- visuals (9.2)
     def _visuals(self, shell, svc) -> None:
-        if not svc.dashboard(shell.user)["total"]:
-            st.info("Add or import set pieces first, then generate visualizations here.")
-            return
-        st.caption("Professional set-piece visualizations — rendered through the platform "
-                   "visualization engine (theme-aware, high-resolution, Studio-embeddable).")
+        st.caption("Every visualization is validated before it renders — you always see why a map is "
+                   "empty, what data it needs and how to unlock it.")
         try:
             catalog = svc.visual_catalog(shell.user)
         except Exception as exc:
@@ -439,23 +436,143 @@ class SetPieceAnalysisPage(Page):
         theme = c.selectbox("Theme", themes, key="spv_theme")
         filt = self._filter_bar(shell, svc, key="viz")
 
-        if st.button("Render preview", type="primary", key="spv_render"):
-            try:
-                png = svc.render_visual(shell.user, viz["id"], filt, theme_id=theme, dpi=200,
-                                        fmt="png", workspace_id=shell.workspace_id)
-                st.image(png, use_container_width=True)
-                d1, d2 = st.columns(2)
-                d1.download_button("⬇ PNG (hi-res)", data=png, file_name=f"{viz['id']}.png",
-                                   mime="image/png", key="spv_dlpng")
-                d2.download_button(
-                    "⬇ PDF", key="spv_dlpdf", file_name=f"{viz['id']}.pdf", mime="application/pdf",
-                    data=svc.render_visual(shell.user, viz["id"], filt, theme_id=theme, dpi=300,
-                                           fmt="pdf", workspace_id=shell.workspace_id))
-            except Exception as exc:
-                st.error(f"Render failed: {exc}")
+        req = svc.viz_requirements(shell.user, viz["id"])
+        val = svc.viz_validate(shell.user, viz["id"], filt, workspace_id=shell.workspace_id)
+
+        main, side = st.columns([2, 1])
+        with side:
+            self._requirement_panel(req, val)
+        with main:
+            self._event_counter(val)
+            if val.can_render:
+                if st.button("Render preview", type="primary", key="spv_render"):
+                    try:
+                        png = svc.render_visual(shell.user, viz["id"], filt, theme_id=theme, dpi=200,
+                                                fmt="png", workspace_id=shell.workspace_id)
+                        st.image(png, use_container_width=True)
+                        d1, d2 = st.columns(2)
+                        d1.download_button("⬇ PNG (hi-res)", data=png, file_name=f"{viz['id']}.png",
+                                           mime="image/png", key="spv_dlpng")
+                        d2.download_button(
+                            "⬇ PDF", key="spv_dlpdf", file_name=f"{viz['id']}.pdf",
+                            mime="application/pdf",
+                            data=svc.render_visual(shell.user, viz["id"], filt, theme_id=theme,
+                                                   dpi=300, fmt="pdf", workspace_id=shell.workspace_id))
+                    except Exception as exc:
+                        st.error(f"Render failed: {exc}")
+            else:
+                self._empty_state(shell, svc, viz, req, val)
 
         st.divider()
-        self._add_to_report(shell, svc, viz, filt, theme)
+        if val.can_render:
+            self._add_to_report(shell, svc, viz, filt, theme)
+
+    # -- 9.6 validation UI --------------------------------------------------
+    @staticmethod
+    def _status_badge(val) -> None:
+        icon = {"READY": "✅", "NOT_ENOUGH_EVENTS": "🟡", "MISSING_DATA": "❌",
+                "UNSUPPORTED_DATA_SOURCE": "⛔"}.get(val.status, "❔")
+        label = {"READY": "Ready", "NOT_ENOUGH_EVENTS": "Not enough events",
+                 "MISSING_DATA": "Missing data",
+                 "UNSUPPORTED_DATA_SOURCE": "Unsupported data source"}.get(val.status, val.status)
+        st.markdown(f"### {icon} {label}")
+
+    def _requirement_panel(self, req, val) -> None:
+        with st.container(border=True):
+            st.caption(req.get("dataset_label", req.get("dataset", "")).upper()
+                       + f"  ·  Tier {req.get('tier', '?')}")
+            self._status_badge(val)
+            q = val.quality
+            qcolor = "🟢" if q >= 85 else ("🟡" if q >= 60 else ("🟠" if q >= 40 else "🔴"))
+            st.markdown(f"**Data quality {qcolor} {q}%** — {val.quality_label}")
+
+            st.markdown("**Requirements**")
+            st.markdown(self._req_line("Set piece events", val.coverage["coordinates"] >= 0))
+            st.markdown(self._req_line("Event coordinates", val.coverage["coordinates"] > 0))
+            if req.get("needs_positions"):
+                st.markdown(self._req_line("Player positions", val.coverage["positions"] > 0))
+            if req.get("needs_goalkeeper"):
+                st.markdown(self._req_line("Goalkeeper position", val.coverage["goalkeeper"] > 0))
+            if req.get("needs_contacts"):
+                st.markdown(self._req_line("Contact events", val.coverage["contacts"] > 0))
+            if req.get("needs_penalty"):
+                st.markdown(self._req_line("Penalty detail", val.coverage["penalty"] > 0))
+
+            st.markdown(f"**Minimum:** {req.get('min_events', 0)} tagged events")
+            st.markdown("**Coverage**")
+            self._coverage_bars(val)
+            st.markdown("**Works with**")
+            st.markdown(self._sources_md(req))
+            if val.reason:
+                st.caption("Reason — " + val.reason)
+
+    @staticmethod
+    def _req_line(label, ok) -> str:
+        return f"{'✔' if ok else '❌'} {label}"
+
+    @staticmethod
+    def _coverage_bars(val) -> None:
+        labels = {"coordinates": "Coordinates", "contacts": "Contacts", "positions": "Player positions",
+                  "goalkeeper": "Goalkeeper", "penalty": "Penalty detail"}
+        for axis, lbl in labels.items():
+            need = val.coverage_required.get(axis)
+            pct = int(round(val.coverage.get(axis, 0) * 100))
+            st.caption(f"{lbl}{' ·  required' if need else ''} — {pct}%")
+            st.progress(min(1.0, val.coverage.get(axis, 0)))
+        st.caption("Tracking — unavailable (not wired)")
+
+    @staticmethod
+    def _sources_md(req) -> str:
+        icons = {"yes": "✓", "planned": "⏳", "no": "✗"}
+        labels = {"csv": "CSV", "excel": "Excel", "json": "JSON", "manual": "Manual tagging",
+                  "tracking": "Tracking", "statsbomb": "StatsBomb Open"}
+        src = req.get("sources", {})
+        return "  \n".join(f"{icons.get(src.get(k, 'no'), '✗')} {labels[k]}" for k in
+                           ("csv", "excel", "json", "manual", "tracking", "statsbomb"))
+
+    @staticmethod
+    def _event_counter(val) -> None:
+        c1, c2 = st.columns(2)
+        c1.metric("Events available", val.events_available)
+        c2.metric("Minimum required", val.events_required)
+        st.progress(val.progress, text=f"{int(val.progress * 100)}% of minimum")
+
+    def _empty_state(self, shell, svc, viz, req, val) -> None:
+        with st.container(border=True):
+            st.subheader("No render available")
+            st.markdown(f"**Reason:** {val.reason or 'Required data is not present.'}")
+            if val.missing_tags:
+                st.markdown("**Missing:** " + ", ".join(val.missing_tags))
+            if val.missing_columns:
+                st.markdown("**Missing columns**")
+                st.code("\n".join(val.missing_columns), language="text")
+            if val.guidance:
+                st.markdown("**To unlock this visualization**")
+                for i, step in enumerate(val.guidance, 1):
+                    st.markdown(f"{i}. {step}")
+            with st.expander("Validation report"):
+                st.json(val.report)
+
+        if self._can_edit:
+            d1, d2 = st.columns([2, 1])
+            if d1.button(f"⚡ Generate demo dataset for “{viz['name']}”", key="spv_demo",
+                         type="primary"):
+                try:
+                    n = svc.generate_viz_demo(shell.user, viz["id"], workspace_id=shell.workspace_id)
+                    st.success(f"Created {n} demo set pieces satisfying this visualization. "
+                               "Re-open the tab to render.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Demo generation failed: {exc}")
+            if d2.button("Clear demo data", key="spv_demo_clear"):
+                try:
+                    removed = svc.clear_viz_demo(shell.user, workspace_id=shell.workspace_id)
+                    st.info(f"Removed {removed} demo set pieces.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Clear failed: {exc}")
+        else:
+            st.caption("Ask an editor to tag the required data or generate a demo dataset.")
 
     def _add_to_report(self, shell, svc, viz, filt, theme) -> None:
         if not (self._can_edit and self._can_report):

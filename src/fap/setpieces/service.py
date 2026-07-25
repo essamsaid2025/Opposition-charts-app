@@ -401,6 +401,61 @@ class SetPieceService:
                         "category": getattr(viz, "sp_category", viz.info.category)})
         return sorted(out, key=lambda v: (v["category"], v["name"]))
 
+    # -- requirements / validation / demo (9.6) ---------------------------
+    def viz_requirements(self, user: User, viz_id: str) -> dict[str, Any]:
+        """Requirement metadata for a visualization (single source of truth):
+        dataset, tier, minimum events, required/optional/derived inputs, needs-*
+        flags and per-source support."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.visuals.base import visual_registry
+        from fap.visuals.setpieces import load_setpiece_visuals
+        from fap.setpieces.viz_requirements import requirements_for
+        load_setpiece_visuals()
+        if viz_id not in visual_registry:
+            return requirements_for(viz_id)
+        viz = visual_registry.create(viz_id)
+        return requirements_for(viz_id, name=viz.info.name,
+                                category=getattr(viz, "sp_category", viz.info.category),
+                                kind=getattr(viz, "sp_dataset", ""))
+
+    def viz_validate(self, user: User, viz_id: str, filt: SetPieceFilter | None = None, *,
+                     workspace_id: str | None = None):
+        """Run the validation layer BEFORE rendering. Returns a ValidationResult
+        (status, event counter, coverage, missing columns/tags, quality, report)."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces.viz_validation import validate
+        req = self.viz_requirements(user, viz_id)
+        return validate(self, user, viz_id, req, filt, workspace_id)
+
+    def generate_viz_demo(self, user: User, viz_id: str, *,
+                          workspace_id: str | None = None) -> int:
+        """Create the minimum realistic demo data that satisfies ONLY this
+        visualization's requirements (via the existing tagging services)."""
+        self._require(user, Capability.EDIT_SETPIECE)
+        from fap.visuals.base import visual_registry
+        from fap.visuals.setpieces import load_setpiece_visuals
+        from fap.setpieces import viz_demo
+        load_setpiece_visuals()
+        if viz_id not in visual_registry:
+            raise ValueError(f"unknown visualization {viz_id!r}")
+        kind = getattr(visual_registry.create(viz_id), "sp_dataset", "")
+        created = viz_demo.generate(self, user, kind, workspace_id=workspace_id)
+        self.audit.record(user, "setpiece.viz.demo", target_type="visualization",
+                          target_id=viz_id, detail={"kind": kind, "created": created})
+        return created
+
+    def clear_viz_demo(self, user: User, *, workspace_id: str | None = None) -> int:
+        """Remove every demo-tagged set piece (and its cascaded positions/contacts)."""
+        self._require(user, Capability.EDIT_SETPIECE)
+        removed = 0
+        for s in self.set_pieces.search(workspace_id=workspace_id, limit=100000):
+            if "demo" in (s.tags or []):
+                self.set_pieces.delete(s.id)
+                removed += 1
+        self.audit.record(user, "setpiece.viz.demo_clear", target_type="visualization",
+                          target_id="*", detail={"removed": removed})
+        return removed
+
     def render_visual(self, user: User, viz_id: str, filt: SetPieceFilter | None = None, *,
                       controls: dict[str, Any] | None = None, theme_id: str = "opta_light",
                       dpi: int = 200, fmt: str = "png", workspace_id: str | None = None) -> bytes:
