@@ -1,0 +1,30 @@
+match,date,competition,team,opponent,venue,set_piece,phase,perspective,taker,foot,side,delivery,height,length,minute,half,start_x,start_y,end_x,end_y,players_in_box,first_contact,outcome,shot,goal,xg,second_ball,marking,video
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,12,1,100,100,95,44,6,attack,goal,yes,yes,0.34,attack,,https://youtube.com/watch?v=hc001
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,27,1,100,100,96,45,6,attack,shot,yes,no,0.12,defence,,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,41,1,100,100,94,46,5,attack,clearance,no,no,,defence,,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,attacking,own,T. Adeyemi,right,left,Out-swinger,high,long,58,2,100,0,93,57,5,attack,shot,yes,no,0.09,attack,,https://hudl.com/clip/hc002
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,attacking,own,T. Adeyemi,right,left,Out-swinger,high,long,73,2,100,0,92,58,4,defence,lost,no,no,,defence,,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Free Kick,attacking,own,M. Silva,left,central,Driven,low,long,34,1,72,40,88,48,5,attack,shot,yes,no,0.08,attack,,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Throw-in,attacking,own,K. Novak,right,right,Long,ground,long,66,2,84,2,90,30,3,attack,retained,no,no,,attack,,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,defending,own,,,,,,,19,1,100,100,95,52,4,defence,clearance,no,no,,defence,zonal,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Corner,defending,own,,,,,,,52,2,100,0,94,50,4,attack,shot,yes,no,0.10,attack,zonal,
+Harbor City vs Rivertown,2026-02-01,Premier League,Harbor City,Rivertown,home,Penalty,attacking,own,M. Silva,left,central,Placed,low,short,80,2,88,50,100,50,1,attack,goal,yes,yes,0.79,attack,,https://youtube.com/watch?v=hc003
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,8,1,100,100,95,45,6,attack,shot,yes,no,0.15,attack,,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,23,1,100,100,96,44,6,attack,goal,yes,yes,0.28,attack,,https://hudl.com/clip/hc004
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,49,2,100,100,80,50,3,defence,blocked,no,no,,defence,,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Corner,attacking,own,T. Adeyemi,right,left,Out-swinger,high,long,61,2,100,0,93,58,5,attack,off_target,yes,no,0.06,attack,,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Free Kick,attacking,own,T. Adeyemi,right,central,Lofted,high,long,37,1,70,55,90,52,6,attack,goal,yes,yes,0.22,attack,,https://youtube.com/watch?v=hc005
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Free Kick,defending,own,,,,,,,44,2,30,45,88,50,5,defence,clearance,no,no,,man,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Throw-in,attacking,own,K. Novak,right,left,Long,ground,long,71,2,84,98,90,72,3,attack,shot,yes,no,0.05,defence,,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Corner,defending,own,,,,,,,15,1,100,100,95,48,4,defence,retained,no,no,,man,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Corner,defending,own,,,,,,,83,2,100,0,96,52,5,attack,goal,yes,yes,0.31,attack,man,
+Harbor City vs Seaford,2026-02-08,Premier League,Harbor City,Seaford,away,Penalty,attacking,own,M. Silva,left,central,Placed,low,short,55,2,88,50,100,50,1,attack,saved,yes,no,0.79,defence,,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,6,1,100,100,95,44,7,attack,goal,yes,yes,0.30,attack,,https://youtube.com/watch?v=hc006
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,29,1,100,100,94,45,6,attack,shot,yes,no,0.14,attack,,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Corner,attacking,own,M. Silva,left,right,In-swinger,high,long,47,2,100,100,89,50,5,attack,retained,no,no,,attack,,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Corner,attacking,own,T. Adeyemi,right,left,Out-swinger,high,long,64,2,100,0,92,57,5,attack,shot,yes,no,0.11,defence,,https://hudl.com/clip/hc007
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Short Corner,attacking,own,M. Silva,left,right,Short,ground,short,78,2,100,100,90,40,2,attack,shot,yes,no,0.07,attack,,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Free Kick,attacking,own,M. Silva,left,central,Driven,low,long,33,1,73,42,88,49,5,attack,clearance,no,no,,defence,,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Throw-in,attacking,own,K. Novak,right,right,Long,ground,long,69,2,84,4,91,28,3,attack,retained,no,no,,attack,,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Corner,defending,own,,,,,,,21,1,100,100,95,50,4,defence,clearance,no,no,,zonal,
+Harbor City vs Kingsbridge,2026-02-15,FA Cup,Harbor City,Kingsbridge,home,Penalty,attacking,own,T. Adeyemi,right,central,Power,high,short,90,2,88,50,100,50,1,attack,goal,yes,yes,0.79,attack,,https://youtube.com/watch?v=hc008
