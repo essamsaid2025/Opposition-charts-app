@@ -165,11 +165,11 @@ _add(DatasetSpec("wall", "Free-kick wall", "B", 3, ("player_x", "player_y", "tea
                  guidance=_POS_GUIDE, demo="wall"))
 # ---- Tier B · goalkeeper ----------------------------------------------------
 _add(DatasetSpec("gk_start", "Goalkeeper position", "B", 5, ("gk_x", "gk_y"),
-                 needs_positions=True, needs_goalkeeper=True, sources=_src("B", positional=True),
+                 needs_goalkeeper=True, sources=_src("B", positional=True),
                  reason="Where the keeper starts / commands. Needs the goalkeeper position tagged.",
                  guidance=_GK_GUIDE, demo="gk"))
 _add(DatasetSpec("gk_move", "Goalkeeper movement", "B", 5, ("gk_x", "gk_y", "moment"),
-                 derived_inputs=("vector",), needs_positions=True, needs_goalkeeper=True,
+                 derived_inputs=("vector",), needs_goalkeeper=True,
                  sources=_src("B", positional=True),
                  reason="Keeper movement before→at delivery. Needs the GK tagged at ≥2 moments.",
                  guidance=_GK_GUIDE, demo="gk_move"))

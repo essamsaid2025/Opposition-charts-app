@@ -60,6 +60,36 @@ def _frac(part: int, whole: int) -> float:
     return round(part / whole, 3) if whole else 0.0
 
 
+def coverage_counts(svc: Any, user: Any, filt: Any, workspace_id: str | None) -> dict[str, Any]:
+    """Live per-axis counts + fractions over the filtered set pieces (count and
+    inspect only). Powers the data-health dashboard, live status and dependency
+    trees. Reuses the service's existing reads - no new analytics."""
+    sps = svc._filtered(user, filt, workspace_id)
+    n = len(sps)
+    positions = svc._positions_of(sps) if n else []
+    contacts = svc._contacts_of(sps) if n else []
+    pos_ids = {p.set_piece_id for p in positions if p.x is not None}
+    gk_ids = {p.set_piece_id for p in positions if p.is_gk and p.x is not None}
+    con_ids = {c.set_piece_id for c in contacts}
+    coord = sum(1 for s in sps if s.end_x is not None and s.end_y is not None)
+    outcome = sum(1 for s in sps if s.outcome)
+    pens = [s for s in sps if s.type == "penalty"]
+    pen_detail = sum(1 for s in pens if (s.document or {}).get("placement")
+                     or (s.document or {}).get("gk_dive"))
+
+    def axis(k, whole):
+        return {"n": k, "pct": _frac(k, whole)}
+
+    return {
+        "events": n,
+        "coordinates": axis(coord, n), "outcome": axis(outcome, n),
+        "contacts": axis(len(con_ids), n), "positions": axis(len(pos_ids), n),
+        "goalkeeper": axis(len(gk_ids), n),
+        "penalty": {"n": pen_detail, "pct": _frac(pen_detail, len(pens)) if pens else 0.0,
+                    "total": len(pens)},
+    }
+
+
 def _pen_has(sp: Any, field: str) -> bool:
     """Does a penalty carry the field a dataset requires?"""
     if field == "outcome":

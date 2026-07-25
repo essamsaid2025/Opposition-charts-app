@@ -420,8 +420,8 @@ class SetPieceAnalysisPage(Page):
 
     # ---------------------------------------------------------------- visuals (9.2)
     def _visuals(self, shell, svc) -> None:
-        st.caption("Every visualization is validated before it renders — you always see why a map is "
-                   "empty, what data it needs and how to unlock it.")
+        st.caption("Every visualization tells you exactly what it needs, why it can’t render, how complete "
+                   "your data is and how to fix it — no empty pitches, no guesswork.")
         try:
             catalog = svc.visual_catalog(shell.user)
         except Exception as exc:
@@ -436,14 +436,19 @@ class SetPieceAnalysisPage(Page):
         theme = c.selectbox("Theme", themes, key="spv_theme")
         filt = self._filter_bar(shell, svc, key="viz")
 
+        self._health_dashboard(shell, svc, filt)
+
         req = svc.viz_requirements(shell.user, viz["id"])
         val = svc.viz_validate(shell.user, viz["id"], filt, workspace_id=shell.workspace_id)
+        guide = svc.viz_guidance(shell.user, viz["id"], filt, workspace_id=shell.workspace_id)
 
         main, side = st.columns([2, 1])
         with side:
             self._requirement_panel(req, val)
+            self._info_card(guide)
         with main:
             self._event_counter(val)
+            self._dependency_tree(guide)
             if val.can_render:
                 if st.button("Render preview", type="primary", key="spv_render"):
                     try:
@@ -462,10 +467,82 @@ class SetPieceAnalysisPage(Page):
                         st.error(f"Render failed: {exc}")
             else:
                 self._empty_state(shell, svc, viz, req, val)
+            self._example_and_template(shell, svc, viz, guide)
+            self._learn_more(guide)
 
         st.divider()
         if val.can_render:
             self._add_to_report(shell, svc, viz, filt, theme)
+
+    # -- 9.6.1 guidance UI --------------------------------------------------
+    def _health_dashboard(self, shell, svc, filt) -> None:
+        health = svc.dataset_health(shell.user, filt, workspace_id=shell.workspace_id)
+        match = svc.match_coverage(shell.user, filt, workspace_id=shell.workspace_id)
+        with st.container(border=True):
+            top = st.columns([3, 2])
+            top[0].markdown("**Dataset health**")
+            top[1].markdown(f"**Report suitability: {match['score']}% — {match['label']}**")
+            cols = st.columns(6)
+            cols[0].metric("Events", health["events"])
+            for col, axis, lbl in zip(cols[1:], ("coordinates", "contacts", "positions",
+                                                 "goalkeeper", "penalty"),
+                                      ("Coordinates", "Contacts", "Positions", "Goalkeeper", "Penalty")):
+                col.metric(lbl, f"{int(health[axis]['pct'] * 100)}%")
+            if match["missing"]:
+                st.caption("Missing for a complete report: " + ", ".join(match["missing"]))
+
+    def _dependency_tree(self, guide) -> None:
+        tree = guide.get("dependency_tree", [])
+        if not tree:
+            return
+        with st.container(border=True):
+            st.caption("DEPENDENCY TREE")
+            parts = []
+            for node in tree:
+                icon = "🟢" if node["status"] == "ok" else "🔴"
+                parts.append(f"{icon} {node['label']}")
+            st.markdown("  →  ".join(parts))
+
+    @staticmethod
+    def _info_card(guide) -> None:
+        info = guide.get("info", {})
+        with st.container(border=True):
+            st.caption("VISUALIZATION INFO")
+            st.markdown(
+                f"**Difficulty:** {info.get('difficulty', '—')}  \n"
+                f"**Tagging tier:** {info.get('tier', '—')}  \n"
+                f"**Est. tagging time:** {info.get('time', '—')}  \n"
+                f"**Expected accuracy:** {info.get('accuracy', '—')}")
+
+    def _example_and_template(self, shell, svc, viz, guide) -> None:
+        with st.expander("Example data & download template"):
+            st.caption("Expected data structure (instructional — realistic values)")
+            cols = guide["example_columns"]
+            st.dataframe([dict(zip(cols, row)) for row in guide["example_rows"]],
+                         use_container_width=True, hide_index=True)
+            try:
+                csv = svc.viz_template_csv(shell.user, viz["id"])
+                st.download_button("⬇ Download template CSV (only this viz’s columns)", data=csv,
+                                   file_name=f"{viz['id']}_template.csv", mime="text/csv",
+                                   key=f"tpl_{viz['id']}")
+            except Exception:
+                st.caption("Template unavailable.")
+
+    @staticmethod
+    def _learn_more(guide) -> None:
+        L = guide.get("learn", {})
+        with st.expander("Learn more — what it shows & how coaches use it"):
+            st.markdown(f"**What does this show?**  \n{L.get('what', '')}")
+            st.markdown(f"**How do coaches use it?**  \n{L.get('coaches', '')}")
+            st.markdown(f"**Why is it useful?**  \n{L.get('why', '')}")
+            if L.get("questions"):
+                st.markdown("**Typical tactical questions**")
+                for q in L["questions"]:
+                    st.markdown(f"- {q}")
+            if L.get("mistakes"):
+                st.markdown("**Common tagging mistakes**")
+                for m in L["mistakes"]:
+                    st.markdown(f"- {m}")
 
     # -- 9.6 validation UI --------------------------------------------------
     @staticmethod
@@ -539,10 +616,22 @@ class SetPieceAnalysisPage(Page):
 
     def _empty_state(self, shell, svc, viz, req, val) -> None:
         with st.container(border=True):
-            st.subheader("No render available")
-            st.markdown(f"**Reason:** {val.reason or 'Required data is not present.'}")
-            if val.missing_tags:
-                st.markdown("**Missing:** " + ", ".join(val.missing_tags))
+            st.subheader("Why can’t this render?")
+            st.markdown(f"{val.reason or 'Required data is not present.'}")
+            # required checklist with live counts (Part 2)
+            st.markdown("**This visualization requires**")
+            st.markdown(self._req_line("Delivery coordinates", val.coverage["coordinates"] > 0))
+            if req.get("needs_positions"):
+                st.markdown(self._req_line("Player positions", val.coverage["positions"] > 0))
+            if req.get("needs_goalkeeper"):
+                st.markdown(self._req_line("Goalkeeper position", val.coverage["goalkeeper"] > 0))
+            if req.get("needs_contacts"):
+                st.markdown(self._req_line("Contact events", val.coverage["contacts"] > 0))
+            if req.get("needs_penalty"):
+                st.markdown(self._req_line("Penalty detail", val.coverage["penalty"] > 0))
+            m, cur = st.columns(2)
+            m.metric("Minimum required", val.events_required)
+            cur.metric("Current", val.events_available)
             if val.missing_columns:
                 st.markdown("**Missing columns**")
                 st.code("\n".join(val.missing_columns), language="text")
@@ -553,26 +642,45 @@ class SetPieceAnalysisPage(Page):
             with st.expander("Validation report"):
                 st.json(val.report)
 
-        if self._can_edit:
-            d1, d2 = st.columns([2, 1])
-            if d1.button(f"⚡ Generate demo dataset for “{viz['name']}”", key="spv_demo",
-                         type="primary"):
-                try:
-                    n = svc.generate_viz_demo(shell.user, viz["id"], workspace_id=shell.workspace_id)
-                    st.success(f"Created {n} demo set pieces satisfying this visualization. "
-                               "Re-open the tab to render.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Demo generation failed: {exc}")
-            if d2.button("Clear demo data", key="spv_demo_clear"):
-                try:
-                    removed = svc.clear_viz_demo(shell.user, workspace_id=shell.workspace_id)
-                    st.info(f"Removed {removed} demo set pieces.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Clear failed: {exc}")
-        else:
+        if not self._can_edit:
             st.caption("Ask an editor to tag the required data or generate a demo dataset.")
+            return
+
+        # Part 13 — targeted "generate the one missing component" when events exist
+        health = svc.dataset_health(shell.user, None, workspace_id=shell.workspace_id)
+        targeted = []
+        if health["events"] > 0:
+            if req.get("needs_positions") and health["positions"]["n"] == 0:
+                targeted.append(("Generate missing position data", svc.generate_missing_positions, "gm_pos"))
+            if req.get("needs_goalkeeper") and health["goalkeeper"]["n"] == 0:
+                targeted.append(("Generate missing goalkeeper data", svc.generate_missing_goalkeeper, "gm_gk"))
+            if req.get("needs_contacts") and health["contacts"]["n"] == 0:
+                targeted.append(("Generate missing contact data", svc.generate_missing_contacts, "gm_con"))
+        for label, fn, key in targeted:
+            if st.button(f"➕ {label} (adds to existing set pieces)", key=key):
+                try:
+                    n = fn(shell.user, None, workspace_id=shell.workspace_id)
+                    st.success(f"Augmented {n} set pieces. Reopen the tab to render.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Failed: {exc}")
+
+        d1, d2 = st.columns([2, 1])
+        if d1.button(f"⚡ Generate full demo dataset for “{viz['name']}”", key="spv_demo",
+                     type="primary"):
+            try:
+                n = svc.generate_viz_demo(shell.user, viz["id"], workspace_id=shell.workspace_id)
+                st.success(f"Created {n} realistic demo set pieces. Reopen the tab to render.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Demo generation failed: {exc}")
+        if d2.button("Clear demo data", key="spv_demo_clear"):
+            try:
+                removed = svc.clear_viz_demo(shell.user, workspace_id=shell.workspace_id)
+                st.info(f"Removed {removed} demo records.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Clear failed: {exc}")
 
     def _add_to_report(self, shell, svc, viz, filt, theme) -> None:
         if not (self._can_edit and self._can_report):
@@ -689,12 +797,26 @@ class SetPieceAnalysisPage(Page):
         except Exception as exc:
             st.error(f"Could not read the file: {exc}")
             return
-        st.write(f"**{preview['rows']}** rows · detected **{len(preview['mapping'])}** fields")
-        if preview["mapping"]:
-            st.json(preview["mapping"], expanded=False)
-        else:
+        # intelligent column detection (Part 5/6) — auto-mapped, shown for confidence
+        st.write(f"**{preview['rows']}** rows · **{len(preview['mapping'])}** columns auto-detected "
+                 "and mapped")
+        detected = preview["mapping"]
+        mapped_cols = set(detected.values())
+        unmapped = [c for c in preview["columns"] if c not in mapped_cols]
+        m1, m2 = st.columns(2)
+        with m1:
+            st.caption("Detected → mapped (applied automatically)")
+            st.dataframe([{"Your column": v, "→ maps to": k} for k, v in detected.items()]
+                         or [{"Your column": "—", "→ maps to": "—"}],
+                         use_container_width=True, hide_index=True)
+        with m2:
+            st.caption("Unmapped columns (ignored)")
+            st.dataframe([{"Column": c} for c in unmapped] or [{"Column": "none"}],
+                         use_container_width=True, hide_index=True)
+        if not detected:
             st.warning("No known columns detected — rows will use the defaults above. "
-                       "Expected columns include type, phase, team, taker, end_x, end_y, outcome…")
+                       "Expected columns include type, team, taker, end_x, end_y, outcome…")
+
         if st.button("Import file", type="primary"):
             result = svc.import_file(shell.user, data, up.name, perspective=perspective,
                                      phase=phase, workspace_id=shell.workspace_id)
@@ -704,6 +826,30 @@ class SetPieceAnalysisPage(Page):
                 with st.expander(f"{len(result.errors)} row issue(s)"):
                     for err in result.errors[:50]:
                         st.text(err)
+            self._compatibility_scanner(shell, svc)
+
+    def _compatibility_scanner(self, shell, svc) -> None:
+        """Part 9 — immediately after import, show what the dataset can generate."""
+        st.markdown("#### This dataset can generate")
+        try:
+            compat = svc.dataset_compatibility(shell.user, workspace_id=shell.workspace_id)
+        except Exception as exc:
+            st.caption(f"Compatibility scan unavailable: {exc}")
+            return
+        ready = [c for c in compat if c["can_render"]]
+        blocked = [c for c in compat if not c["can_render"]]
+        st.caption(f"✓ {len(ready)} of {len(compat)} visualizations are renderable from this dataset")
+        cols = st.columns(2)
+        with cols[0]:
+            st.markdown("**✓ Ready now**")
+            st.dataframe([{"Visualization": c["name"], "Category": c["category"]} for c in ready[:60]]
+                         or [{"Visualization": "none", "Category": "—"}],
+                         use_container_width=True, hide_index=True)
+        with cols[1]:
+            st.markdown("**✗ Needs more data**")
+            st.dataframe([{"Visualization": c["name"], "Reason": c["reason"]} for c in blocked[:60]]
+                         or [{"Visualization": "none", "Reason": "—"}],
+                         use_container_width=True, hide_index=True)
 
     # ---------------------------------------------------------------- browse
     def _browse(self, shell, svc) -> None:

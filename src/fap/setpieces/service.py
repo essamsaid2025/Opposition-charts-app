@@ -445,16 +445,142 @@ class SetPieceService:
         return created
 
     def clear_viz_demo(self, user: User, *, workspace_id: str | None = None) -> int:
-        """Remove every demo-tagged set piece (and its cascaded positions/contacts)."""
+        """Remove demo-tagged set pieces (cascading their children) AND any
+        demo-marked positions/contacts added to real set pieces by
+        generate_missing_*."""
         self._require(user, Capability.EDIT_SETPIECE)
         removed = 0
         for s in self.set_pieces.search(workspace_id=workspace_id, limit=100000):
             if "demo" in (s.tags or []):
                 self.set_pieces.delete(s.id)
                 removed += 1
+                continue
+            for p in self.positions.list(s.id):
+                if (p.document or {}).get("demo"):
+                    self.positions.delete(p.id)
+                    removed += 1
+            for c in self.contacts.list(s.id):
+                if (c.document or {}).get("demo"):
+                    self.contacts.delete(c.id)
+                    removed += 1
         self.audit.record(user, "setpiece.viz.demo_clear", target_type="visualization",
                           target_id="*", detail={"removed": removed})
         return removed
+
+    # -- guidance / health / compatibility / missing (9.6.1) --------------
+    def dataset_health(self, user: User, filt: SetPieceFilter | None = None, *,
+                       workspace_id: str | None = None) -> dict[str, Any]:
+        """Live per-axis coverage of the current dataset (events, coordinates,
+        contacts, positions, goalkeeper, penalty) for the health dashboard."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces.viz_validation import coverage_counts
+        return coverage_counts(self, user, filt, workspace_id)
+
+    def match_coverage(self, user: User, filt: SetPieceFilter | None = None, *,
+                       workspace_id: str | None = None) -> dict[str, Any]:
+        """Overall report-suitability score (0-100) + what is still missing."""
+        from fap.setpieces import viz_guidance as G
+        return G.match_coverage(self.dataset_health(user, filt, workspace_id=workspace_id))
+
+    def dataset_compatibility(self, user: User, filt: SetPieceFilter | None = None, *,
+                              workspace_id: str | None = None) -> list[dict[str, Any]]:
+        """Scan the current dataset and report, per visualization, whether it can
+        be produced and (if not) why — the post-import compatibility scanner."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import viz_guidance as G
+        counts = self.dataset_health(user, filt, workspace_id=workspace_id)
+        out = []
+        for entry in self.visual_catalog(user):
+            req = self.viz_requirements(user, entry["id"])
+            can, reason = G.feasible(req, counts) if req.get("known") else (False, "No metadata")
+            out.append({"id": entry["id"], "name": entry["name"], "category": entry["category"],
+                        "can_render": can, "reason": ("Ready" if can else reason)})
+        return out
+
+    def viz_guidance(self, user: User, viz_id: str, filt: SetPieceFilter | None = None, *,
+                     workspace_id: str | None = None) -> dict[str, Any]:
+        """Everything the requirement panel needs: example data, info card,
+        learn-more, live dependency tree and per-axis status."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        from fap.setpieces import viz_guidance as G
+        req = self.viz_requirements(user, viz_id)
+        counts = self.dataset_health(user, filt, workspace_id=workspace_id)
+        val = self.viz_validate(user, viz_id, filt, workspace_id=workspace_id)
+        g = G.guidance_for(req.get("dataset", ""))
+        g["dependency_tree"] = G.dependency_tree(req, counts, val.can_render)
+        g["live_status"] = counts
+        return g
+
+    def viz_template_csv(self, user: User, viz_id: str) -> bytes:
+        """A CSV template containing ONLY the columns this visualization needs,
+        with a couple of realistic example rows (instructional)."""
+        self._require(user, Capability.VIEW_SETPIECE)
+        import csv
+        import io
+        from fap.setpieces import viz_guidance as G
+        req = self.viz_requirements(user, viz_id)
+        g = G.guidance_for(req.get("dataset", ""))
+        cols = g["columns"]
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(cols)
+        # reuse the example rows where the shape matches, else just the header
+        if g["example_columns"] == cols:
+            for row in g["example_rows"]:
+                w.writerow(row)
+        return buf.getvalue().encode("utf-8")
+
+    def generate_missing_positions(self, user: User, filt: SetPieceFilter | None = None, *,
+                                   workspace_id: str | None = None) -> int:
+        """Add box positions to filtered set pieces that have none (Part 13)."""
+        self._require(user, Capability.EDIT_SETPIECE)
+        import random
+        from fap.setpieces import viz_demo
+        sps = self._filtered(user, filt, workspace_id)
+        have = {p.set_piece_id for p in self._positions_of(sps) if p.team == "attack"}
+        rng = random.Random(7)
+        count = 0
+        for s in sps:
+            if s.id not in have:
+                viz_demo.fill_positions(self, s.id, rng)
+                count += 1
+        self.audit.record(user, "setpiece.viz.fill_positions", target_type="visualization",
+                          target_id="*", detail={"set_pieces": count})
+        return count
+
+    def generate_missing_goalkeeper(self, user: User, filt: SetPieceFilter | None = None, *,
+                                    workspace_id: str | None = None) -> int:
+        self._require(user, Capability.EDIT_SETPIECE)
+        import random
+        from fap.setpieces import viz_demo
+        sps = self._filtered(user, filt, workspace_id)
+        have = {p.set_piece_id for p in self._positions_of(sps) if p.is_gk}
+        rng = random.Random(7)
+        count = 0
+        for s in sps:
+            if s.id not in have:
+                viz_demo.fill_goalkeeper(self, s.id, rng)
+                count += 1
+        self.audit.record(user, "setpiece.viz.fill_gk", target_type="visualization",
+                          target_id="*", detail={"set_pieces": count})
+        return count
+
+    def generate_missing_contacts(self, user: User, filt: SetPieceFilter | None = None, *,
+                                  workspace_id: str | None = None) -> int:
+        self._require(user, Capability.EDIT_SETPIECE)
+        import random
+        from fap.setpieces import viz_demo
+        sps = self._filtered(user, filt, workspace_id)
+        have = {c.set_piece_id for c in self._contacts_of(sps)}
+        rng = random.Random(7)
+        count = 0
+        for s in sps:
+            if s.id not in have:
+                viz_demo.fill_contacts(self, s.id, rng, goal=bool(s.goal))
+                count += 1
+        self.audit.record(user, "setpiece.viz.fill_contacts", target_type="visualization",
+                          target_id="*", detail={"set_pieces": count})
+        return count
 
     def render_visual(self, user: User, viz_id: str, filt: SetPieceFilter | None = None, *,
                       controls: dict[str, Any] | None = None, theme_id: str = "opta_light",

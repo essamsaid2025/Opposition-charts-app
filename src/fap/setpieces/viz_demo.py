@@ -9,8 +9,10 @@ again. Coordinates are canonical 0-100 with the goal at x=100.
 from __future__ import annotations
 
 import random
+import uuid
 from typing import Any
 
+from fap.setpieces.models import SetPieceContact, SetPiecePosition
 from fap.setpieces.viz_requirements import DATASETS
 
 _ROLES = ("near_post", "far_post", "penalty_spot", "six_yard", "edge_box", "central")
@@ -39,24 +41,45 @@ def _sp(svc, user, ws, **fields):
     return svc.create_set_piece(user, tags=["demo"], document=doc, workspace_id=ws, **fields)
 
 
+_ZONE_W = (("near", 35, 95, 44), ("far", 28, 95, 57), ("spot", 15, 89, 50),
+           ("six", 12, 96, 50), ("edge", 10, 80, 50))
+
+
+def _land(rng):
+    """Realistic corner landing: near-post heavy, then far post, spot, edge."""
+    z = rng.choices([r[0] for r in _ZONE_W], weights=[r[1] for r in _ZONE_W])[0]
+    zx, zy = next((r[2], r[3]) for r in _ZONE_W if r[0] == z)
+    return round(zx + rng.uniform(-2, 2), 1), round(zy + rng.uniform(-3, 3), 1)
+
+
 def _corner(svc, user, ws, rng, **extra):
-    ex, ey = 92 + rng.uniform(-2, 4), 45 + rng.uniform(-6, 12)
+    ex, ey = _land(rng)
+    taker = rng.choice(["Demo Silva", "Demo Adeyemi"])
     base = dict(type="corner", phase="offensive", perspective="own", team="Demo FC",
-                opponent="Demo Opp", competition="Demo League", taker="Demo Taker",
-                foot="left", side="right", delivery_type="inswing", start_x=100, start_y=100,
-                end_x=round(ex, 1), end_y=round(ey, 1), players_in_box=6,
+                opponent="Demo Opp", competition="Demo League", taker=taker,
+                foot=("left" if taker.endswith("Silva") else "right"),
+                side=("right" if taker.endswith("Silva") else "left"),
+                delivery_type=rng.choices(["inswing", "outswing", "driven"], weights=[6, 3, 1])[0],
+                start_x=100, start_y=(100 if taker.endswith("Silva") else 0),
+                end_x=ex, end_y=ey, players_in_box=rng.randint(5, 7),
                 minute=rng.randint(1, 90), period=rng.randint(1, 2))
     base.update(extra)
     return _sp(svc, user, ws, **base)
 
 
 # ------------------------------------------------------------------ builders
-def _delivery(svc, user, ws, rng, n=12):
+def _delivery(svc, user, ws, rng, n=40):
+    """Professional distribution: 40 deliveries, ~25 successful, ~6 goals."""
     for i in range(n):
-        goal = i < 2
-        _corner(svc, user, ws, rng, shot=(i < 5), goal=goal,
-                outcome=("goal" if goal else ("shot" if i < 5 else "clearance")),
-                first_contact_team="attack", xg=round(0.05 + rng.random() * 0.3, 2))
+        success = i < 25
+        goal = i < 6
+        outcome = ("goal" if goal else ("shot" if success
+                   else rng.choice(["clearance", "off_target", "lost", "blocked"])))
+        _corner(svc, user, ws, rng, shot=success, goal=goal, outcome=outcome,
+                first_contact_team=rng.choices(["attack", "defence"], weights=[6, 4])[0],
+                second_ball_team=rng.choice(["attack", "defence"]),
+                retained=(rng.random() < 0.3),
+                xg=(round(0.08 + rng.random() * 0.35, 2) if success else None))
     return n
 
 
@@ -184,18 +207,27 @@ def _contacts(kind):
     return build
 
 
-def _penalty(svc, user, ws, rng, n=12):
+def _penalty(svc, user, ws, rng, n=25):
+    """25 penalties with a realistic corner-weighted placement distribution
+    (takers favour the bottom corners; centre is rare)."""
     shooters = ["Demo Kane", "Demo Silva", "Demo Sonny"]
+    # corners heavy, centre light — as in professional data
+    place_w = {"bottom_left": 22, "bottom_right": 24, "top_left": 14, "top_right": 15,
+               "middle_left": 10, "middle_right": 9, "center": 6}
     for i in range(n):
-        placement = _PLACEMENTS[i % len(_PLACEMENTS)]
-        dive = _DIVES[i % len(_DIVES)]
-        outcome = "goal" if i % 3 else ("saved" if i % 3 == 1 else "miss")
+        placement = rng.choices(list(place_w), weights=list(place_w.values()))[0]
+        dive = rng.choices(_DIVES, weights=[40, 40, 20])[0]
+        # keeper saves when they go the right way (~ realistic conversion ~78%)
+        correct = dive in placement
+        outcome = "goal" if not correct or rng.random() < 0.55 else \
+            rng.choice(["saved", "saved", "miss"])
         _sp(svc, user, ws, type="penalty", phase="offensive", perspective="own", team="Demo FC",
-            taker=shooters[i % len(shooters)], foot=("left" if i % 2 else "right"),
-            outcome=outcome, goal=(outcome == "goal"), shot=True, xg=0.78, minute=rng.randint(1, 90),
+            taker=rng.choice(shooters), foot=rng.choice(["left", "right"]),
+            outcome=outcome, goal=(outcome == "goal"), shot=True, xg=0.78,
+            minute=rng.randint(1, 90),
             document={"placement": placement, "gk_dive": dive, "goalkeeper": "Demo Keeper",
-                      "gk_dive_timing": ("early" if i % 2 else "on_time"),
-                      "gk_correct": (dive in placement)})
+                      "gk_dive_timing": rng.choices(["early", "on_time", "late"], weights=[3, 5, 2])[0],
+                      "gk_correct": correct})
     return n
 
 
@@ -208,6 +240,46 @@ _BUILDERS = {
     "second_ball": _contacts("second_ball"), "clearance": _contacts("clearance"),
     "flick": _contacts("flick"),
 }
+
+
+# ------------------------------------------------------------------ fill-missing
+# Add a single missing component to an EXISTING set piece (Part 13). Child rows
+# are marked document.demo=True so they can be cleared without touching the
+# real parent set piece.
+def fill_positions(svc, sp_id, rng) -> None:
+    for r in _ROLES:
+        svc.positions.add(SetPiecePosition(
+            id=str(uuid.uuid4()), set_piece_id=sp_id, team="attack", player=f"A-{r}", role=r,
+            x=_role_x(r, rng), y=_role_y(r, rng), moment="delivery", document={"demo": True}))
+    for j, r in enumerate(("near_post", "far_post", "six_yard")):
+        svc.positions.add(SetPiecePosition(
+            id=str(uuid.uuid4()), set_piece_id=sp_id, team="defence", player=f"D{j}", role=r,
+            marking=("man" if j % 2 else "zonal"), x=_role_x(r, rng) - 1, y=_role_y(r, rng) + 1,
+            moment="delivery", document={"demo": True}))
+
+
+def fill_goalkeeper(svc, sp_id, rng) -> None:
+    svc.positions.add(SetPiecePosition(id=str(uuid.uuid4()), set_piece_id=sp_id, team="defence",
+                                       player="GK", is_gk=True, moment="before", x=98, y=50,
+                                       document={"demo": True}))
+    svc.positions.add(SetPiecePosition(id=str(uuid.uuid4()), set_piece_id=sp_id, team="defence",
+                                       player="GK", is_gk=True, moment="delivery",
+                                       x=round(96 + rng.uniform(-1, 2), 1),
+                                       y=round(50 + rng.uniform(-4, 4), 1), document={"demo": True}))
+
+
+def fill_contacts(svc, sp_id, rng, goal=False) -> None:
+    x, y = round(93 + rng.uniform(-2, 3), 1), round(46 + rng.uniform(-6, 8), 1)
+    svc.contacts.add(SetPieceContact(id=str(uuid.uuid4()), set_piece_id=sp_id, kind="first_contact",
+                                     team="attack", player="C", x=x, y=y, body_part="head", won=True,
+                                     outcome=("goal" if goal else "shot"), document={"demo": True}))
+    svc.contacts.add(SetPieceContact(id=str(uuid.uuid4()), set_piece_id=sp_id, kind="second_ball",
+                                     team="attack", x=round(82 + rng.uniform(-3, 5), 1), y=y, won=True,
+                                     document={"demo": True}))
+    if goal or rng.random() < 0.4:
+        svc.contacts.add(SetPieceContact(id=str(uuid.uuid4()), set_piece_id=sp_id, kind="shot",
+                                         team="attack", x=x, y=y, outcome=("goal" if goal else "miss"),
+                                         document={"demo": True}))
 
 
 # ------------------------------------------------------------------ geometry
