@@ -9,6 +9,7 @@ P-Profile milestone). Completely separate from the Scouting page.
 """
 from __future__ import annotations
 
+import base64
 import datetime as _dt
 
 import streamlit as st
@@ -18,15 +19,29 @@ from fap.identity.capabilities import Capability
 from fap.identity.roles import Role
 from fap.players.analysis import age_from_dob
 from fap.players.models import AVAILABILITY, FEET, POSITIONS, STATUSES
+from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
 SEL = "_ftp_id"            # selected first-team player
 ADD = "_ftp_add"           # add-player wizard open flag
 OPEN_REPORT = "_open_report_id"   # Report Studio navigation key (reused)
 
-_AVAIL_BADGE = {"available": "🟢 Available", "doubtful": "🟡 Doubtful",
-                "injured": "🔴 Injured", "suspended": "🟠 Suspended",
-                "unavailable": "⚪ Unavailable"}
+
+def _avail_badge(avail: str) -> str:
+    """Availability -> unified status-badge HTML (one squad-status vocabulary)."""
+    return C.status_badge_html(avail or "unavailable")
+
+
+def _photo_uri(svc, image_id) -> str:
+    """A data: URI for a stored player image, or '' when there is none, so the
+    pure card builders can embed a photo without touching storage themselves."""
+    if not image_id:
+        return ""
+    raw = svc.image_bytes(image_id)
+    if not raw:
+        return ""
+    return "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
 
 
 @page_registry.register
@@ -51,7 +66,10 @@ class FirstTeamPlayersPage(Page):
         self._can_medical = perms.can(shell.user, str(Capability.VIEW_MEDICAL))
         self._can_report = perms.can(shell.user, str(Capability.CREATE_REPORT))
 
-        st.title("First Team")
+        C.render_section_title(
+            "First Team", eyebrow="Squad",
+            subtitle="Your first-team squad — search, filter and open any player.",
+            icon_name="players")
 
         selected = st.session_state.get(SEL)
         if selected and svc.get_player(selected):
@@ -65,14 +83,22 @@ class FirstTeamPlayersPage(Page):
     # ---------------------------------------------------------------- squad
     def _squad(self, shell, svc) -> None:
         summary = svc.squad_summary(shell.user)
-        top = st.columns([3, 1])
+        available = max(0, summary["total"] - summary["injured"] - summary["archived"])
+        top = st.columns([3, 1], vertical_alignment="center")
         with top[0]:
-            m = st.columns(3)
-            m[0].metric("Squad", summary["total"])
-            m[1].metric("Injured", summary["injured"])
-            m[2].metric("Archived", summary["archived"])
+            C.render_metric_row([
+                C.metric_card_html("Squad", str(summary["total"]), icon_name="players",
+                                   accent="primary", hint="registered players"),
+                C.metric_card_html("Available", str(available), icon_name="heart",
+                                   accent="success", hint="fit to play"),
+                C.metric_card_html("Injured", str(summary["injured"]), icon_name="cross-medical",
+                                   accent="danger", hint="in treatment"),
+                C.metric_card_html("Archived", str(summary["archived"]), icon_name="folder",
+                                   accent="info", hint="not in squad"),
+            ])
         with top[1]:
-            if self._can_edit and st.button("➕ Add player", type="primary", key="ftp_addbtn"):
+            if self._can_edit and st.button("Add player", type="primary", key="ftp_addbtn",
+                                            use_container_width=True):
                 st.session_state[ADD] = True
                 st.rerun()
 
@@ -136,7 +162,13 @@ class FirstTeamPlayersPage(Page):
             view = st.radio("View", ["Grid", "List", "Table"], horizontal=True, key="ftp_view",
                             label_visibility="collapsed")
             if not players:
-                st.info("No players match. Add players or adjust filters.")
+                add = C.render_empty_state(
+                    "No players match", "Adjust the filters on the left, or add your first "
+                    "player to start building the squad.", icon_name="players",
+                    action_label=("Add player" if self._can_edit else ""), key="ftp_empty_add")
+                if add:
+                    st.session_state[ADD] = True
+                    st.rerun()
                 return
             index = svc.card_index(shell.user, players)
             if view == "Table":
@@ -152,19 +184,23 @@ class FirstTeamPlayersPage(Page):
 
     def _list_row(self, shell, svc, p, agg) -> None:
         with st.container(border=True):
-            c = st.columns([1, 3, 2, 1])
+            c = st.columns([1, 3, 2, 1], vertical_alignment="center")
             photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
             if photo:
                 c[0].image(photo, use_container_width=True)
             else:
-                c[0].markdown(f"**{self._initials(p)}**")
+                c[0].markdown(C.avatar_html(initials=self._initials(p), size=46),
+                              unsafe_allow_html=True)
             num = f"#{p.shirt_number} " if p.shirt_number is not None else ""
             c[1].markdown(f"**{num}{p.name}**  \n{p.primary_position or '—'} · "
                           f"{age_from_dob(p.dob) or '—'} · {p.nationality or '—'}")
             avail = "injured" if agg.get("injured") else p.availability
-            c[2].markdown(f"{_AVAIL_BADGE.get(avail, avail.title() or '—')}  \n"
-                          f"⏱ {agg.get('minutes', 0)} min · 📄 {agg.get('contract_end') or '—'}")
-            if c[3].button("Open", key=f"ftp_lopen_{p.id}"):
+            c[2].markdown(
+                f"{_avail_badge(avail)}<br><span style='color:var(--fap-text-muted);font-size:.8rem'>"
+                f"{icon('clock', 13)} {agg.get('minutes', 0)} min &nbsp; "
+                f"{icon('calendar', 13)} {agg.get('contract_end') or '—'}</span>",
+                unsafe_allow_html=True)
+            if c[3].button("Open", key=f"ftp_lopen_{p.id}", use_container_width=True):
                 st.session_state[SEL] = p.id
                 st.rerun()
 
@@ -188,30 +224,19 @@ class FirstTeamPlayersPage(Page):
         return sorted(players, key=key) if key else players
 
     def _card(self, shell, svc, p, agg) -> None:
-        with st.container(border=True):
-            photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
-            c = st.columns([1, 2])
-            with c[0]:
-                if photo:
-                    st.image(photo, use_container_width=True)
-                else:
-                    st.markdown(f"<div style='background:#e8edf2;border-radius:8px;height:64px;"
-                                f"display:flex;align-items:center;justify-content:center;"
-                                f"font-weight:700;color:#7a8aa0'>{self._initials(p)}</div>",
-                                unsafe_allow_html=True)
-            with c[1]:
-                num = f"#{p.shirt_number}  " if p.shirt_number is not None else ""
-                st.markdown(f"**{num}{p.name}**")
-                age = age_from_dob(p.dob)
-                st.caption(f"{p.primary_position or '—'} · {age if age is not None else '—'} · "
-                           f"{p.nationality or '—'}")
-            avail = "injured" if agg.get("injured") else p.availability
-            badge = _AVAIL_BADGE.get(avail, avail.title() or "—")
-            end = agg.get("contract_end") or "—"
-            st.caption(f"{badge}  ·  ⏱ {agg.get('minutes', 0)} min  ·  📄 exp {end}")
-            if st.button("Open profile", key=f"ftp_open_{p.id}"):
-                st.session_state[SEL] = p.id
-                st.rerun()
+        avail = "injured" if agg.get("injured") else p.availability
+        age = age_from_dob(p.dob)
+        st.markdown(C.player_card_html(
+            p.name, number=(p.shirt_number if p.shirt_number is not None else None),
+            position=p.primary_position or "", nationality=p.nationality or "",
+            age=(f"{age} yrs" if age is not None else ""),
+            contract=(f"exp {agg.get('contract_end')}" if agg.get("contract_end") else ""),
+            minutes=(f"{agg.get('minutes', 0)} min"),
+            photo_uri=_photo_uri(svc, p.profile_image_id),
+            status=avail, captain=bool(p.captain)), unsafe_allow_html=True)
+        if st.button("Open profile", key=f"ftp_open_{p.id}", use_container_width=True):
+            st.session_state[SEL] = p.id
+            st.rerun()
 
     @staticmethod
     def _initials(p) -> str:
@@ -343,34 +368,32 @@ class FirstTeamPlayersPage(Page):
     # ---- professional header -------------------------------------------
     def _header(self, svc, p, ov) -> None:
         with st.container(border=True):
-            head = st.columns([1, 3, 2])
+            head = st.columns([1, 3, 2], vertical_alignment="center")
             with head[0]:
                 photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
                 if photo:
                     st.image(photo, use_container_width=True)
                 else:
-                    st.markdown(f"<div style='background:#e8edf2;border-radius:10px;height:110px;"
-                                f"display:flex;align-items:center;justify-content:center;font-size:2rem;"
-                                f"font-weight:700;color:#7a8aa0'>{self._initials(p)}</div>",
+                    st.markdown(C.avatar_html(initials=self._initials(p), size=104),
                                 unsafe_allow_html=True)
             with head[1]:
-                badges = []
-                if p.shirt_number is not None:
-                    badges.append(f"<span style='background:#111;color:#fff;border-radius:6px;"
-                                  f"padding:2px 8px;font-weight:700'>#{p.shirt_number}</span>")
-                if p.captain:
-                    badges.append("<span style='background:#c9a227;color:#111;border-radius:6px;"
-                                  "padding:2px 8px;font-weight:700'>C</span>")
-                elif p.vice_captain:
-                    badges.append("<span style='background:#9aa7b5;color:#111;border-radius:6px;"
-                                  "padding:2px 8px;font-weight:700'>VC</span>")
-                st.markdown(" ".join(badges) + f"  &nbsp; <span style='font-size:1.4rem;"
-                            f"font-weight:750'>{p.name}</span>", unsafe_allow_html=True)
-                flag = (p.flag + " ") if p.flag else ""
-                st.caption(f"{p.primary_position or '—'} · {flag}{p.nationality or '—'} · "
-                           f"{ov['age'] if ov['age'] is not None else '—'} yrs · {p.foot.title() or '—'} foot")
+                num = (f'<span class="fap-badge neutral">#{p.shirt_number}</span>'
+                       if p.shirt_number is not None else "")
+                role = (C.status_badge_html("captain") if p.captain
+                        else C.status_badge_html("vice") if p.vice_captain else "")
                 avail = "injured" if ov.get("injury") else p.availability
-                st.markdown(f"**{_AVAIL_BADGE.get(avail, ov['availability'])}**")
+                flag = (p.flag + " ") if p.flag else ""
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
+                    f'{num}{role}'
+                    f'<span style="font-size:1.5rem;font-weight:800;letter-spacing:-.02em">{p.name}</span>'
+                    f'</div>'
+                    f'<div style="color:var(--fap-text-muted);font-size:.86rem;margin-bottom:6px">'
+                    f'{icon("map-pin",13)} {p.primary_position or "—"} &nbsp; '
+                    f'{icon("flag",13)} {flag}{p.nationality or "—"} &nbsp; '
+                    f'{icon("user",13)} {ov["age"] if ov["age"] is not None else "—"} yrs &nbsp; '
+                    f'{icon("target",13)} {p.foot.title() or "—"} foot</div>'
+                    f'{_avail_badge(avail)}', unsafe_allow_html=True)
             with head[2]:
                 c = ov["contract"]
                 st.metric("Career minutes", ov["career_totals"]["minutes"])
@@ -415,25 +438,27 @@ class FirstTeamPlayersPage(Page):
         st.subheader("Timeline")
         self._timeline(svc, shell, player_id)
 
-    _TL_STYLE = {"signing": ("✍️", "#2b6aa6"), "contract": ("📄", "#5a6b7a"),
-                 "loan": ("🔁", "#8a5a1a"), "injury": ("🩹", "#b23a34"),
-                 "recovery": ("✅", "#1f7a48"), "match": ("⚽", "#111827"),
-                 "video": ("🎬", "#6d28d9"), "award": ("🏆", "#c9a227"),
-                 "report": ("📊", "#0f766e")}
+    _TL_STYLE = {"signing": ("edit", "info"), "contract": ("calendar", "neutral"),
+                 "loan": ("link", "info"), "injury": ("cross-medical", "danger"),
+                 "recovery": ("check", "success"), "match": ("match", "neutral"),
+                 "video": ("video", "info"), "award": ("trophy", "warning"),
+                 "report": ("reports", "success")}
 
     def _timeline(self, svc, shell, player_id) -> None:
         events = svc.timeline(shell.user, player_id)
         if not events:
             st.caption("No timeline events yet.")
             return
+        rows = []
         for e in events[:40]:
-            icon, color = self._TL_STYLE.get(e["type"], ("•", "#666"))
-            st.markdown(
-                f"<div style='display:flex;align-items:center;gap:10px;padding:4px 0'>"
-                f"<span style='background:{color};color:#fff;border-radius:6px;padding:2px 8px;"
-                f"font-size:.72rem;font-weight:700;text-transform:uppercase'>{icon} {e['type']}</span>"
-                f"<span style='font-family:monospace;color:#888'>{e['date'] or '—'}</span>"
-                f"<span>{e['label']}</span></div>", unsafe_allow_html=True)
+            icon_name, kind = self._TL_STYLE.get(e["type"], ("info", "neutral"))
+            badge = C.badge_html(e["type"].title(), kind, icon_name=icon_name)
+            rows.append(
+                f"<div class='fap-activity-row'>{badge}"
+                f"<span class='who'>{e['label']}</span>"
+                f"<span class='ts'>{e['date'] or '—'}</span></div>")
+        st.markdown(f"<div class='fap-card fap-activity'>{''.join(rows)}</div>",
+                    unsafe_allow_html=True)
 
     # ---- Analysis (central hub, reuses existing modules) ----------------
     def _tab_analysis(self, shell, svc, player_id, ov) -> None:
@@ -538,7 +563,8 @@ class FirstTeamPlayersPage(Page):
                 with st.container(border=True):
                     c = st.columns([3, 2, 1, 1, 2])
                     c[0].markdown(f"**vs {r['opponent']}**  \n{r['competition']}")
-                    c[1].markdown(f"📅 {r['date']}  \n{r['season']}")
+                    c[1].markdown(f"{icon('calendar', 13)} {r['date']}  \n{r['season']}",
+                                  unsafe_allow_html=True)
                     c[2].metric("Min", r["minutes"] if r["minutes"] is not None else "—")
                     c[3].markdown(f"**{r['result']}**  \n{r['role'] or '—'}")
                     with c[4]:
@@ -632,7 +658,7 @@ class FirstTeamPlayersPage(Page):
                 st.markdown(f"**{label}**")
                 for v in items:
                     link = f"[{v.title or v.url}]({v.url})" if v.url else (v.title or v.filename)
-                    st.markdown(f"- 🎬 {link}")
+                    st.markdown(f"{icon('video', 13)} {link}", unsafe_allow_html=True)
         if not videos:
             st.info("No videos yet.")
         if self._can_edit:
@@ -650,21 +676,23 @@ class FirstTeamPlayersPage(Page):
     def _tab_reports(self, shell, svc, player_id) -> None:
         data = svc.player_reports(shell.user, player_id)
         if data["pinned"]:
-            st.markdown("**📌 Pinned**")
+            C.render_section_title("Pinned", icon_name="pin")
             for r in data["pinned"]:
                 self._report_row(shell, svc, player_id, r)
-        st.markdown("**Recent**")
+        C.render_section_title("Recent", icon_name="reports")
         recent = [r for r in data["reports"] if not r["pinned"]]
         if recent:
             for r in recent[:10]:
                 self._report_row(shell, svc, player_id, r)
         elif not data["pinned"]:
-            st.caption("No reports yet.")
+            C.render_empty_state("No reports yet", "Create a report or generate a performance "
+                                 "report to see it here.", icon_name="reports")
         if self._can_report:
             a, b = st.columns(2)
-            if a.button("➕ Create report", key="ftp_rep_create"):
+            if a.button("Create report", key="ftp_rep_create", use_container_width=True):
                 self._make_report(shell, svc, player_id, generate=False)
-            if b.button("⚡ Generate performance report", key="ftp_rep_gen"):
+            if b.button("Generate performance report", key="ftp_rep_gen", type="primary",
+                        use_container_width=True):
                 self._make_report(shell, svc, player_id, generate=True)
 
     def _make_report(self, shell, svc, player_id, generate) -> None:
@@ -677,13 +705,13 @@ class FirstTeamPlayersPage(Page):
             st.error(f"Could not create report: {exc}")
 
     def _report_row(self, shell, svc, player_id, r) -> None:
-        c = st.columns([4, 1, 1])
-        c[0].markdown(f"📊 {r['title']}")
-        if c[1].button("Open", key=f"ftp_ropen_{r['id']}"):
+        c = st.columns([4, 1, 1], vertical_alignment="center")
+        c[0].markdown(f"{icon('reports', 14)} {r['title']}", unsafe_allow_html=True)
+        if c[1].button("Open", key=f"ftp_ropen_{r['id']}", use_container_width=True):
             st.session_state[OPEN_REPORT] = r["id"]
             shell.goto("reports") if hasattr(shell, "goto") else None
-        if self._can_edit and c[2].button("📌" if not r["pinned"] else "Unpin",
-                                          key=f"ftp_rpin_{r['id']}"):
+        if self._can_edit and c[2].button("Pin" if not r["pinned"] else "Unpin",
+                                          key=f"ftp_rpin_{r['id']}", use_container_width=True):
             svc.pin_report(shell.user, player_id, r["id"], on=not r["pinned"])
             st.rerun()
 

@@ -88,7 +88,9 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     from fap.identity import enterprise
     enterprise.bind(lambda: _platform_getter() if _platform_getter else None)
 
-    brand = _branding()
+    base_brand = _branding()
+    preset_id = st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID
+    brand = theme.branding_for(preset_id, base_brand)
     theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
 
     # Login page: not signed in -> show both brand logos centered above the
@@ -190,19 +192,29 @@ def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
     except FileNotFoundError as exc:
         st.error(f"Branding asset missing: {exc}")
         logos = ""
-    page_glyph = icon(page.icon, 18) if page and page.icon else ""
-    # One sticky flex header owns the top and stays put on scroll: logos +
-    # breadcrumb on the left, notifications + user badge on the right.
+    page_glyph = icon(page.icon, 20) if page and page.icon else ""
+    module_title = page.info.name if page else brand.platform_name
+    n = len(notifications)
+    bell_cls = "has" if n else ""
+    initials = "".join(p[0] for p in ctx.user.name.split()[:2]).upper() or "?"
+    # One sticky flex header owns the top and stays put on scroll: module title +
+    # breadcrumb on the left; notifications + user identity on the right.
     st.markdown(
         f'<header class="fap-shell-header">'
-        f'  <div class="left">{logos}'
-        f'    <div class="titles"><b>{brand.platform_name}</b>'
-        f'      <span class="crumbs">{page_glyph} {C.breadcrumb_html(crumbs)}</span>'
+        f'  <div class="left">'
+        f'    <span class="mod-chip">{page_glyph or logos}</span>'
+        f'    <div class="titles"><b class="mod-title">{module_title}</b>'
+        f'      <span class="crumbs">{C.breadcrumb_html(crumbs)}</span>'
         f'    </div>'
         f'  </div>'
-        f'  <div class="right">{icon("bell", 16)} {len(notifications)}'
-        f'    <span class="sep">·</span> {icon("user", 16)} <b>{ctx.user.name}</b>'
-        f'    {C.badge_html(ctx.user.role_label, "info")}</div>'
+        f'  <div class="right">'
+        f'    <span class="hbtn bell {bell_cls}" title="Notifications">{icon("bell", 17)}'
+        f'      {f"<span class=chip-count>{n}</span>" if n else ""}</span>'
+        f'    <span class="hsep"></span>'
+        f'    <span class="user"><span class="uava">{initials}</span>'
+        f'      <span class="uinfo"><b>{ctx.user.name}</b>'
+        f'      {C.badge_html(ctx.user.role_label, "info")}</span></span>'
+        f'  </div>'
         f'</header>',
         unsafe_allow_html=True)
 
@@ -230,6 +242,7 @@ def _render_sidebar(ctx: ShellContext, brand: theme.Branding) -> None:
         st.divider()
         _render_navigation(ctx)
         st.divider()
+        _render_appearance()
         _render_profile(ctx)
 
 
@@ -271,16 +284,49 @@ def _render_search_results(ctx: ShellContext, query: str) -> None:
 
 
 def _render_navigation(ctx: ShellContext) -> None:
-    for section, pages in visible_by_section(ctx.user.role).items():
-        st.markdown(f'<div class="fap-nav-section">{section}</div>', unsafe_allow_html=True)
-        for page in pages:
-            active = page.info.id == ctx.active_page_id
-            # Streamlit buttons render text only; the active page is highlighted
-            # via the primary style and the registry icon appears in the header.
-            if st.button(page.info.name, key=f"nav_{page.info.id}",
-                         use_container_width=True,
-                         type="primary" if active else "secondary"):
-                ctx.goto(page.info.id)
+    """Grouped, collapsible navigation. Each section is a collapsible group; the
+    group containing the active page starts expanded so the user always sees
+    where they are without hunting."""
+    grouped = visible_by_section(ctx.user.role)
+    for section, pages in grouped.items():
+        has_active = any(p.info.id == ctx.active_page_id for p in pages)
+        with st.expander(section.upper(), expanded=has_active or len(grouped) <= 2):
+            for page in pages:
+                active = page.info.id == ctx.active_page_id
+                # Streamlit buttons render text only; the active page is highlighted
+                # via the primary style and the registry icon appears in the header.
+                if st.button(page.info.name, key=f"nav_{page.info.id}",
+                             use_container_width=True,
+                             type="primary" if active else "secondary"):
+                    ctx.goto(page.info.id)
+
+
+def _render_appearance() -> None:
+    """Theme controls: a preset picker (Professional Dark/Light, Club, Opta,
+    Hudl) plus a light/dark/auto override — the shell's 'theme selector'."""
+    with st.expander("Appearance", expanded=False):
+        ids = theme.preset_ids()
+        labels = {pid: lbl for pid, lbl in theme.preset_choices()}
+        current = st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID
+        if current not in ids:
+            current = theme.DEFAULT_PRESET_ID
+        chosen = st.selectbox("Theme", ids, index=ids.index(current),
+                              format_func=lambda i: labels.get(i, i), key="_theme_preset_select")
+        if chosen != st.session_state.get("_theme_preset"):
+            st.session_state["_theme_preset"] = chosen
+            st.session_state.pop("_theme_mode", None)   # let the preset's default mode win
+            st.rerun()
+        st.caption(theme.get_preset(chosen).description)
+
+        modes = ["auto", "light", "dark"]
+        labels_m = {"auto": "Auto", "light": "Light", "dark": "Dark"}
+        cur_mode = st.session_state.get("_theme_mode") or theme.get_preset(chosen).mode
+        cur_mode = cur_mode if cur_mode in modes else "auto"
+        picked = st.radio("Mode", modes, index=modes.index(cur_mode), horizontal=True,
+                          format_func=lambda m: labels_m[m], key="_theme_mode_radio")
+        if picked != (st.session_state.get("_theme_mode") or theme.get_preset(chosen).mode):
+            st.session_state["_theme_mode"] = picked
+            st.rerun()
 
 
 def _render_profile(ctx: ShellContext) -> None:

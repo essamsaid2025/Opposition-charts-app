@@ -15,7 +15,13 @@ from typing import Any, Mapping
 
 @dataclass(frozen=True, slots=True)
 class Surface:
-    """Neutral colours for one mode (light or dark)."""
+    """Neutral colours for one mode (light or dark).
+
+    ``raised`` is the elevation layer above ``surface`` (popovers, active cards,
+    header/sidebar chrome); ``hover`` is the interactive wash for rows/items;
+    ``border_strong`` is a higher-contrast divider for tables and inputs. All
+    optional with sensible defaults so older constructions stay valid.
+    """
     bg: str
     surface: str
     surface_alt: str
@@ -24,6 +30,15 @@ class Surface:
     text_muted: str
     text_subtle: str
     overlay: str
+    raised: str = ""
+    hover: str = ""
+    border_strong: str = ""
+
+    def __post_init__(self) -> None:
+        # frozen dataclass: fill derived defaults without mutating the contract.
+        object.__setattr__(self, "raised", self.raised or self.surface_alt)
+        object.__setattr__(self, "hover", self.hover or self.surface_alt)
+        object.__setattr__(self, "border_strong", self.border_strong or self.border)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,14 +92,16 @@ DEFAULT_PALETTE = Palette(
     danger="#E03131",
     info="#1C7ED6",
     light=Surface(
-        bg="#F5F7FA", surface="#FFFFFF", surface_alt="#EEF1F6",
-        border="#DDE3EC", text="#161C24", text_muted="#5B6472",
-        text_subtle="#8A93A2", overlay="rgba(16,22,30,0.45)"),
+        bg="#F4F6FA", surface="#FFFFFF", surface_alt="#EDF0F6",
+        border="#E1E6EF", text="#141A22", text_muted="#576070",
+        text_subtle="#8A93A2", overlay="rgba(16,22,30,0.45)",
+        raised="#FFFFFF", hover="#F0F3F9", border_strong="#D2D9E4"),
     dark=Surface(
-        # intentionally designed dark: deep blue-black base, elevated surfaces,
-        # a visible-but-quiet border, and calibrated text contrast (not a naive
-        # inversion of the light theme).
-        bg="#0B0E14", surface="#141922", surface_alt="#1C2330",
-        border="#262E3B", text="#E7EBF3", text_muted="#98A2B3",
-        text_subtle="#69727F", overlay="rgba(3,6,12,0.60)"),
+        # premium neutral-slate dark (StatsBomb IQ / Hudl console): a calm,
+        # low-saturation charcoal base with clearly separated elevation layers
+        # and calibrated text contrast - not a naive inversion, not blue-black.
+        bg="#0C0E12", surface="#16181D", surface_alt="#1E2128",
+        border="#2A2E37", text="#E6E9EF", text_muted="#979DA8",
+        text_subtle="#6A6F79", overlay="rgba(2,4,8,0.66)",
+        raised="#1E2128", hover="#24272F", border_strong="#363B45"),
 )

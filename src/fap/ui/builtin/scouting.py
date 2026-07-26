@@ -14,6 +14,8 @@ from fap.core.plugin import PluginInfo
 from fap.identity.capabilities import Capability
 from fap.identity.roles import Role
 from fap.scouting.models import PLAYER_STATUSES, PRIORITIES
+from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
 SEL = "_scout_player_id"
@@ -40,7 +42,10 @@ class ScoutingPage(Page):
         self._can_edit = perms.can(shell.user, str(Capability.EDIT_SCOUTING))
         self._can_report = perms.can(shell.user, str(Capability.CREATE_REPORT))
 
-        st.title("Scouting")
+        C.render_section_title(
+            "Scouting", eyebrow="Recruitment",
+            subtitle="Track targets, watchlists and reports across your recruitment network.",
+            icon_name="scouting")
         selected = st.session_state.get(SEL)
         if selected and svc.get_player(selected):
             self._player_detail(shell, svc, selected)
@@ -59,11 +64,16 @@ class ScoutingPage(Page):
     # ------------------------------------------------------------ dashboard
     def _dashboard(self, shell, svc) -> None:
         d = svc.dashboard(shell.user)
-        c = st.columns(4)
-        c[0].metric("Players", d["counts"]["active"])
-        c[1].metric("Archived", d["counts"]["archived"])
-        c[2].metric("Watchlists", len(d["watchlists"]))
-        c[3].metric("Reports", len(d["latest_reports"]))
+        C.render_metric_row([
+            C.metric_card_html("Players", str(d["counts"]["active"]), icon_name="scouting",
+                               accent="primary", hint="active targets"),
+            C.metric_card_html("Archived", str(d["counts"]["archived"]), icon_name="folder",
+                               accent="info", hint="soft-deleted"),
+            C.metric_card_html("Watchlists", str(len(d["watchlists"])), icon_name="star",
+                               accent="warning", hint="shortlists"),
+            C.metric_card_html("Reports", str(len(d["latest_reports"])), icon_name="reports",
+                               accent="success", hint="latest output"),
+        ])
         cols = st.columns(2)
         with cols[0]:
             self._player_strip(svc, "Recently updated", d["recent"])
@@ -73,8 +83,10 @@ class ScoutingPage(Page):
             self._player_strip(svc, "Recently viewed", d["recently_viewed"])
             self._player_strip(svc, "Contracts expiring", d["contracts_expiring"])
             st.markdown("**Latest reports**")
+            if not d["latest_reports"]:
+                st.caption("No reports yet.")
             for link in d["latest_reports"]:
-                st.caption(f"• {link.title}")
+                st.markdown(f"{icon('reports', 13)} {link.title}", unsafe_allow_html=True)
 
     def _player_strip(self, svc, title, players) -> None:
         st.markdown(f"**{title}**")
@@ -100,18 +112,24 @@ class ScoutingPage(Page):
             filters["min_rating"] = min_rating
         players = svc.search(shell.user, query=query, filters=filters, favorite=fav or None)
         st.caption(f"{len(players)} player(s)")
+        if not players:
+            C.render_empty_state("No players found", "Adjust your search or filters, or add a "
+                                 "new target below.", icon_name="scouting")
         for p in players:
-            cols = st.columns([4, 1])
-            label = f"**{p.name}** · {p.position or '—'} · {p.club or '—'}" + (
-                f" · ★{p.internal_rating}" if p.internal_rating else "")
-            cols[0].markdown(label)
-            if cols[1].button("Open", key=f"open_{p.id}"):
+            cols = st.columns([4, 1], vertical_alignment="center")
+            rating = (f" &nbsp; {icon('star', 13)} <b>{p.internal_rating}</b>"
+                      if p.internal_rating else "")
+            fav_mark = (icon('star', 13) + " ") if getattr(p, "favorite", False) else ""
+            cols[0].markdown(
+                f"{fav_mark}<b>{p.name}</b> &middot; {p.position or '—'} &middot; "
+                f"{p.club or '—'}{rating}", unsafe_allow_html=True)
+            if cols[1].button("Open", key=f"open_{p.id}", use_container_width=True):
                 st.session_state[SEL] = p.id
                 st.rerun()
 
         if self._can_edit:
             st.divider()
-            with st.expander("➕ Add player"):
+            with st.expander("Add player"):
                 name = st.text_input("Name", key="np_name")
                 cc = st.columns(3)
                 club = cc[0].text_input("Club", key="np_club")
@@ -129,12 +147,14 @@ class ScoutingPage(Page):
         if p is None:
             st.session_state.pop(SEL, None)
             st.rerun()
-        top = st.columns([1, 5, 1])
-        if top[0].button("← Back"):
+        top = st.columns([1, 5, 1], vertical_alignment="center")
+        if top[0].button("Back", key="scout_back", use_container_width=True):
             st.session_state.pop(SEL, None)
             st.rerun()
         top[1].subheader(f"{p.name}  ·  {p.position or '—'}  ·  {p.club or '—'}")
-        if self._can_edit and top[2].button("★ Favorite" if not p.favorite else "★ Unfavorite"):
+        if self._can_edit and top[2].button("Favorite" if not p.favorite else "Unfavorite",
+                                            key="scout_fav_btn", use_container_width=True,
+                                            type="primary" if not p.favorite else "secondary"):
             svc.set_favorite(shell.user, p.id, not p.favorite)
             st.rerun()
 
@@ -194,7 +214,8 @@ class ScoutingPage(Page):
     def _notes(self, shell, svc, p) -> None:
         for n in svc.list_notes(p.id):
             with st.container(border=True):
-                st.markdown(("📌 " if n.pinned else "") + (n.body or "_empty_"))
+                st.markdown((icon("pin", 13) + " " if n.pinned else "") + (n.body or "_empty_"),
+                            unsafe_allow_html=True)
                 st.caption(f"{n.author} · {n.updated_at}")
                 if self._can_edit and st.button("Delete", key=f"dn_{n.id}"):
                     svc.delete_note(shell.user, n.id); st.rerun()
@@ -223,9 +244,11 @@ class ScoutingPage(Page):
         for v in svc.list_videos(p.id):
             with st.container(border=True):
                 if v.kind == "external":
-                    st.markdown(f"🎬 **{v.title}** · {v.provider}  \n{v.url}")
+                    st.markdown(f"{icon('video', 14)} **{v.title}** · {v.provider}  \n{v.url}",
+                                unsafe_allow_html=True)
                 else:
-                    st.markdown(f"🎬 **{v.title}** · uploaded ({v.size_bytes // 1024} KB)")
+                    st.markdown(f"{icon('video', 14)} **{v.title}** · uploaded ({v.size_bytes // 1024} KB)",
+                                unsafe_allow_html=True)
                     data = svc.video_bytes(v.id)
                     if data and v.mime.startswith("video/"):
                         st.video(data)
@@ -244,7 +267,8 @@ class ScoutingPage(Page):
     def _attachments(self, shell, svc, p) -> None:
         for a in svc.list_attachments(p.id):
             cols = st.columns([4, 1, 1])
-            cols[0].write(f"📎 {a.filename} · {a.size_bytes // 1024} KB")
+            cols[0].markdown(f"{icon('folder', 14)} {a.filename} · {a.size_bytes // 1024} KB",
+                             unsafe_allow_html=True)
             data = svc.attachment_bytes(a.id)
             if data:
                 cols[1].download_button("Download", data, file_name=a.filename, key=f"da_{a.id}")
@@ -258,15 +282,21 @@ class ScoutingPage(Page):
                 st.rerun()
 
     def _reports(self, shell, svc, p) -> None:
-        for link in svc.list_reports(p.id):
-            cols = st.columns([4, 1])
-            cols[0].write(f"📄 {link.title} · {link.created_at}")
-            if cols[1].button("Open in Studio", key=f"open_rep_{link.id}"):
+        links = svc.list_reports(p.id)
+        if not links:
+            C.render_empty_state("No reports yet", "Generate a scouting report to open it in "
+                                 "Report Studio.", icon_name="reports")
+        for link in links:
+            cols = st.columns([4, 1], vertical_alignment="center")
+            cols[0].markdown(f"{icon('reports', 14)} {link.title} · {link.created_at}",
+                             unsafe_allow_html=True)
+            if cols[1].button("Open in Studio", key=f"open_rep_{link.id}", use_container_width=True):
                 st.session_state[OPEN_REPORT] = link.report_id
                 shell.goto("report_editor")           # reuse the existing Report Studio
         if self._can_report:
             st.divider()
-            if st.button("➕ Generate scouting report", type="primary", key="gen_rep"):
+            if st.button("Generate scouting report", type="primary", key="gen_rep",
+                         use_container_width=True):
                 link = svc.create_report(shell.user, p.id)
                 st.session_state[OPEN_REPORT] = link.report_id
                 shell.goto("report_editor")           # open the auto-generated report in Studio

@@ -5,6 +5,7 @@ import streamlit as st
 
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
+from fap.theme import components as C
 from fap.ui.page import Page, page_registry
 
 
@@ -17,10 +18,15 @@ class DashboardPage(Page):
     min_role = Role.READ_ONLY
 
     def render(self, shell) -> None:
-        st.title("Dashboard")
-        st.caption(f"Welcome, {shell.user.name}.")
+        first_name = shell.user.name.split()[0] if shell.user.name else "there"
+        C.render_section_title(
+            "Dashboard", eyebrow="Overview",
+            subtitle=f"Welcome back, {first_name}. Here is your workspace at a glance.",
+            icon_name="dashboard")
+
         if shell.wm is None:
-            st.info("Platform services unavailable.")
+            C.render_alert("Platform services are unavailable in this session.", "warning",
+                           title="Limited mode")
             return
         try:
             datasets = shell.wm.list_datasets(workspace_id=shell.workspace_id)
@@ -29,23 +35,36 @@ class DashboardPage(Page):
         except Exception:
             datasets, recents, audit = [], [], []
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Datasets", len(datasets))
-        c2.metric("Recent items", len(recents))
-        c3.metric("Your role", shell.user.role_label)
+        C.render_metric_row([
+            C.metric_card_html("Datasets", f"{len(datasets)}", icon_name="datasets",
+                               accent="primary", hint="in this workspace"),
+            C.metric_card_html("Recent items", f"{len(recents)}", icon_name="clock",
+                               accent="info", hint="you touched lately"),
+            C.metric_card_html("Your role", shell.user.role_label, icon_name="shield",
+                               accent="success", hint="access level"),
+        ])
 
-        col_a, col_b = st.columns(2)
+        col_a, col_b = st.columns(2, gap="medium")
         with col_a:
-            st.subheader("Quick actions")
-            if st.button("Open Opponent Analysis", use_container_width=True):
-                shell.goto("opponent_analysis")
-            if st.button("Manage datasets", use_container_width=True):
-                shell.goto("datasets")
-            if st.button("Browse projects", use_container_width=True):
-                shell.goto("projects")
+            C.render_section_title("Quick actions", icon_name="lightning")
+            _quick(shell, "Open Opponent Analysis", "opponent_analysis", "match")
+            _quick(shell, "Manage datasets", "datasets", "datasets")
+            _quick(shell, "Browse projects", "projects", "projects")
         with col_b:
-            st.subheader("Recent activity")
+            C.render_section_title("Recent activity", icon_name="clock")
             if not audit:
-                st.caption("No activity yet.")
-            for entry in audit:
-                st.write(f"• `{entry.action}` — {entry.actor or 'system'} · {entry.ts}")
+                C.render_alert("No activity recorded yet. Actions you take across the "
+                               "platform will appear here.", "info")
+            else:
+                rows = "".join(
+                    f'<div class="fap-activity-row"><code>{e.action}</code>'
+                    f'<span class="who">{e.actor or "system"}</span>'
+                    f'<span class="ts">{e.ts}</span></div>'
+                    for e in audit)
+                st.markdown(f'<div class="fap-card fap-activity">{rows}</div>',
+                            unsafe_allow_html=True)
+
+
+def _quick(shell, label: str, page_id: str, icon_name: str) -> None:
+    if st.button(label, key=f"qa_{page_id}", use_container_width=True):
+        shell.goto(page_id)

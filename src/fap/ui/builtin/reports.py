@@ -6,6 +6,8 @@ import streamlit as st
 
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
+from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
 
@@ -18,7 +20,10 @@ class ReportsPage(Page):
     min_role = Role.READ_ONLY
 
     def render(self, shell) -> None:
-        st.title("Reports")
+        C.render_section_title(
+            "Reports", eyebrow="Workspace",
+            subtitle="Create, open, export and manage your analysis reports.",
+            icon_name="reports")
         reports = _reports_manager(shell)
         if reports is None:
             st.info("Reports engine unavailable.")
@@ -38,7 +43,8 @@ class ReportsPage(Page):
                 favorite=True if fav_only else None, query=query)
             records = records or []
             if not records:
-                st.info("No reports yet. Use the Create tab.")
+                C.render_empty_state("No reports yet", "Head to the Create tab to build your "
+                                     "first report from the active dataset.", icon_name="reports")
             for r in records:
                 self._row(shell, reports, r)
 
@@ -88,7 +94,9 @@ class ReportsPage(Page):
     def _row(self, shell, reports, r) -> None:
         with st.container(border=True):
             c1, c2 = st.columns([4, 2])
-            c1.markdown(f"**{r.title}**  \n_{r.template_id}_ · {r.owner} · {r.updated_at}")
+            star = (icon("star", 14) + " ") if r.favorite else ""
+            c1.markdown(f"{icon('reports', 15)} {star}**{r.title}**  \n"
+                        f"_{r.template_id}_ · {r.owner} · {r.updated_at}", unsafe_allow_html=True)
             if c1.button("Open in editor", key=f"open_{r.id}", type="primary"):
                 from fap.ui.builtin.report_editor import OPEN_REPORT
                 st.session_state[OPEN_REPORT] = r.id      # navigation only

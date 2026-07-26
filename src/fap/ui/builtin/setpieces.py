@@ -18,7 +18,29 @@ from fap.setpieces.models import (
     DELIVERY_TYPES, OCCUPANCY_ROLE_LABELS, PERSPECTIVES, PHASES,
     SET_PIECE_TYPE_LABELS, SET_PIECE_TYPES, SIDES, SetPieceFilter,
 )
+from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import Page, page_registry
+
+# validation status -> unified (badge kind, label, icon) - one status vocabulary
+_VAL_STATUS = {
+    "READY": ("success", "Ready", "check"),
+    "NOT_ENOUGH_EVENTS": ("warning", "Not enough events", "clock"),
+    "MISSING_DATA": ("danger", "Missing data", "x"),
+    "UNSUPPORTED_DATA_SOURCE": ("danger", "Unsupported data source", "warning"),
+}
+
+
+def _quality_kind(q: float) -> str:
+    return "success" if q >= 85 else "info" if q >= 60 else "warning" if q >= 40 else "danger"
+
+
+def _check_html(ok: bool, label: str) -> str:
+    """A requirement line: green check when satisfied, red cross when not."""
+    kind, glyph = ("success", "check") if ok else ("danger", "x")
+    return (f"<div style='display:flex;align-items:center;gap:7px;margin:2px 0'>"
+            f"<span style='color:var(--fap-{kind})'>{icon(glyph, 14)}</span>"
+            f"<span>{label}</span></div>")
 
 SEL = "_setpiece_id"                    # selected set piece (detail view)
 OPEN_REPORT = "_open_report_id"         # the Report Studio navigation key (reused)
@@ -59,7 +81,10 @@ class SetPieceAnalysisPage(Page):
         self._can_edit = perms.can(shell.user, str(Capability.EDIT_SETPIECE))
         self._can_report = perms.can(shell.user, str(Capability.CREATE_REPORT))
 
-        st.title("Set Piece Analysis")
+        C.render_section_title(
+            "Set Piece Analysis", eyebrow="Analysis",
+            subtitle="Match prep, offensive & defensive routines, penalties and guided visualizations.",
+            icon_name="setpiece")
 
         selected = st.session_state.get(SEL)
         if selected and svc.get_set_piece(selected):
@@ -205,7 +230,7 @@ class SetPieceAnalysisPage(Page):
         with st.expander("Scope (optional filters)"):
             filt = self._filter_bar(shell, svc, key="mp")
         st.markdown(_profile_blurb(prof["id"]))
-        if st.button("⚡ Generate Match Preparation Report", type="primary", key="mp_generate"):
+        if st.button("Generate Match Preparation Report", type="primary", key="mp_generate"):
             with st.spinner("Building report from analytics, visualizations and intelligence…"):
                 try:
                     rec = svc.generate_match_report(shell.user, profile=prof["id"], filt=filt,
@@ -325,7 +350,7 @@ class SetPieceAnalysisPage(Page):
             for r in intel.recommendations:
                 self._recommendation(r)
         if self._can_report and getattr(shell.platform, "reports", None) is not None:
-            if st.button("📄 Create penalty report (Studio)", key="pen_report"):
+            if st.button("Create penalty report (Studio)", key="pen_report"):
                 try:
                     rec = svc.create_penalty_report(shell.user, filt=filt,
                                                     workspace_id=shell.workspace_id)
@@ -388,7 +413,7 @@ class SetPieceAnalysisPage(Page):
 
         st.divider()
         if self._can_report and getattr(shell.platform, "reports", None) is not None:
-            if st.button("📄 Create intelligence report (Studio)", key="intel_report"):
+            if st.button("Create intelligence report (Studio)", key="intel_report"):
                 try:
                     rec = svc.create_intelligence_report(shell.user, filt=filt,
                                                          workspace_id=shell.workspace_id)
@@ -398,17 +423,21 @@ class SetPieceAnalysisPage(Page):
 
     @staticmethod
     def _insight(i) -> None:
-        icon = {"success": "🟢", "warning": "🟡", "danger": "🔴"}.get(i.kind, "🔵")
-        st.markdown(f"{icon} **{i.title}** — {i.text}  \n"
-                    f"<span style='color:gray;font-size:0.85em'>confidence "
+        kind = i.kind if i.kind in ("success", "warning", "danger", "info") else "info"
+        badge = C.badge_html(i.kind.title(), kind)
+        st.markdown(f"{badge} **{i.title}** — {i.text}  \n"
+                    f"<span style='color:var(--fap-text-subtle);font-size:0.85em'>confidence "
                     f"{int(i.confidence * 100)}% · evidence: {'; '.join(i.evidence) or '—'}</span>",
                     unsafe_allow_html=True)
 
     @staticmethod
     def _recommendation(r) -> None:
-        badge = {"high": "🔴 HIGH", "medium": "🟡 MED", "low": "⚪ LOW"}.get(r.priority, r.priority)
+        _k = {"high": ("danger", "HIGH"), "medium": ("warning", "MED"), "low": ("neutral", "LOW")}
+        kind, txt = _k.get(r.priority, ("neutral", str(r.priority).upper()))
+        badge = C.badge_html(txt, kind)
         with st.container(border=True):
-            st.markdown(f"**{r.action}**  ·  {badge}  ·  confidence {int(r.confidence * 100)}%")
+            st.markdown(f"**{r.action}**  ·  {badge}  ·  confidence {int(r.confidence * 100)}%",
+                        unsafe_allow_html=True)
             st.markdown(f"*Why:* {r.rationale}")
             meta = []
             if r.evidence:
@@ -499,9 +528,12 @@ class SetPieceAnalysisPage(Page):
             st.caption("DEPENDENCY TREE")
             parts = []
             for node in tree:
-                icon = "🟢" if node["status"] == "ok" else "🔴"
-                parts.append(f"{icon} {node['label']}")
-            st.markdown("  →  ".join(parts))
+                kind, glyph = ("success", "check") if node["status"] == "ok" else ("danger", "x")
+                parts.append(f"<span style='color:var(--fap-{kind})'>{icon(glyph, 13)}</span> "
+                             f"{node['label']}")
+            st.markdown("<div style='display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center'>"
+                        + "".join(f"<span>{p}</span>" for p in parts) + "</div>",
+                        unsafe_allow_html=True)
 
     @staticmethod
     def _info_card(guide) -> None:
@@ -547,12 +579,9 @@ class SetPieceAnalysisPage(Page):
     # -- 9.6 validation UI --------------------------------------------------
     @staticmethod
     def _status_badge(val) -> None:
-        icon = {"READY": "✅", "NOT_ENOUGH_EVENTS": "🟡", "MISSING_DATA": "❌",
-                "UNSUPPORTED_DATA_SOURCE": "⛔"}.get(val.status, "❔")
-        label = {"READY": "Ready", "NOT_ENOUGH_EVENTS": "Not enough events",
-                 "MISSING_DATA": "Missing data",
-                 "UNSUPPORTED_DATA_SOURCE": "Unsupported data source"}.get(val.status, val.status)
-        st.markdown(f"### {icon} {label}")
+        kind, label, glyph = _VAL_STATUS.get(val.status, ("neutral", val.status, "help"))
+        st.markdown(f'<div style="margin:2px 0 6px">{C.badge_html(label, kind, icon_name=glyph)}</div>',
+                    unsafe_allow_html=True)
 
     def _requirement_panel(self, req, val) -> None:
         with st.container(border=True):
@@ -560,32 +589,29 @@ class SetPieceAnalysisPage(Page):
                        + f"  ·  Tier {req.get('tier', '?')}")
             self._status_badge(val)
             q = val.quality
-            qcolor = "🟢" if q >= 85 else ("🟡" if q >= 60 else ("🟠" if q >= 40 else "🔴"))
-            st.markdown(f"**Data quality {qcolor} {q}%** — {val.quality_label}")
+            st.markdown(f"**Data quality** {C.badge_html(f'{q}%', _quality_kind(q))} — {val.quality_label}",
+                        unsafe_allow_html=True)
 
             st.markdown("**Requirements**")
-            st.markdown(self._req_line("Set piece events", val.coverage["coordinates"] >= 0))
-            st.markdown(self._req_line("Event coordinates", val.coverage["coordinates"] > 0))
+            reqs = [("Set piece events", val.coverage["coordinates"] >= 0),
+                    ("Event coordinates", val.coverage["coordinates"] > 0)]
             if req.get("needs_positions"):
-                st.markdown(self._req_line("Player positions", val.coverage["positions"] > 0))
+                reqs.append(("Player positions", val.coverage["positions"] > 0))
             if req.get("needs_goalkeeper"):
-                st.markdown(self._req_line("Goalkeeper position", val.coverage["goalkeeper"] > 0))
+                reqs.append(("Goalkeeper position", val.coverage["goalkeeper"] > 0))
             if req.get("needs_contacts"):
-                st.markdown(self._req_line("Contact events", val.coverage["contacts"] > 0))
+                reqs.append(("Contact events", val.coverage["contacts"] > 0))
             if req.get("needs_penalty"):
-                st.markdown(self._req_line("Penalty detail", val.coverage["penalty"] > 0))
+                reqs.append(("Penalty detail", val.coverage["penalty"] > 0))
+            st.markdown("".join(_check_html(ok, lbl) for lbl, ok in reqs), unsafe_allow_html=True)
 
             st.markdown(f"**Minimum:** {req.get('min_events', 0)} tagged events")
             st.markdown("**Coverage**")
             self._coverage_bars(val)
             st.markdown("**Works with**")
-            st.markdown(self._sources_md(req))
+            st.markdown(self._sources_md(req), unsafe_allow_html=True)
             if val.reason:
                 st.caption("Reason — " + val.reason)
-
-    @staticmethod
-    def _req_line(label, ok) -> str:
-        return f"{'✔' if ok else '❌'} {label}"
 
     @staticmethod
     def _coverage_bars(val) -> None:
@@ -600,12 +626,16 @@ class SetPieceAnalysisPage(Page):
 
     @staticmethod
     def _sources_md(req) -> str:
-        icons = {"yes": "✓", "planned": "⏳", "no": "✗"}
+        marks = {"yes": ("success", "check"), "planned": ("info", "clock"), "no": ("danger", "x")}
         labels = {"csv": "CSV", "excel": "Excel", "json": "JSON", "manual": "Manual tagging",
                   "tracking": "Tracking", "statsbomb": "StatsBomb Open"}
         src = req.get("sources", {})
-        return "  \n".join(f"{icons.get(src.get(k, 'no'), '✗')} {labels[k]}" for k in
-                           ("csv", "excel", "json", "manual", "tracking", "statsbomb"))
+        rows = []
+        for k in ("csv", "excel", "json", "manual", "tracking", "statsbomb"):
+            kind, glyph = marks.get(src.get(k, "no"), ("danger", "x"))
+            rows.append(f"<div style='display:flex;align-items:center;gap:7px;margin:2px 0'>"
+                        f"<span style='color:var(--fap-{kind})'>{icon(glyph, 13)}</span>{labels[k]}</div>")
+        return "".join(rows)
 
     @staticmethod
     def _event_counter(val) -> None:
@@ -617,18 +647,19 @@ class SetPieceAnalysisPage(Page):
     def _empty_state(self, shell, svc, viz, req, val) -> None:
         with st.container(border=True):
             st.subheader("Why can’t this render?")
-            st.markdown(f"{val.reason or 'Required data is not present.'}")
+            C.render_alert(val.reason or "Required data is not present.", "warning")
             # required checklist with live counts (Part 2)
             st.markdown("**This visualization requires**")
-            st.markdown(self._req_line("Delivery coordinates", val.coverage["coordinates"] > 0))
+            checks = [("Delivery coordinates", val.coverage["coordinates"] > 0)]
             if req.get("needs_positions"):
-                st.markdown(self._req_line("Player positions", val.coverage["positions"] > 0))
+                checks.append(("Player positions", val.coverage["positions"] > 0))
             if req.get("needs_goalkeeper"):
-                st.markdown(self._req_line("Goalkeeper position", val.coverage["goalkeeper"] > 0))
+                checks.append(("Goalkeeper position", val.coverage["goalkeeper"] > 0))
             if req.get("needs_contacts"):
-                st.markdown(self._req_line("Contact events", val.coverage["contacts"] > 0))
+                checks.append(("Contact events", val.coverage["contacts"] > 0))
             if req.get("needs_penalty"):
-                st.markdown(self._req_line("Penalty detail", val.coverage["penalty"] > 0))
+                checks.append(("Penalty detail", val.coverage["penalty"] > 0))
+            st.markdown("".join(_check_html(ok, lbl) for lbl, ok in checks), unsafe_allow_html=True)
             m, cur = st.columns(2)
             m.metric("Minimum required", val.events_required)
             cur.metric("Current", val.events_available)
@@ -657,7 +688,7 @@ class SetPieceAnalysisPage(Page):
             if req.get("needs_contacts") and health["contacts"]["n"] == 0:
                 targeted.append(("Generate missing contact data", svc.generate_missing_contacts, "gm_con"))
         for label, fn, key in targeted:
-            if st.button(f"➕ {label} (adds to existing set pieces)", key=key):
+            if st.button(f"{label} (adds to existing set pieces)", key=key):
                 try:
                     n = fn(shell.user, None, workspace_id=shell.workspace_id)
                     st.success(f"Augmented {n} set pieces. Reopen the tab to render.")
@@ -666,7 +697,7 @@ class SetPieceAnalysisPage(Page):
                     st.error(f"Failed: {exc}")
 
         d1, d2 = st.columns([2, 1])
-        if d1.button(f"⚡ Generate full demo dataset for “{viz['name']}”", key="spv_demo",
+        if d1.button(f"Generate full demo dataset for “{viz['name']}”", key="spv_demo",
                      type="primary"):
             try:
                 n = svc.generate_viz_demo(shell.user, viz["id"], workspace_id=shell.workspace_id)
@@ -689,11 +720,11 @@ class SetPieceAnalysisPage(Page):
         if reports is None:
             return
         recs = reports.list(shell.user, workspace_id=shell.workspace_id)
-        options = ["➕ New report"] + [r.title for r in recs]
+        options = ["New report"] + [r.title for r in recs]
         choice = st.selectbox("Embed into report", options, key="spv_report")
         if st.button("Add visualization to Report Studio", key="spv_embed"):
             try:
-                if choice == "➕ New report":
+                if choice == "New report":
                     rid = svc.create_report(shell.user, filt=filt, title="Set Piece Report",
                                             workspace_id=shell.workspace_id).id
                 else:
@@ -721,7 +752,7 @@ class SetPieceAnalysisPage(Page):
     def _report_button(self, shell, svc, filt, *, key: str, phase: str = "") -> None:
         if not self._can_report:
             return
-        if st.button("📄 Create Studio report", key=f"sp_report_{key}"):
+        if st.button("Create Studio report", key=f"sp_report_{key}"):
             try:
                 use = filt if not phase else self._with_phase(filt, phase)
                 rec = svc.create_report(shell.user, filt=use, workspace_id=shell.workspace_id,
@@ -838,15 +869,20 @@ class SetPieceAnalysisPage(Page):
             return
         ready = [c for c in compat if c["can_render"]]
         blocked = [c for c in compat if not c["can_render"]]
-        st.caption(f"✓ {len(ready)} of {len(compat)} visualizations are renderable from this dataset")
+        st.markdown(
+            f"<span style='color:var(--fap-success)'>{icon('check', 14)}</span> "
+            f"<b>{len(ready)}</b> of {len(compat)} visualizations are renderable from this dataset",
+            unsafe_allow_html=True)
         cols = st.columns(2)
         with cols[0]:
-            st.markdown("**✓ Ready now**")
+            st.markdown(f"{C.badge_html('Ready now', 'success', icon_name='check')}",
+                        unsafe_allow_html=True)
             st.dataframe([{"Visualization": c["name"], "Category": c["category"]} for c in ready[:60]]
                          or [{"Visualization": "none", "Category": "—"}],
                          use_container_width=True, hide_index=True)
         with cols[1]:
-            st.markdown("**✗ Needs more data**")
+            st.markdown(f"{C.badge_html('Needs more data', 'danger', icon_name='x')}",
+                        unsafe_allow_html=True)
             st.dataframe([{"Visualization": c["name"], "Reason": c["reason"]} for c in blocked[:60]]
                          or [{"Visualization": "none", "Reason": "—"}],
                          use_container_width=True, hide_index=True)
@@ -868,7 +904,7 @@ class SetPieceAnalysisPage(Page):
         for sp in items[:200]:
             label = (f"{SET_PIECE_TYPE_LABELS.get(sp.type, sp.type)} · {sp.phase} · "
                      f"{sp.team or '—'} vs {sp.opponent or '—'}"
-                     f"{' · ⚽' if sp.goal else (' · shot' if sp.shot else '')}")
+                     f"{' · goal' if sp.goal else (' · shot' if sp.shot else '')}")
             if st.button(label, key=f"sp_open_{sp.id}"):
                 st.session_state[SEL] = sp.id
                 st.rerun()
@@ -876,7 +912,7 @@ class SetPieceAnalysisPage(Page):
     # ---------------------------------------------------------------- detail
     def _detail(self, shell, svc, sp_id: str) -> None:
         sp = svc.get_set_piece(sp_id)
-        if st.button("← Back"):
+        if st.button("Back", key="sp_detail_back"):
             st.session_state.pop(SEL, None)
             st.rerun()
         st.subheader(f"{SET_PIECE_TYPE_LABELS.get(sp.type, sp.type)} — "

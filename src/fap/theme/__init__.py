@@ -27,6 +27,10 @@ from fap.theme.spacing import DEFAULT_SPACING, Spacing
 from fap.theme.icons import icon, icon_names, has_icon
 from fap.theme.css import apply, build_css
 from fap.theme import components
+from fap.theme.presets import (
+    PRESETS, DEFAULT_PRESET_ID, ThemePreset, branding_for, get_preset,
+    preset_choices, preset_ids,
+)
 
 VALID_MODES = ("light", "dark", "auto")
 
@@ -48,4 +52,6 @@ __all__ = [
     "Typography", "DEFAULT_TYPOGRAPHY", "Spacing", "DEFAULT_SPACING",
     "icon", "icon_names", "has_icon",
     "apply", "build_css", "components", "resolve_mode", "VALID_MODES",
+    "PRESETS", "DEFAULT_PRESET_ID", "ThemePreset", "branding_for", "get_preset",
+    "preset_choices", "preset_ids",
 ]
