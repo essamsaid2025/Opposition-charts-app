@@ -148,6 +148,23 @@ class PlayerRepository:
             f"WHERE player_id IN ({marks}) GROUP BY player_id", tuple(ids))
         return {r["player_id"]: int(r["m"]) for r in rows}
 
+    def dataset_meta(self, ids: list[str]) -> dict[str, dict[str, str]]:
+        """Read match metadata (opponent/competition/date/season) for linked
+        datasets from the EXISTING datasets table (migration 5) - presentation
+        only, no analytics. Unknown ids simply return nothing."""
+        ids = [i for i in ids if i]
+        if not ids:
+            return {}
+        try:
+            marks = ",".join(["?"] * len(ids))
+            rows = self._db.query(
+                f"SELECT id, opponent, competition, match_date, season FROM datasets "
+                f"WHERE id IN ({marks})", tuple(ids))
+        except Exception:
+            return {}
+        return {r["id"]: {"opponent": r["opponent"], "competition": r["competition"],
+                          "match_date": r["match_date"], "season": r["season"]} for r in rows}
+
     def distinct_values(self, column: str) -> list[str]:
         if column not in ("primary_position", "nationality", "foot", "status", "availability"):
             return []

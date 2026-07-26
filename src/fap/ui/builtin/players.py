@@ -315,23 +315,7 @@ class FirstTeamPlayersPage(Page):
             st.rerun()
         ov = svc.overview(shell.user, player_id)
         p = ov["player"]
-        head = st.columns([1, 3])
-        with head[0]:
-            photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
-            if photo:
-                st.image(photo, use_container_width=True)
-            else:
-                st.markdown(f"<div style='background:#e8edf2;border-radius:10px;height:120px;"
-                            f"display:flex;align-items:center;justify-content:center;font-size:2rem;"
-                            f"font-weight:700;color:#7a8aa0'>{self._initials(p)}</div>",
-                            unsafe_allow_html=True)
-        with head[1]:
-            num = f"#{p.shirt_number} · " if p.shirt_number is not None else ""
-            cap = " (C)" if p.captain else (" (VC)" if p.vice_captain else "")
-            st.subheader(f"{num}{p.name}{cap}")
-            st.caption(f"{p.primary_position or '—'} · {ov['age'] if ov['age'] is not None else '—'} yrs "
-                       f"· {p.nationality or '—'} · {p.foot.title() or '—'} foot")
-            st.markdown(f"**{_AVAIL_BADGE.get('injured' if ov.get('injury') else p.availability, ov['availability'])}**")
+        self._header(svc, p, ov)
 
         tabs = st.tabs(["Overview", "Analysis", "Statistics", "Career", "Matches", "Training",
                         "Medical", "Videos", "Reports", "Settings"])
@@ -355,6 +339,42 @@ class FirstTeamPlayersPage(Page):
             self._tab_reports(shell, svc, player_id)
         with tabs[9]:
             self._tab_settings(shell, svc, player_id, p)
+
+    # ---- professional header -------------------------------------------
+    def _header(self, svc, p, ov) -> None:
+        with st.container(border=True):
+            head = st.columns([1, 3, 2])
+            with head[0]:
+                photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
+                if photo:
+                    st.image(photo, use_container_width=True)
+                else:
+                    st.markdown(f"<div style='background:#e8edf2;border-radius:10px;height:110px;"
+                                f"display:flex;align-items:center;justify-content:center;font-size:2rem;"
+                                f"font-weight:700;color:#7a8aa0'>{self._initials(p)}</div>",
+                                unsafe_allow_html=True)
+            with head[1]:
+                badges = []
+                if p.shirt_number is not None:
+                    badges.append(f"<span style='background:#111;color:#fff;border-radius:6px;"
+                                  f"padding:2px 8px;font-weight:700'>#{p.shirt_number}</span>")
+                if p.captain:
+                    badges.append("<span style='background:#c9a227;color:#111;border-radius:6px;"
+                                  "padding:2px 8px;font-weight:700'>C</span>")
+                elif p.vice_captain:
+                    badges.append("<span style='background:#9aa7b5;color:#111;border-radius:6px;"
+                                  "padding:2px 8px;font-weight:700'>VC</span>")
+                st.markdown(" ".join(badges) + f"  &nbsp; <span style='font-size:1.4rem;"
+                            f"font-weight:750'>{p.name}</span>", unsafe_allow_html=True)
+                flag = (p.flag + " ") if p.flag else ""
+                st.caption(f"{p.primary_position or '—'} · {flag}{p.nationality or '—'} · "
+                           f"{ov['age'] if ov['age'] is not None else '—'} yrs · {p.foot.title() or '—'} foot")
+                avail = "injured" if ov.get("injury") else p.availability
+                st.markdown(f"**{_AVAIL_BADGE.get(avail, ov['availability'])}**")
+            with head[2]:
+                c = ov["contract"]
+                st.metric("Career minutes", ov["career_totals"]["minutes"])
+                st.metric("Contract ends", (c.contract_end if c and c.contract_end else "—"))
 
     # ---- Overview (live dashboard) --------------------------------------
     def _tab_overview(self, shell, svc, player_id, ov) -> None:
@@ -395,34 +415,45 @@ class FirstTeamPlayersPage(Page):
         st.subheader("Timeline")
         self._timeline(svc, shell, player_id)
 
+    _TL_STYLE = {"signing": ("✍️", "#2b6aa6"), "contract": ("📄", "#5a6b7a"),
+                 "loan": ("🔁", "#8a5a1a"), "injury": ("🩹", "#b23a34"),
+                 "recovery": ("✅", "#1f7a48"), "match": ("⚽", "#111827"),
+                 "video": ("🎬", "#6d28d9"), "award": ("🏆", "#c9a227"),
+                 "report": ("📊", "#0f766e")}
+
     def _timeline(self, svc, shell, player_id) -> None:
         events = svc.timeline(shell.user, player_id)
         if not events:
             st.caption("No timeline events yet.")
             return
-        icon = {"signing": "✍️", "contract": "📄", "loan": "🔁", "injury": "🩹",
-                "recovery": "✅", "match": "⚽", "video": "🎬", "award": "🏆", "report": "📊"}
         for e in events[:40]:
-            st.markdown(f"{icon.get(e['type'], '•')} **{e['date'] or '—'}** — {e['label']}")
+            icon, color = self._TL_STYLE.get(e["type"], ("•", "#666"))
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;padding:4px 0'>"
+                f"<span style='background:{color};color:#fff;border-radius:6px;padding:2px 8px;"
+                f"font-size:.72rem;font-weight:700;text-transform:uppercase'>{icon} {e['type']}</span>"
+                f"<span style='font-family:monospace;color:#888'>{e['date'] or '—'}</span>"
+                f"<span>{e['label']}</span></div>", unsafe_allow_html=True)
 
     # ---- Analysis (central hub, reuses existing modules) ----------------
     def _tab_analysis(self, shell, svc, player_id, ov) -> None:
-        st.caption("Central analysis hub — every section reuses an existing module. Nothing is recomputed here.")
-        sections = [
-            ("Open Play", "Match event maps for this player.", "opponent_analysis", "opponent_analysis"),
-            ("Set Pieces", "Set-piece involvement & routines.", "set_piece_analysis", "set_piece_analysis"),
-            ("Opponent Analysis", "Opponent breakdowns.", "opponent_analysis", "opponent_analysis"),
-            ("Match Reports", "Match analysis pages.", "match_analysis", "match_analysis"),
-        ]
+        st.caption("Central analysis hub — professional module cards. Every card opens an existing module; "
+                   "nothing is recomputed here.")
+        cards = svc.analysis_hub(shell.user, player_id)
         cols = st.columns(2)
-        for i, (title, desc, page_id, _) in enumerate(sections):
+        for i, card in enumerate(cards):
             with cols[i % 2]:
                 with st.container(border=True):
-                    st.markdown(f"**{title}**")
-                    st.caption(desc)
-                    if st.button(f"Open {title}", key=f"an_{page_id}_{i}"):
+                    st.markdown(f"### {card['name']}")
+                    st.caption(card["desc"])
+                    g = st.columns(2)
+                    g[0].metric("Datasets", card["datasets"])
+                    g[1].metric("Reports", card["reports"])
+                    st.caption(f"Last analysis: **{card['last_analysis']}**  ·  "
+                               f"Last update: **{card['last_update']}**")
+                    if st.button(f"Open {card['name']}", key=f"an_{card['page_id']}_{i}"):
                         try:
-                            shell.goto(page_id)
+                            shell.goto(card["page_id"])
                         except Exception:
                             st.info("Open this module from the navigation.")
         st.subheader("Physical & GPS")
@@ -436,8 +467,15 @@ class FirstTeamPlayersPage(Page):
 
     # ---- Statistics (reuse analytics + dynamic charts) ------------------
     def _tab_statistics(self, shell, svc, player_id) -> None:
-        st.caption("Career statistics are the stored figures; charts render the linked match data through "
-                   "the existing visualization engine — the chart list is pulled live from the registry.")
+        st.caption("Career statistics are always shown from the stored figures; charts render linked match "
+                   "data through the existing visualization engine (chart list pulled live from the registry).")
+        totals = svc.career_totals(player_id)
+        st.subheader("Career statistics")
+        k = st.columns(7)
+        k[0].metric("Apps", totals["appearances"]); k[1].metric("Starts", totals["starts"])
+        k[2].metric("Minutes", totals["minutes"]); k[3].metric("Goals", totals["goals"])
+        k[4].metric("Assists", totals["assists"]); k[5].metric("Yellow", totals["yellow"])
+        k[6].metric("Red", totals["red"])
         career = svc.list_career(player_id)
         if career:
             st.dataframe([{"Season": c.season, "Competition": c.competition, "Apps": c.appearances,
@@ -492,14 +530,29 @@ class FirstTeamPlayersPage(Page):
                                        minutes=int(mins))
                         st.rerun()
 
-    # ---- Matches (link-only) -------------------------------------------
+    # ---- Matches (link-only, rich presentation) ------------------------
     def _tab_matches(self, shell, svc, player_id) -> None:
-        links = svc.list_match_links(player_id)
-        if links:
-            st.dataframe([{"Dataset": l.dataset_id or "—", "Match": l.match_id or "—",
-                           "Minutes": l.minutes, "Role": l.role, "Availability": l.availability}
-                          for l in links], use_container_width=True, hide_index=True)
-            st.caption("Match statistics come from the linked datasets — open Match Analysis to explore them.")
+        rows = svc.match_rows(shell.user, player_id)
+        if rows:
+            for i, r in enumerate(rows):
+                with st.container(border=True):
+                    c = st.columns([3, 2, 1, 1, 2])
+                    c[0].markdown(f"**vs {r['opponent']}**  \n{r['competition']}")
+                    c[1].markdown(f"📅 {r['date']}  \n{r['season']}")
+                    c[2].metric("Min", r["minutes"] if r["minutes"] is not None else "—")
+                    c[3].markdown(f"**{r['result']}**  \n{r['role'] or '—'}")
+                    with c[4]:
+                        if r["dataset_id"] and st.button("Open Analysis", key=f"ftp_ma_{i}"):
+                            try:
+                                shell.goto("opponent_analysis")
+                            except Exception:
+                                st.info("Open Match Analysis from the navigation.")
+                        if st.button("Open Match Report", key=f"ftp_mr_{i}"):
+                            try:
+                                shell.goto("match_analysis")
+                            except Exception:
+                                st.info("Open from the navigation.")
+            st.caption("Match statistics come from the linked datasets — never duplicated here.")
         else:
             st.info("No matches linked. Match data is never duplicated here — link an existing dataset below.")
         if self._can_edit:

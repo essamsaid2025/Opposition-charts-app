@@ -344,11 +344,58 @@ class PlayersService:
     def add_career(self, user: User, player_id: str, **fields: Any) -> PlayerCareer:
         self._require(user, Capability.EDIT_PLAYERS)
         c = PlayerCareer(id=self._uid(), player_id=player_id)
+        if "starts" in fields:                       # no column; store in document
+            c.document["starts"] = int(fields.pop("starts") or 0)
         for k, v in fields.items():
             if hasattr(c, k):
                 setattr(c, k, v)
         self.career.add(c)
         return c
+
+    # ================================================================ analysis hub / matches (presentation)
+    def analysis_hub(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """Per-module dashboard cards (name, last analysis, last update, datasets,
+        reports, page). Presentation over EXISTING data - reuses match links and
+        the player's linked reports; recomputes nothing."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        p = self._player_or_raise(player_id)
+        links = self.match_links.list(player_id)
+        datasets = len({l.dataset_id for l in links if l.dataset_id})
+        n_reports = len(p.document.get("report_ids") or [])
+        last_analysis = (links[0].created_at[:10] if links and links[0].created_at else "—")
+        upd = (p.updated_at or "")[:10] or "—"
+        return [
+            {"name": "Open Play", "page_id": "opponent_analysis", "datasets": datasets,
+             "reports": n_reports, "last_analysis": last_analysis, "last_update": upd,
+             "desc": "Match event maps for this player."},
+            {"name": "Set Pieces", "page_id": "set_piece_analysis", "datasets": "—",
+             "reports": "—", "last_analysis": "—", "last_update": upd,
+             "desc": "Set-piece involvement & routines."},
+            {"name": "Opponent Analysis", "page_id": "opponent_analysis", "datasets": datasets,
+             "reports": n_reports, "last_analysis": last_analysis, "last_update": upd,
+             "desc": "Opponent breakdowns."},
+            {"name": "Match Reports", "page_id": "match_analysis", "datasets": len(links),
+             "reports": n_reports, "last_analysis": last_analysis, "last_update": upd,
+             "desc": "Match analysis pages."},
+        ]
+
+    def match_rows(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """Rich match rows for the Matches tab: opponent / competition / date /
+        result resolved from the LINKED dataset metadata (existing datasets table);
+        no match statistics are stored or recomputed here."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        links = self.match_links.list(player_id)
+        meta = self.players.dataset_meta([l.dataset_id for l in links])
+        rows = []
+        for l in links:
+            m = meta.get(l.dataset_id, {})
+            rows.append({
+                "opponent": m.get("opponent") or "—", "competition": m.get("competition") or "—",
+                "date": m.get("match_date") or "—", "season": m.get("season") or "",
+                "minutes": l.minutes, "role": l.role, "availability": l.availability,
+                "result": (l.availability if l.availability in ("W", "D", "L") else "—"),
+                "dataset_id": l.dataset_id, "match_id": l.match_id})
+        return rows
 
     def list_career(self, player_id: str) -> list[PlayerCareer]:
         return self.career.list(player_id)

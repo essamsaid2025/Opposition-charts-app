@@ -87,6 +87,7 @@ def _within(date: str, days: int) -> bool:
 def career_totals(career: list[PlayerCareer]) -> dict[str, int]:
     return {
         "appearances": sum(c.appearances for c in career),
+        "starts": sum(int((c.document or {}).get("starts", 0)) for c in career),
         "goals": sum(c.goals for c in career),
         "assists": sum(c.assists for c in career),
         "minutes": sum(c.minutes for c in career),
