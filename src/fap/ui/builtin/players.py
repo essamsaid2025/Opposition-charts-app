@@ -510,6 +510,14 @@ class FirstTeamPlayersPage(Page):
         else:
             st.info("No career statistics recorded yet.")
         st.subheader("Charts")
+        src = svc.player_data_source(shell.user, player_id)
+        if src["active"]:
+            st.caption(f"{icon('datasets', 13)} Charts render from the active dataset "
+                       f"**{src['active_name']}**" + (f" + {src['linked']} linked" if src['linked'] else "")
+                       + " through the existing visualization engine.", unsafe_allow_html=True)
+        elif src["linked"]:
+            st.caption(f"Charts render from {src['linked']} linked dataset(s). "
+                       "Choose an active dataset in the Data Hub to analyze more.")
         try:
             catalog = svc.available_visualizations(shell.user)
         except Exception as exc:
@@ -526,9 +534,13 @@ class FirstTeamPlayersPage(Page):
             png = svc.render_player_chart(shell.user, player_id, viz["id"], theme_id=theme)
             if png:
                 st.image(png, use_container_width=True)
+            elif svc.player_data_source(shell.user, player_id)["active"] or \
+                    svc.player_data_source(shell.user, player_id)["linked"]:
+                st.info(f"No events for this player in the current data. This chart may not apply, "
+                        f"or the player's name may differ in the dataset.")
             else:
-                st.info("No linked match data to render. Link this player to a match dataset in the "
-                        "Matches tab, then render charts here.")
+                st.info("No match data yet. Choose an active dataset in the **Data Hub**, or link a "
+                        "dataset in the **Matches** tab, then render charts here.")
 
     # ---- Career --------------------------------------------------------
     def _tab_career(self, shell, svc, player_id) -> None:

@@ -177,11 +177,52 @@ class ScoutingPage(Page):
         with tabs[5]:
             self._reports(shell, svc, p)
 
+    def _active_analysis(self, shell, svc, p) -> None:
+        """Match analysis from the ACTIVE dataset (single source of truth), joined
+        in memory to this scouting record. Data Hub aware when nothing is active;
+        the persistent scouting DB is never used for event data."""
+        with st.expander("Match analysis (active dataset)", expanded=False):
+            if not svc.has_active_dataset(shell.user):
+                go = C.render_empty_state(
+                    "No active dataset", "Scouting analysis reads match/event data from the active "
+                    "dataset. Import and choose one in the Data Hub - notes, ratings and tags stay "
+                    "in the scouting database.", icon_name="datasets",
+                    action_label="Open Data Hub", key=f"sc_dh_{p.id}")
+                if go:
+                    shell.goto("data_hub")
+                return
+            stats = svc.active_player_stats(shell.user, p.id)
+            if not stats["events"]:
+                C.render_alert(f"No events found for {p.name} in the active dataset "
+                               f"(the player's name may differ in the data).", "info")
+                return
+            m = st.columns(2)
+            m[0].metric("Events", stats["events"])
+            m[1].metric("Matches", stats["matches"])
+            try:
+                catalog = svc.available_visualizations(shell.user)
+            except Exception:
+                return
+            cats = sorted({v["category"] for v in catalog})
+            a, b, c = st.columns([2, 2, 1])
+            cat = a.selectbox("Category", cats, key=f"sc_cat_{p.id}")
+            in_cat = [v for v in catalog if v["category"] == cat]
+            viz = b.selectbox("Visualization", in_cat, format_func=lambda v: v["name"],
+                              key=f"sc_viz_{p.id}")
+            theme = c.selectbox("Theme", ["opta_light", "opta_dark"], key=f"sc_theme_{p.id}")
+            if st.button("Render chart", key=f"sc_render_{p.id}"):
+                png = svc.render_player_chart(shell.user, p.id, viz["id"], theme_id=theme)
+                if png:
+                    st.image(png, use_container_width=True)
+                else:
+                    st.info("This visualization could not be rendered from the current events.")
+
     def _profile(self, shell, svc, p) -> None:
         st.write(f"**Country** {p.country or '—'} · **Age** {p.age or '—'} · **Foot** {p.foot or '—'} "
                  f"· **Height** {p.height or '—'} · **Contract** {p.contract_until or '—'}")
         st.write(f"**Rating** {p.internal_rating or '—'} · **Value** {p.market_value or '—'} "
                  f"· **Agent** {p.agent or '—'} · **Tags** {', '.join(p.tags) or '—'}")
+        self._active_analysis(shell, svc, p)
         if not self._can_edit:
             return
         with st.expander("Edit profile"):

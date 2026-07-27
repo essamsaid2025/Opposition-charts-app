@@ -541,30 +541,61 @@ class PlayersService:
                 continue
         return sorted(out, key=lambda v: (v["category"], v["name"]))
 
+    def _resolve_frame(self, user: User, dataset_id: str):
+        """A dataset frame through the platform's single source of truth (the
+        WorkspaceManager storage), falling back to the reports provider. No new
+        data access, no duplicated state - the frame is owned by the WM."""
+        if self._wm is not None:
+            try:
+                f = self._wm.dataset_frame(dataset_id)
+                if f is not None:
+                    return f
+            except Exception:
+                pass
+        return self._reports.dataset_frame(dataset_id) if self._reports is not None else None
+
     def player_event_frame(self, user: User, player_id: str):
-        """Best-effort event frame for the player: concatenate the frames of the
-        datasets this player is linked to, filtered to their name. Reuses the
-        reports manager's dataset frame provider - no new data access."""
+        """Canonical match/event frame for the player (Phase 12.3). The ACTIVE
+        dataset (``WorkspaceManager.active_frame`` - the platform's single source of
+        truth) is the primary source; any explicit per-player dataset links are
+        unioned in for backward compatibility. Each dataset is resolved once (no
+        duplicated dataframe state) and joined IN MEMORY to the player's identity
+        (the persistent record) by name. The persistent player DB is untouched."""
         self._require(user, Capability.VIEW_PLAYERS)
-        if self._reports is None:
-            return None
         import pandas as pd
         p = self._player_or_raise(player_id)
-        frames = []
+        dataset_ids: list[str] = []
+        active_id = self._wm.active_dataset_id(user) if self._wm is not None else None
+        if active_id:
+            dataset_ids.append(active_id)
         for l in self.match_links.list(player_id):
-            if l.dataset_id:
-                f = self._reports.dataset_frame(l.dataset_id)
-                if f is not None and not f.empty:
-                    frames.append(f)
+            if l.dataset_id and l.dataset_id not in dataset_ids:
+                dataset_ids.append(l.dataset_id)
+        frames = [f for did in dataset_ids
+                  if (f := self._resolve_frame(user, did)) is not None and not f.empty]
         if not frames:
             return None
-        frame = pd.concat(frames, ignore_index=True)
+        frame = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
         if "player" in frame.columns:
             names = {p.name.lower(), p.last_name.lower(), p.display_name.lower()} - {""}
             match = frame[frame["player"].astype(str).str.lower().isin(names)]
             if not match.empty:
                 return match
         return frame
+
+    def player_data_source(self, user: User, player_id: str) -> dict[str, Any]:
+        """Where the player's match data comes from, for the UI caption (active
+        dataset and/or explicit links). Read-only; joins nothing, stores nothing."""
+        active = bool(self._wm is not None and self._wm.active_dataset_id(user))
+        active_name = ""
+        if active:
+            try:
+                ds = self._wm.active_dataset(user)
+                active_name = ds.name if ds else ""
+            except Exception:
+                active_name = ""
+        linked = sum(1 for l in self.match_links.list(player_id) if l.dataset_id)
+        return {"active": active, "active_name": active_name, "linked": linked}
 
     def render_player_chart(self, user: User, player_id: str, viz_id: str, *,
                             controls: dict[str, Any] | None = None, theme_id: str = "opta_light",

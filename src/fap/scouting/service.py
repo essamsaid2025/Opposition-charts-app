@@ -56,6 +56,75 @@ class ScoutingService:
     def _uid(self) -> str:
         return str(uuid.uuid4())
 
+    # ============================================================ active dataset (Phase 12.3)
+    # Scouting owns PERSISTENT recruitment metadata (notes, ratings, tags, videos,
+    # reports) in its own database. Match/event data is NOT stored here - it is read
+    # from the platform's single source of truth (WorkspaceManager.active_frame) and
+    # joined to the scouting record IN MEMORY, never duplicated.
+    def has_active_dataset(self, user: User) -> bool:
+        try:
+            return self._wm is not None and self._wm.active_dataset(user) is not None
+        except Exception:
+            return False
+
+    def player_event_frame(self, user: User, player_id: str):
+        """The active dataset's events for this scouting player (canonical match/
+        event source), joined in memory to the persistent record by name. ``None``
+        when no dataset is active or the player has no events in it. Stores nothing."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return None
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        frame = self._wm.active_frame(user)
+        if frame is None or getattr(frame, "empty", True) or "player" not in frame.columns:
+            return None
+        names = {p.name.lower().strip()} | {
+            str(a).lower().strip() for a in (p.document.get("aliases") or []) if a}
+        names -= {""}
+        match = frame[frame["player"].astype(str).str.lower().str.strip().isin(names)]
+        return match if not match.empty else None
+
+    def active_player_stats(self, user: User, player_id: str) -> dict[str, Any]:
+        """Event/match counts for this player in the active dataset (read-only)."""
+        frame = self.player_event_frame(user, player_id)
+        if frame is None:
+            return {"events": 0, "matches": 0}
+        matches = int(frame["match_id"].astype(str).str.strip().replace("", "0").nunique()) \
+            if "match_id" in frame.columns else 0
+        return {"events": int(len(frame)), "matches": matches}
+
+    def available_visualizations(self, user: User) -> list[dict[str, str]]:
+        """Every registered visualization, live from the shared registry (reused,
+        not duplicated) - rendered by the existing engine over the player's frame."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.visuals.base import load_builtin_visuals, visual_registry
+        load_builtin_visuals()
+        out = []
+        for cls in visual_registry:
+            try:
+                info = cls.info
+                out.append({"id": info.id, "name": info.name,
+                            "category": getattr(info, "category", "") or "General"})
+            except Exception:
+                continue
+        return sorted(out, key=lambda v: (v["category"], v["name"]))
+
+    def render_player_chart(self, user: User, player_id: str, viz_id: str, *,
+                            controls: dict[str, Any] | None = None,
+                            theme_id: str = "opta_light", dpi: int = 150) -> bytes | None:
+        """Render a visualization for the scouting player from the ACTIVE dataset
+        through the EXISTING engine (ReportsManager.preview_chart). No new viz code."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        frame = self.player_event_frame(user, player_id)
+        if frame is None or self._reports is None:
+            return None
+        try:
+            return self._reports.preview_chart(viz_id, frame, controls or {}, theme_id=theme_id, dpi=dpi)
+        except TypeError:
+            return self._reports.preview_chart(viz_id, frame, controls or {}, dpi=dpi)
+
     # ================================================================ players
     def create_player(self, user: User, name: str, **fields: Any) -> Player:
         self._require(user, Capability.EDIT_SCOUTING)
