@@ -117,8 +117,82 @@ class SetPieceService:
                archived: bool = False, workspace_id: str | None = None,
                limit: int = 1000) -> list[SetPiece]:
         self._require(user, Capability.VIEW_SETPIECE)
+        active = self._active_set_pieces(user, workspace_id)
+        if active is not None:                       # single source of truth
+            return self._filter_dict(active, filters or {})[:limit]
         return self.set_pieces.search(filters=filters, archived=archived,
                                       workspace_id=workspace_id, limit=limit)
+
+    # ============================================================ active dataset (Phase 12.2)
+    def has_active_dataset(self, user: User) -> bool:
+        """True when the platform has an active dataset (the single source of truth
+        the Set Piece module now reads from)."""
+        try:
+            return self._wm is not None and self._wm.active_dataset(user) is not None
+        except Exception:
+            return False
+
+    def _active_set_pieces(self, user: User, workspace_id: str | None) -> list[SetPiece] | None:
+        """Set pieces DERIVED from the active dataset's canonical frame - the one
+        source of truth (WorkspaceManager.active_frame). Returns:
+          * a list (possibly empty) when a dataset is active - the module reads this
+            and nothing else, so there is no duplicated state;
+          * ``None`` when NO dataset is active - callers then fall back to the
+            manual/imported store (preserves manual-only tagging).
+        Cached by dataset id (a saved dataset frame is immutable)."""
+        if self._wm is None:
+            return None
+        try:
+            dataset = self._wm.active_dataset(user)
+            if dataset is None:
+                return None
+            key = f"sp_derived::{dataset.id}"
+            if self._cache is not None:
+                hit = self._cache.get(key)
+                if hit is not None:
+                    return hit
+            frame = self._wm.active_frame(user)
+            if frame is None or getattr(frame, "empty", True):
+                return []
+            from fap.setpieces.derivation import derive_set_pieces
+            derived = derive_set_pieces(frame, workspace_id=dataset.workspace_id or workspace_id)
+            if self._cache is not None:
+                self._cache.set(key, derived)
+            return derived
+        except Exception:
+            return None
+
+    @staticmethod
+    def _filter_list(sps: list[SetPiece], filt: SetPieceFilter) -> list[SetPiece]:
+        """Apply a SetPieceFilter to an in-memory derived list (the SQL push-down
+        equivalent used for the persisted store)."""
+        fields = ("perspective", "phase", "type", "team", "opponent", "competition",
+                  "season", "match_id", "taker", "delivery_type", "outcome", "side")
+
+        def keep(sp: SetPiece) -> bool:
+            for key in fields:
+                want = getattr(filt, key, "")
+                if want and str(getattr(sp, key, "") or "").lower() != str(want).lower():
+                    return False
+            if filt.half is not None and sp.period is not None and int(sp.period) != int(filt.half):
+                return False
+            if filt.has_player and (sp.taker or "").lower() != filt.player.strip().lower():
+                return False
+            return True
+
+        return [s for s in sps if keep(s)]
+
+    @staticmethod
+    def _filter_dict(sps: list[SetPiece], filters: dict[str, Any]) -> list[SetPiece]:
+        def keep(sp: SetPiece) -> bool:
+            for k, v in (filters or {}).items():
+                if k in ("half", "player") or not v:
+                    continue
+                if str(getattr(sp, k, "") or "").lower() != str(v).lower():
+                    return False
+            return True
+
+        return [s for s in sps if keep(s)]
 
     # ============================================================ tagging: positions
     def add_position(self, user: User, set_piece_id: str, *, team: str = "attack",
@@ -257,6 +331,19 @@ class SetPieceService:
         """Counts for the (empty-by-default) dashboard. Real KPIs/maps land in 9.1;
         this proves the store end-to-end and gives an honest empty state."""
         self._require(user, Capability.VIEW_SETPIECE)
+        active = self._active_set_pieces(user, None)
+        if active is not None:                       # counts from the active dataset
+            from collections import Counter
+            pool = active if not perspective else [s for s in active if s.perspective == perspective]
+            return {
+                "total": len(active),
+                "by_type": dict(Counter(s.type for s in pool)),
+                "offensive": sum(1 for s in active if s.phase == "offensive"),
+                "defensive": sum(1 for s in active if s.phase == "defensive"),
+                "own": sum(1 for s in active if s.perspective == "own"),
+                "opposition": sum(1 for s in active if s.perspective == "opposition"),
+                "recent_imports": self.imports.recent(limit=5),
+            }
         total = self.set_pieces.count()
         by_type = self.set_pieces.type_breakdown(perspective=perspective)
         return {
@@ -276,6 +363,9 @@ class SetPieceService:
         SQL; ``player`` (a player who appears in the box/contacts, distinct from
         the taker) is resolved here against tagged positions and contacts."""
         filt = filt or SetPieceFilter()
+        active = self._active_set_pieces(user, workspace_id)
+        if active is not None:                       # single source of truth
+            return self._filter_list(active, filt)
         repo_f = filt.to_repo_filters()
         if filt.half is not None:
             repo_f["half"] = filt.half

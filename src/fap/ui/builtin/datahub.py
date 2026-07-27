@@ -235,10 +235,16 @@ class DataHubPage(Page):
             modules = hub.modules_supported(ds.id)
         except Exception:
             modules = []
+        try:
+            is_active = shell.wm.active_dataset_id(shell.user) == ds.id
+        except Exception:
+            is_active = False
         with st.container(border=True):
             qbadge = (C.badge_html(f"Quality {quality:.0f} - {rating}",
                                    _RATING_KIND.get(rating, "neutral"))
                       if isinstance(quality, (int, float)) else "")
+            if is_active:
+                qbadge = C.badge_html("Active Dataset", "success", icon_name="check") + " " + qbadge
             tags = "".join(C.badge_html(t, "neutral") for t in doc.get("tags", []))
             mods = " ".join(C.badge_html(m, "success", icon_name="check") for m in modules) \
                 or C.badge_html("no modules ready", "warning")
@@ -257,11 +263,13 @@ class DataHubPage(Page):
             if bcols[0].button("Open", key=f"dh_open_{ds.id}", use_container_width=True):
                 st.session_state[SEL] = ds.id
                 st.rerun()
-            if bcols[1].button("Choose", key=f"dh_choose_{ds.id}", type="primary",
-                               use_container_width=True):
+            if bcols[1].button("Active" if is_active else "Set Active",
+                               key=f"dh_choose_{ds.id}", type="secondary" if is_active else "primary",
+                               disabled=is_active, use_container_width=True):
                 try:
                     hub.choose(shell.user, ds.id)
                     st.toast(f"'{ds.name}' is now the active dataset for every module")
+                    st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
             if bcols[2].button("Duplicate", key=f"dh_dup_{ds.id}", use_container_width=True):

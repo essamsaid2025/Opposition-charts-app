@@ -232,6 +232,7 @@ def _render_sidebar(ctx: ShellContext, brand: theme.Branding) -> None:
 
         if ctx.wm is not None:
             _workspace_and_project_selectors(ctx)
+            _render_active_dataset(ctx)
 
         query = st.text_input("Search", key="_global_search",
                               placeholder="players, teams, datasets, projects…",
@@ -271,6 +272,35 @@ def _workspace_and_project_selectors(ctx: ShellContext) -> None:
                 ctx.wm.touch_recent(ctx.user, "project", pid)
     except Exception:
         st.caption("Workspace unavailable.")
+
+
+def _render_active_dataset(ctx: ShellContext) -> None:
+    """The always-visible Current Dataset indicator (Phase 12.1). Reads the single
+    source of truth (WorkspaceManager.active_dataset); every module knows exactly
+    which dataset it is using, and there is one place to switch it."""
+    import html as _html
+    try:
+        ds = ctx.wm.active_dataset(ctx.user)
+    except Exception:
+        ds = None
+    st.markdown('<div class="fap-nav-section">Current Dataset</div>', unsafe_allow_html=True)
+    if ds is None:
+        st.markdown('<div class="fap-active-ds empty">No active dataset'
+                    '<span>Choose one in the Data Hub</span></div>', unsafe_allow_html=True)
+        if st.button("Open Data Hub", key="sb_goto_datahub", use_container_width=True):
+            ctx.goto("data_hub")
+        return
+    doc = ds.document if isinstance(ds.document, dict) else {}
+    quality = doc.get("quality")
+    qtxt = f"  ·  Quality {quality:.0f}" if isinstance(quality, (int, float)) else ""
+    meta = " · ".join(b for b in (ds.competition or "", ds.season or "") if b)
+    st.markdown(
+        f'<div class="fap-active-ds">'
+        f'<div class="prov">{C.badge_html(ds.provider_id or "dataset", "info")}</div>'
+        f'<div class="nm">{_html.escape(ds.name)}</div>'
+        f'<div class="mt">{_html.escape(meta) or "—"}</div>'
+        f'<div class="mt">{ds.rows:,} events{qtxt}</div>'
+        f'</div>', unsafe_allow_html=True)
 
 
 def _render_search_results(ctx: ShellContext, query: str) -> None:

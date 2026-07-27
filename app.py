@@ -306,6 +306,59 @@ def _record_import(user, filename: str, result, frame=None) -> None:
         pass
 
 
+# ---------------------------------------------------------------- active dataset (Phase 12.1)
+def _active_dataset_frame(user):
+    """The platform's single source of truth for event data: the active dataset's
+    canonical frame, owned by the WorkspaceManager. Returns ``(dataset, frame)`` or
+    ``(None, None)`` when nothing is active. Open Play consumes ONLY this - never a
+    local, uploaded or session dataframe."""
+    wm = workspace_manager()
+    if wm is None:
+        return None, None
+    try:
+        frame = wm.active_frame(user)
+        dataset = wm.active_dataset(user)
+    except Exception:
+        return None, None
+    if frame is None or getattr(frame, "empty", True):
+        return None, None
+    return dataset, frame
+
+
+def _goto_data_hub(key: str = "op_goto_datahub") -> None:
+    """Redirect to the Data Hub page (the one import entry point). Uses the app
+    shell's navigation key so it works from inside the shell."""
+    if st.button("Open Data Hub", type="primary", key=key, use_container_width=True):
+        st.session_state["_active_page"] = "data_hub"
+        st.rerun()
+
+
+def _render_no_active_dataset() -> None:
+    st.markdown(
+        "<div class='note-box'><b>No Active Dataset.</b><br>"
+        "Import and choose a dataset in the <b>Data Hub</b> - it then powers Opponent "
+        "Analysis and every other module. You can also upload a file in the sidebar to "
+        "import a new one here.</div>", unsafe_allow_html=True)
+    cols = st.columns([1, 1, 1])
+    with cols[1]:
+        _goto_data_hub()
+
+
+def _render_active_dataset_banner(dataset) -> None:
+    if dataset is None:
+        return
+    doc = getattr(dataset, "document", {}) or {}
+    quality = doc.get("quality")
+    bits = [dataset.provider_id or "dataset", dataset.competition or "", dataset.season or "",
+            f"{dataset.rows:,} events"]
+    if isinstance(quality, (int, float)):
+        bits.append(f"Quality {quality:.0f}")
+    line = "  ·  ".join(b for b in bits if b)
+    st.markdown(f"<div class='note-box'>Active dataset: <b>{dataset.name}</b> — {line}. "
+                f"Switch or manage datasets in the <b>Data Hub</b>.</div>",
+                unsafe_allow_html=True)
+
+
 # --- Open Play import + column-mapping controllers migrated to
 # --- fap.openplay.imports / fap.openplay.mapping (imported at top).
 
@@ -1995,8 +2048,10 @@ def run_app():
     """, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.markdown("### 1) Upload Data")
-        uploaded = st.file_uploader("Upload CSV, Excel or JSON",
+        st.markdown("### 1) Dataset")
+        st.caption("Uses the active dataset from the Data Hub. Upload only to import or "
+                   "replace it here.")
+        uploaded = st.file_uploader("Replace / import a file (optional)",
                                     type=["csv", "xlsx", "xls", "json", "jsonl"])
         coord_mode = st.selectbox("Coordinate system", ["0-100", "120 x 80"], index=0)
         attack_direction = st.selectbox("Attacking direction", [
@@ -2158,67 +2213,68 @@ def run_app():
                                           help="Export with no background fill (PNG/SVG/PDF).")
 
     if uploaded is None:
-        st.markdown("""
-        <div class='note-box'>
-            Upload a CSV, Excel or JSON export from any provider (StatsBomb, Wyscout, Opta,
-            Hudl, Sportscode or custom tagging). Required fields are <b>event type, x, y</b> —
-            provider column names are detected automatically, and a preview lets you map
-            anything that isn't matched. No manual renaming needed.
-            Recommended: <b>team, opponent, match_id, phase, player, receiver, x2, y2, outcome, shot_result,
-            body_part, minute, second, period, sequence_id</b>.
-        </div>
-        """, unsafe_allow_html=True)
-        st.stop()
+        # SINGLE SOURCE OF TRUTH (Phase 12.1): with no replacement upload, Open Play
+        # consumes the active dataset from the WorkspaceManager - never a local or
+        # session dataframe. No active dataset -> a professional empty state that
+        # redirects to the Data Hub (the one import entry point).
+        dataset, active = _active_dataset_frame(user)
+        if active is None:
+            _render_no_active_dataset()
+            st.stop()
+        _render_active_dataset_banner(dataset)
+        df = add_derived_columns(active)
+    else:
+        # Optional replacement import: identical to the previous upload path, and
+        # still publishes the imported file as THE active dataset (via _record_import).
+        try:
+            file_bytes = uploaded.getvalue()
+            cleaned = clean_columns(read_uploaded_file(uploaded))
+        except Exception as e:
+            st.error(f"Could not read file: {e}")
+            st.stop()
 
-    try:
-        file_bytes = uploaded.getvalue()
-        cleaned = clean_columns(read_uploaded_file(uploaded))
-    except Exception as e:
-        st.error(f"Could not read file: {e}")
-        st.stop()
+        # New file -> reset the per-file import confirmation (mapping itself persists
+        # in session_state until the app restarts, per requirement 5).
+        if st.session_state.get("_mapping_file") != uploaded.name:
+            st.session_state["_mapping_file"] = uploaded.name
+            st.session_state["_import_confirmed"] = None
+            st.session_state["_force_mapping"] = False
+            for _c in REQUIRED_CANONICAL + OPTIONAL_CANONICAL:
+                st.session_state.pop(f"premap_{_c}", None)
 
-    # New file -> reset the per-file import confirmation (mapping itself persists
-    # in session_state until the app restarts, per requirement 5).
-    if st.session_state.get("_mapping_file") != uploaded.name:
-        st.session_state["_mapping_file"] = uploaded.name
-        st.session_state["_import_confirmed"] = None
-        st.session_state["_force_mapping"] = False
-        for _c in REQUIRED_CANONICAL + OPTIONAL_CANONICAL:
-            st.session_state.pop(f"premap_{_c}", None)
+        # Mapping comes from the platform (aliases + saved templates). The dialog is
+        # only shown when the platform is not confident enough, when a required field
+        # is unresolved, or when the user asks to review it - a clean provider export
+        # now imports straight through.
+        mapping, unresolved = resolve_column_mapping(cleaned, st.session_state.get("col_map"))
+        confidence = mapping_confidence(cleaned)
+        needs_review = bool(unresolved) or confidence < CONFIDENCE_THRESHOLD
+        if (needs_review or st.session_state.get("_force_mapping")) \
+                and st.session_state.get("_import_confirmed") != uploaded.name:
+            render_import_preview(cleaned, mapping, mapping_log(cleaned, mapping),
+                                  confidence=confidence, filename=uploaded.name)
+            st.stop()
 
-    # Mapping comes from the platform (aliases + saved templates). The dialog is
-    # only shown when the platform is not confident enough, when a required field
-    # is unresolved, or when the user asks to review it - a clean provider export
-    # now imports straight through.
-    mapping, unresolved = resolve_column_mapping(cleaned, st.session_state.get("col_map"))
-    confidence = mapping_confidence(cleaned)
-    needs_review = bool(unresolved) or confidence < CONFIDENCE_THRESHOLD
-    if (needs_review or st.session_state.get("_force_mapping")) \
-            and st.session_state.get("_import_confirmed") != uploaded.name:
-        render_import_preview(cleaned, mapping, mapping_log(cleaned, mapping),
-                              confidence=confidence, filename=uploaded.name)
-        st.stop()
+        cleaned = apply_column_mapping(cleaned, mapping)
+        problems = validate_data(cleaned)
+        if problems:
+            st.session_state["_import_confirmed"] = None      # re-open the mapping dialog
+            st.error(" | ".join(problems))
+            st.stop()
 
-    cleaned = apply_column_mapping(cleaned, mapping)
-    problems = validate_data(cleaned)
-    if problems:
-        st.session_state["_import_confirmed"] = None      # re-open the mapping dialog
-        st.error(" | ".join(problems))
-        st.stop()
+        # The platform owns the import: provider detection, loading, mapping,
+        # coordinate normalization, cleaning, validation and quality scoring all
+        # happen inside ImportService. Open Play only orchestrates, then adds the
+        # derived columns its own charts contract on.
+        try:
+            result = platform_import(uploaded.name, file_bytes, mapping, coord_mode, attack_direction)
+            df = add_derived_columns(result.frame)
+        except Exception as e:
+            st.error(f"Could not process file: {e}")
+            st.stop()
 
-    # The platform owns the import: provider detection, loading, mapping,
-    # coordinate normalization, cleaning, validation and quality scoring all
-    # happen inside ImportService. Open Play only orchestrates, then adds the
-    # derived columns its own charts contract on.
-    try:
-        result = platform_import(uploaded.name, file_bytes, mapping, coord_mode, attack_direction)
-        df = add_derived_columns(result.frame)
-    except Exception as e:
-        st.error(f"Could not process file: {e}")
-        st.stop()
-
-    _record_import(user, uploaded.name, result, frame=df)
-    render_import_summary(result, cleaned)
+        _record_import(user, uploaded.name, result, frame=df)
+        render_import_summary(result, cleaned)
 
     # Filters (v3 preserved)
     with st.sidebar:

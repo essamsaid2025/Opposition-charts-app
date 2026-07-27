@@ -233,7 +233,8 @@ def _step5_import(ctx: AppContext) -> None:
         return
 
     ctx.state.set(keys.IMPORT_RESULT, result)
-    ctx.state.set(keys.CANONICAL_DATASET, result.frame)
+    # Phase 12.1: the CANONICAL_DATASET dataframe store was removed - there is one
+    # source of truth (WorkspaceManager active dataset). No second frame is stored.
 
     if result.cache_hit:
         st.info("Loaded instantly from the normalized-dataset cache.")

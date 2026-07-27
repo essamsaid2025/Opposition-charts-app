@@ -642,6 +642,17 @@ def _studio() -> str:
 .fap-dh-card .nm { font-weight: 750; font-size: 1rem; color: var(--fap-text); }
 .fap-dh-card .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--fap-text-muted);
   font-size: 0.78rem; }
+/* sidebar Current Dataset indicator (single source of truth) */
+.fap-active-ds { border: 1px solid var(--fap-border); border-radius: var(--fap-radius-md);
+  background: var(--fap-surface); padding: 9px 11px; margin: 2px 0 6px;
+  box-shadow: var(--fap-shadow-xs); }
+.fap-active-ds .nm { font-weight: 700; font-size: 0.88rem; color: var(--fap-text);
+  margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fap-active-ds .mt { font-size: 0.74rem; color: var(--fap-text-muted); margin-top: 1px; }
+.fap-active-ds.empty { display: flex; flex-direction: column; color: var(--fap-text-muted);
+  font-size: 0.82rem; font-weight: 600; }
+.fap-active-ds.empty span { font-weight: 400; font-size: 0.74rem; color: var(--fap-text-subtle);
+  margin-top: 2px; }
 """
 
 

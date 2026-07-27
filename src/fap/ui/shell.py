@@ -49,10 +49,13 @@ def run(ctx: AppContext) -> None:
 
     app_header(ctx.settings.app_name,
                "Modular analysis platform - visuals, metrics, providers and exports are plugins.")
-    dataset = ctx.state.get(keys.CANONICAL_DATASET)
+    # Phase 12.1: the active dataset is the single source of truth (WorkspaceManager),
+    # not a separate CANONICAL_DATASET frame.
+    from fap.ui.dataset_bridge import legacy_active_frame
+    dataset = legacy_active_frame(ctx)
     if dataset is not None:
-        note_box(f"Canonical dataset loaded: <b>{len(dataset):,} events</b> ready for "
-                 f"future visualizations. Use <b>Import Data</b> to load another file.")
+        note_box(f"Active dataset loaded: <b>{len(dataset):,} events</b>. "
+                 f"Manage datasets in the <b>Data Hub</b>.")
     note_box(
         f"Architecture online. Registered plugins - visuals: {len(ctx.visuals)}, "
         f"metrics: {len(ctx.metrics)}, providers: {len(ctx.providers)}, "

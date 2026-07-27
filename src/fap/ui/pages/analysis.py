@@ -17,10 +17,13 @@ from fap.ui.components import app_header, note_box, render_controls
 
 def render(ctx: AppContext) -> None:
     app_header("Match Analysis", "125+ professional visualizations on the canonical event model.")
-    df = ctx.state.get(keys.CANONICAL_DATASET)
+    # Phase 12.1: read the SINGLE source of truth (WorkspaceManager active dataset)
+    # via the legacy bridge - never a separate CANONICAL_DATASET dataframe.
+    from fap.ui.dataset_bridge import legacy_active_frame
+    df = legacy_active_frame(ctx)
     if df is None or df.empty:
-        note_box("No dataset loaded yet. Use <b>Import Data</b> to load any provider's "
-                 "events - every visualization below then works automatically.")
+        note_box("No active dataset. Import and choose one in the <b>Data Hub</b> - "
+                 "every visualization below then works automatically.")
         return
 
     theme = ctx.themes.get(ctx.state.get(keys.ACTIVE_THEME_ID) or ctx.settings.default_theme)
