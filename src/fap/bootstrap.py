@@ -183,6 +183,13 @@ class PlatformContext:
         reports/visualization/storage; independent of scouting (Phase 10)."""
         return self.services.get("players")
 
+    @property
+    def datahub(self):
+        """Universal Data Hub (Phase 12): the central import + dataset library.
+        Reuses the ImportService engine and the WorkspaceManager dataset store;
+        every module consumes datasets it activates via the active-dataset seam."""
+        return self.services.get("datahub")
+
     # -- Phase 11 operations (health / diagnostics / config validation) ----
     def health(self) -> dict:
         """Full health report (database, migrations, storage tiers, cache,
@@ -257,6 +264,7 @@ def init_platform(root: Path | None = None, *,
     services.register("scouting", _scouting)
     services.register("setpieces", _setpieces)
     services.register("players", _players)
+    services.register("datahub", _datahub)
 
     return PlatformContext(settings=settings, services=services,
                            version=platform_version())
@@ -316,6 +324,17 @@ def _players(reg: "ServiceRegistry"):
         images=reg.get("image_storage"), files=reg.get("attachment_storage"),
         workspaces=reg.get("workspace_manager"), scouting=reg.get("scouting"),
         cache=reg.get("cache"))
+
+
+def _datahub(reg: "ServiceRegistry"):
+    """The Universal Data Hub (Phase 12): the central import + dataset-management
+    module. Reuses the platform ImportService (the whole import engine) and the
+    WorkspaceManager (datasets table, storage, active-dataset seam, presets,
+    permissions, audit). It duplicates no engine, repository or storage."""
+    from fap.datahub import DataHubService
+    return DataHubService(importer=reg.get("importer"),
+                          workspaces=reg.get("workspace_manager"),
+                          permissions=reg.get("permissions"))
 
 
 def _setpieces(reg: "ServiceRegistry"):

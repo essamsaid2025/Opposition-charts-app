@@ -605,6 +605,43 @@ def _studio() -> str:
 .fap-stage-wrap { border: 1px solid var(--fap-border); border-top: none;
   border-radius: 0 0 var(--fap-radius-lg) var(--fap-radius-lg); overflow: hidden;
   box-shadow: var(--fap-shadow-md); }
+
+/* ---- Data Hub: health grid, compatibility, preview table --------------- */
+.fap-health-grid { display: grid; gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.fap-health-axis { display: flex; align-items: center; gap: 9px; padding: 9px 11px;
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-md); background: var(--fap-surface); }
+.fap-health-axis .dot { width: 11px; height: 11px; border-radius: 999px; flex: 0 0 auto; }
+.fap-health-axis .dot.green { background: var(--fap-success); }
+.fap-health-axis .dot.yellow { background: var(--fap-warning); }
+.fap-health-axis .dot.red { background: var(--fap-danger); }
+.fap-health-axis .lbl { font-weight: 600; font-size: 0.84rem; color: var(--fap-text); }
+.fap-health-axis .sub { font-size: 0.72rem; color: var(--fap-text-subtle); margin-left: auto; }
+.fap-compat-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--fap-radius-sm); }
+.fap-compat-row + .fap-compat-row { border-top: 1px solid var(--fap-border); }
+.fap-compat-row .mod { font-weight: 600; color: var(--fap-text); min-width: 120px; }
+.fap-compat-row .why { color: var(--fap-text-muted); font-size: 0.8rem; }
+.fap-dh-table { width: 100%; border-collapse: collapse; font-size: 0.8rem;
+  font-feature-settings: var(--fap-feature-tabular); }
+.fap-dh-table th { position: sticky; top: 0; background: var(--fap-surface-alt);
+  color: var(--fap-text-muted); text-transform: uppercase; font-size: 0.68rem;
+  letter-spacing: 0.03em; text-align: left; padding: 7px 10px;
+  border-bottom: 1px solid var(--fap-border-strong); white-space: nowrap; }
+.fap-dh-table td { padding: 6px 10px; border-bottom: 1px solid var(--fap-border);
+  color: var(--fap-text); white-space: nowrap; }
+.fap-dh-table tr:hover td { background: var(--fap-hover); }
+.fap-dh-table td.cell-error { background: color-mix(in srgb, var(--fap-danger) 20%, transparent);
+  color: var(--fap-danger); font-weight: 600; }
+.fap-dh-table td.cell-warning { background: color-mix(in srgb, var(--fap-warning) 18%, transparent);
+  color: var(--fap-warning); }
+.fap-dh-scroll { max-height: 460px; overflow: auto; border: 1px solid var(--fap-border);
+  border-radius: var(--fap-radius-md); }
+.fap-dh-card { display: flex; flex-direction: column; gap: 8px; }
+.fap-dh-card .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fap-dh-card .nm { font-weight: 750; font-size: 1rem; color: var(--fap-text); }
+.fap-dh-card .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--fap-text-muted);
+  font-size: 0.78rem; }
 """
 
 
