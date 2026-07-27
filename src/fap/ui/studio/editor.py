@@ -21,16 +21,21 @@ exporters and storage are unchanged.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Callable
 
 import streamlit as st
 
 from fap.reports import chart_block, image_block, text_block
-from fap.ui.studio import history
+from fap.theme import DEFAULT_PALETTE
+from fap.theme import components as C
+from fap.theme import icon
+from fap.ui.studio import history, preview
 from fap.ui.studio.covers import (
     COVER_PRESETS, COVER_TEMPLATES, palette_from_image, suggest_from_logo,
     suggest_from_palette, template_design,
 )
+from fap.ui.studio.sortable import sortable
 
 # block "variants" layered on the text block kind (kept identical to 6C so the
 # exporters/layout engine render them unchanged)
@@ -53,6 +58,10 @@ _PREVIEW = "_studio_preview_html"       # cached export-preview HTML (session, p
 
 # ================================================================ entry point
 def render_studio(shell: Any, reports: Any, report_id: str) -> None:
+    """The professional Report Studio: a document-first WYSIWYG workspace. The
+    left rail holds the editing controls (sections, cover, design, export); the
+    right stage shows the live, multi-page A4 document exactly as it will export.
+    Everything routes through the existing engine — this is presentation only."""
     record = reports.get(report_id)
     if record is None:
         st.warning("That report no longer exists.")
@@ -62,28 +71,142 @@ def render_studio(shell: Any, reports: Any, report_id: str) -> None:
         st.info("Report could not be opened.")
         return
 
-    _header(shell, reports, report_id, record, studio)
-    tab_content, tab_template, tab_export = st.tabs(["✎ Content", "◨ Template", "⭳ Export"])
-    with tab_content:
-        _cover_editor(shell, reports, report_id, studio)
-        st.divider()
-        _body_editor(shell, reports, report_id, studio)
-    with tab_template:
-        _template_editor(shell, reports, report_id, studio)
-    with tab_export:
-        _export(shell, reports, report_id)
+    _toolbar(shell, reports, report_id, record)
+    rail, stage = st.columns([37, 63], gap="medium")
+    with rail:
+        tabs = st.tabs(["Sections", "Cover", "Design", "Export"])
+        with tabs[0]:
+            _sections_panel(shell, reports, report_id, studio)
+        with tabs[1]:
+            _cover_editor(shell, reports, report_id, studio)
+        with tabs[2]:
+            _template_editor(shell, reports, report_id, studio)
+        with tabs[3]:
+            _export(shell, reports, report_id)
+    with stage:
+        _preview_pane(shell, reports, report_id, studio)
 
 
-# ================================================================ header
-def _header(shell, reports, report_id, record, studio) -> None:
-    c1, c2, c3 = st.columns([5, 1, 1])
-    c1.markdown(f"### {record.title}")
-    c1.caption(f"{record.template_id or 'report'} · updated {record.updated_at} · v{record.version}")
-    if c2.button("↶ Undo", disabled=not history.can_undo(report_id), use_container_width=True):
+# ================================================================ toolbar
+def _toolbar(shell, reports, report_id, record) -> None:
+    st.markdown(
+        f'<div class="fap-studio-toolbar">'
+        f'<span class="fap-title-chip" style="width:36px;height:36px">{icon("reports", 18)}</span>'
+        f'<div><div class="rt-title">{_esc(record.title)}</div>'
+        f'<div class="rt-meta">{_esc(record.template_id or "report")} · updated '
+        f'{_esc(record.updated_at)} · v{record.version}</div></div>'
+        f'<span class="spacer"></span></div>', unsafe_allow_html=True)
+    c = st.columns([1, 1, 1, 5])
+    if c[0].button("Undo", key="rt_undo", disabled=not history.can_undo(report_id),
+                   use_container_width=True):
         _undo(shell, reports, report_id)
-    if c3.button("Save version", use_container_width=True):
+    if c[1].button("Redo", key="rt_redo", disabled=not history.can_redo(report_id),
+                   use_container_width=True):
+        _redo(shell, reports, report_id)
+    if c[2].button("Save version", key="rt_savever", use_container_width=True):
         reports.save_version(shell.user, report_id, note="editor snapshot")
         st.toast("Version saved")
+
+
+# ================================================================ sections panel (rail)
+def _kind_label(block) -> str:
+    variant = (block.payload or {}).get("variant", "")
+    return {"section_header": "Section", "notes": "Notes", "divider": "Divider",
+            "spacer": "Spacer"}.get(variant, block.kind.title())
+
+
+def _sections_panel(shell, reports, report_id, studio) -> None:
+    blocks = studio.document.blocks
+    st.markdown('<div class="fap-rail-head">Order</div>', unsafe_allow_html=True)
+    if not blocks:
+        C.render_empty_state("No sections yet", "Add your first section below to start "
+                             "building the report.", icon_name="reports")
+    else:
+        _reorder(shell, reports, report_id, studio)
+    st.markdown('<div class="fap-rail-head">Edit</div>', unsafe_allow_html=True)
+    for i, b in enumerate(blocks):
+        _block_card(shell, reports, report_id, b, i, len(blocks))
+    _add_content(shell, reports, report_id)
+
+
+def _reorder(shell, reports, report_id, studio) -> None:
+    """Drag-and-drop section ordering. The component only reports the dropped
+    order; ``reorder_blocks`` (pure op) applies it. Falls back silently to the
+    per-section Up/Down controls if the component cannot initialise."""
+    blocks = studio.document.blocks
+    ids = [b.id for b in blocks]
+    items = [{"id": b.id, "title": (b.title or _kind_label(b)), "badge": _kind_label(b),
+              "kind": b.kind, "hidden": bool(b.hidden)} for b in blocks]
+    nonce = hashlib.sha1(("|".join(ids)).encode("utf-8")).hexdigest()[:10]
+    colors = {"accent": DEFAULT_PALETTE.primary}
+    result = sortable(items, key=f"sp_sort_{report_id}", colors=colors, nonce=nonce)
+    if result is None:
+        st.caption("Reorder with the Up / Down controls under each section below.")
+        return
+    if result.get("nonce") == nonce:
+        new = result.get("order") or []
+        if new and new != ids:
+            _apply(shell, reports, report_id, lambda s, o=list(new): _reorder_apply(s, o))
+    st.caption("Drag to reorder — changes autosave and refresh the preview.")
+
+
+def _reorder_apply(studio, ordered_ids: list[str]) -> None:
+    from fap.reports.blocks import reorder_blocks
+    reorder_blocks(studio.document, ordered_ids)
+    _reflow(studio)
+
+
+# ================================================================ preview stage
+_ZOOMS = [0.5, 0.65, 0.75, 0.85, 1.0, 1.25]
+
+
+def _preview_pane(shell, reports, report_id, studio) -> None:
+    html, pages = preview.get_preview_html(shell, reports, report_id)
+    zoom_key = f"_sp_zoom_{report_id}"
+    if zoom_key not in st.session_state:
+        st.session_state[zoom_key] = 0.85
+
+    bar = st.columns([3, 2, 2], vertical_alignment="center")
+    bar[0].markdown(
+        f'<div style="font-size:.82rem;color:var(--fap-text-muted)">'
+        f'Live A4 preview · <b style="color:var(--fap-text)">{pages or "—"} page'
+        f'{"" if pages == 1 else "s"}</b></div>', unsafe_allow_html=True)
+    zoom = bar[2].selectbox("Zoom", _ZOOMS, index=_ZOOMS.index(st.session_state[zoom_key]),
+                            format_func=lambda z: f"{int(z * 100)}%", key=zoom_key,
+                            label_visibility="collapsed")
+
+    if html.startswith("__ERROR__"):
+        C.render_alert(f"The preview could not render: {html[9:]}", "danger",
+                       title="Preview error")
+        return
+    if not pages:
+        C.render_empty_state("Nothing to preview yet", "Add a cover or a section — the live "
+                             "document appears here exactly as it will export.", icon_name="reports")
+        return
+
+    _outline_panel(studio)
+    st.markdown('<div class="fap-stage-bar"><span class="pg">Document</span>'
+                '<span>A4 · portrait</span><span style="flex:1"></span>'
+                '<span>WYSIWYG — same engine as the PDF export</span></div>',
+                unsafe_allow_html=True)
+    st.markdown('<div class="fap-stage-wrap">', unsafe_allow_html=True)
+    st.components.v1.html(preview.decorate(html, zoom=zoom), height=1180, scrolling=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def _outline_panel(studio) -> None:
+    items = preview.outline(studio)
+    if not items:
+        return
+    with st.expander(f"Table of contents · {len(items)} sections", expanded=False):
+        rows = []
+        for it in items:
+            cls = "oi h1" if it["variant"] == "section_header" else "oi"
+            if it["hidden"]:
+                cls += " muted"
+            rows.append(f'<div class="{cls}"><span class="n">{it["index"] + 1}</span>'
+                        f'<span>{_esc(it["title"])}</span></div>')
+        st.markdown(f'<div class="fap-outline">{"".join(rows)}</div>', unsafe_allow_html=True)
 
 
 # ================================================================ cover designer
@@ -195,23 +318,11 @@ def _cover_editor(shell, reports, report_id, studio) -> None:
             st.markdown(_cover_preview_html(reports, cover, cd), unsafe_allow_html=True)
 
 
-# ================================================================ body
-def _body_editor(shell, reports, report_id, studio) -> None:
-    blocks = studio.document.blocks
-    st.markdown("**Sections**")
-    if not blocks:
-        st.caption("Empty report — add a section below.")
-    for i, b in enumerate(blocks):
-        _block_card(shell, reports, report_id, b, i, len(blocks))
-
-    _add_content(shell, reports, report_id)
-
-
 # ================================================================ add content picker
 def _add_content(shell, reports, report_id) -> None:
     """The single Add Content button -> a categorized picker. Nothing is inserted
     unless the user explicitly chooses it (empty-report philosophy)."""
-    with st.expander("➕ Add Section", expanded=False):
+    with st.expander("Add section", expanded=False):
         cats = ["Text", "Charts", "Data", "Media", "Analysis", "Custom"]
         tabs = st.tabs(cats)
         with tabs[0]:
@@ -269,7 +380,7 @@ def _media_items() -> dict:
     return {
         "Image": lambda: image_block("", title="Image"),
         "Video": lambda: text_block("[Video](paste YouTube / Hudl / Wyscout link)", title="Video"),
-        "Attachment": lambda: text_block("📎 Attachment: describe the file / paste a link", title="Attachment"),
+        "Attachment": lambda: text_block("Attachment: describe the file / paste a link", title="Attachment"),
     }
 
 
@@ -301,21 +412,22 @@ def _chart_picker_grid(shell, reports, report_id) -> None:
 
 def _block_card(shell, reports, report_id, block, index, total) -> None:
     variant = (block.payload or {}).get("variant", "")
-    kind_label = {"section_header": "Section", "notes": "Notes", "divider": "Divider",
-                  "spacer": "Spacer"}.get(variant, block.kind.title())
-    header = f"{'🙈 ' if block.hidden else ''}{block.title or kind_label} · {kind_label}"
+    kind_label = _kind_label(block)
+    header = f"{'(hidden) ' if block.hidden else ''}{block.title or kind_label} · {kind_label}"
     with st.expander(header, expanded=False):
-        # row of structural controls (no pixel editing)
-        c = st.columns(6)
-        if c[0].button("↑", key=f"up_{block.id}", disabled=index == 0, help="Move up"):
+        # row of structural controls (Up/Down double as the drag-and-drop fallback)
+        c = st.columns(5)
+        if c[0].button("Up", key=f"up_{block.id}", disabled=index == 0, use_container_width=True):
             _apply(shell, reports, report_id, lambda s, b=block.id: _move(s, b, -1))
-        if c[1].button("↓", key=f"dn_{block.id}", disabled=index == total - 1, help="Move down"):
+        if c[1].button("Down", key=f"dn_{block.id}", disabled=index == total - 1,
+                       use_container_width=True):
             _apply(shell, reports, report_id, lambda s, b=block.id: _move(s, b, +1))
-        if c[2].button("⧉", key=f"dup_{block.id}", help="Duplicate"):
+        if c[2].button("Duplicate", key=f"dup_{block.id}", use_container_width=True):
             _apply(shell, reports, report_id, lambda s, b=block.id: _duplicate(s, b))
-        if c[3].button("👁" if not block.hidden else "🚫", key=f"hide_{block.id}", help="Hide/Show"):
+        if c[3].button("Show" if block.hidden else "Hide", key=f"hide_{block.id}",
+                       use_container_width=True):
             _apply(shell, reports, report_id, lambda s, b=block.id, h=not block.hidden: _hide(s, b, h))
-        if c[4].button("🗑", key=f"del_{block.id}", help="Delete"):
+        if c[4].button("Delete", key=f"del_{block.id}", use_container_width=True):
             _apply(shell, reports, report_id, lambda s, b=block.id: _delete(s, b))
 
         if block.kind == "text":
@@ -416,35 +528,27 @@ def _template_editor(shell, reports, report_id, studio) -> None:
         st.toast(f"Applied {choice}")
 
 
-# ================================================================ export (render only here)
+# ================================================================ export & share
 def _export(shell, reports, report_id) -> None:
-    st.caption("Charts and images render here — the export is the same engine the preview uses, "
-               "so the PDF looks like the report.")
+    st.markdown('<div class="fap-rail-head">Download</div>', unsafe_allow_html=True)
+    C.render_alert("The live preview on the right is the same layout engine used for export — "
+                   "what you see is what the PDF will be.", "info")
     formats = reports.available_formats()
-    cols = st.columns(len(formats) or 1)
     mimes = {"html": "text/html", "markdown": "text/markdown", "pdf": "application/pdf"}
-    for i, fmt in enumerate(formats):
-        if cols[i].button(fmt.upper(), key=f"exp_{fmt}", use_container_width=True):
+    labels = {"html": "HTML", "markdown": "Markdown", "pdf": "PDF",
+              "docx": "Word", "pptx": "PowerPoint"}
+    for fmt in formats:
+        cc = st.columns([2, 3], vertical_alignment="center")
+        if cc[0].button(labels.get(fmt, fmt.upper()), key=f"exp_{fmt}", use_container_width=True,
+                        type="primary" if fmt == "pdf" else "secondary"):
             try:
                 rendered = reports.render(shell.user, report_id, fmt)
-                st.download_button(f"Download {fmt.upper()}", rendered.content,
-                                   file_name=rendered.filename,
-                                   mime=mimes.get(fmt, "application/octet-stream"),
-                                   key=f"dl_{fmt}")
+                cc[1].download_button("Download file", rendered.content,
+                                      file_name=rendered.filename,
+                                      mime=mimes.get(fmt, "application/octet-stream"),
+                                      key=f"dl_{fmt}", use_container_width=True)
             except Exception as exc:
-                st.error(f"{fmt.upper()} export failed: {exc}")
-
-    st.divider()
-    if st.button("Refresh preview", key="prev_refresh"):
-        try:
-            st.session_state[_PREVIEW] = reports.render(shell.user, report_id, "html").text
-        except Exception as exc:
-            st.error(f"Preview failed: {exc}")
-    html = st.session_state.get(_PREVIEW)
-    if html:
-        st.components.v1.html(html, height=900, scrolling=True)
-    else:
-        st.caption("Click **Refresh preview** to render the full report (renders charts once).")
+                st.error(f"{labels.get(fmt, fmt.upper())} export failed: {exc}")
 
 
 # ================================================================ pure structural ops
@@ -734,6 +838,19 @@ def _undo(shell, reports, report_id) -> None:
     from fap.reports.models import ReportDocument
     current = reports.document(report_id)
     snap = history.undo(report_id, current.to_dict() if current else {})
+    if snap is not None:
+        try:
+            reports.save_document(shell.user, report_id, ReportDocument.from_dict(snap))
+            st.session_state.pop(_PREVIEW, None)
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
+
+def _redo(shell, reports, report_id) -> None:
+    from fap.reports.models import ReportDocument
+    current = reports.document(report_id)
+    snap = history.redo(report_id, current.to_dict() if current else {})
     if snap is not None:
         try:
             reports.save_document(shell.user, report_id, ReportDocument.from_dict(snap))

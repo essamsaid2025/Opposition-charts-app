@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; padding: 0; font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #list { display: flex; flex-direction: column; gap: 6px; padding: 2px; }
+  .row {
+    display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+    border: 1px solid var(--border, #E1E6EF); border-radius: 10px;
+    background: var(--surface, #fff); color: var(--text, #141A22);
+    cursor: grab; user-select: none; transition: box-shadow .12s, border-color .12s, transform .08s;
+  }
+  .row:hover { border-color: var(--accent, #E07B2B); box-shadow: 0 2px 8px rgba(16,22,30,.08); }
+  .row.dragging { opacity: .55; cursor: grabbing; }
+  .row.over { border-color: var(--accent, #E07B2B); box-shadow: inset 0 0 0 1px var(--accent, #E07B2B); }
+  .handle { flex: 0 0 auto; color: var(--muted, #8A93A2); display: flex; }
+  .idx { flex: 0 0 auto; width: 20px; text-align: center; font-size: 11px; font-weight: 800;
+    color: var(--muted, #8A93A2); }
+  .name { flex: 1 1 auto; font-size: 13px; font-weight: 600; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  .badge { flex: 0 0 auto; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; padding: 1px 7px; border-radius: 999px;
+    background: var(--chip, #EDF0F6); color: var(--muted, #8A93A2); }
+  .row.hidden .name { text-decoration: line-through; color: var(--muted, #8A93A2); }
+</style>
+</head>
+<body>
+<div id="list"></div>
+<script>
+(function () {
+  var listEl = document.getElementById("list");
+  var items = [], colors = {}, nonce = 0, dragId = null;
+
+  function send(type, extra) {
+    var msg = Object.assign({ isStreamlitMessage: true, type: type }, extra || {});
+    window.parent.postMessage(msg, "*");
+  }
+  function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
+  function setHeight() {
+    var h = document.body.scrollHeight + 4;
+    send("streamlit:setFrameHeight", { height: h });
+  }
+  function setValue(order) {
+    send("streamlit:setComponentValue", { dataType: "json", value: { order: order, nonce: nonce } });
+  }
+  function orderIds() {
+    return Array.prototype.map.call(listEl.children, function (n) { return n.getAttribute("data-id"); });
+  }
+  function applyColors() {
+    var r = document.documentElement.style;
+    var map = { border: "border", surface: "surface", text: "text", muted: "muted",
+                accent: "accent", chip: "chip" };
+    Object.keys(map).forEach(function (k) { if (colors[k]) r.setProperty("--" + k, colors[k]); });
+  }
+  function svgHandle() {
+    return '<svg class="handle" width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+      'stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h.01M8 12h.01M8 18h.01M16 6h.01M16 12h.01M16 18h.01"/></svg>';
+  }
+  function render() {
+    listEl.innerHTML = "";
+    items.forEach(function (it, i) {
+      var row = document.createElement("div");
+      row.className = "row" + (it.hidden ? " hidden" : "");
+      row.setAttribute("draggable", "true");
+      row.setAttribute("data-id", it.id);
+      row.innerHTML = svgHandle() +
+        '<span class="idx">' + (i + 1) + '</span>' +
+        '<span class="name"></span>' +
+        '<span class="badge"></span>';
+      row.querySelector(".name").textContent = it.title || "Untitled";
+      row.querySelector(".badge").textContent = it.badge || it.kind || "";
+      wire(row);
+      listEl.appendChild(row);
+    });
+    setHeight();
+  }
+  function reindex() {
+    Array.prototype.forEach.call(listEl.children, function (n, i) {
+      n.querySelector(".idx").textContent = i + 1;
+    });
+  }
+  function wire(row) {
+    row.addEventListener("dragstart", function (e) {
+      dragId = row.getAttribute("data-id"); row.classList.add("dragging");
+      try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); } catch (x) {}
+    });
+    row.addEventListener("dragend", function () {
+      row.classList.remove("dragging");
+      Array.prototype.forEach.call(listEl.children, function (n) { n.classList.remove("over"); });
+      dragId = null; reindex(); setValue(orderIds());
+    });
+    row.addEventListener("dragover", function (e) {
+      e.preventDefault();
+      var dragging = listEl.querySelector(".dragging");
+      if (!dragging || dragging === row) return;
+      var r = row.getBoundingClientRect();
+      var after = (e.clientY - r.top) > r.height / 2;
+      listEl.insertBefore(dragging, after ? row.nextSibling : row);
+    });
+    row.addEventListener("dragenter", function () { row.classList.add("over"); });
+    row.addEventListener("dragleave", function () { row.classList.remove("over"); });
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.type !== "streamlit:render") return;
+    var args = data.args || {};
+    items = args.items || [];
+    colors = args.colors || {};
+    nonce = args.nonce || 0;
+    applyColors();
+    render();
+  });
+
+  ready();
+  window.addEventListener("load", setHeight);
+})();
+</script>
+</body>
+</html>

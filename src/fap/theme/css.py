@@ -561,6 +561,53 @@ def _a11y_and_motion() -> str:
 """
 
 
+def _studio() -> str:
+    """Report Studio workspace chrome: the sticky toolbar, the editor rail with
+    section cards + drag handles, the outline, and the A4 preview stage."""
+    return """
+.fap-studio-toolbar { display: flex; align-items: center; gap: var(--fap-space-3);
+  padding: 10px 14px; margin-bottom: var(--fap-space-3); background: var(--fap-surface);
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-lg);
+  box-shadow: var(--fap-shadow-sm); position: sticky; top: 0; z-index: 20; flex-wrap: wrap; }
+.fap-studio-toolbar .rt-title { font-size: 1.05rem; font-weight: var(--fap-weight-bold);
+  letter-spacing: -0.01em; color: var(--fap-text); }
+.fap-studio-toolbar .rt-meta { color: var(--fap-text-muted); font-size: 0.76rem; }
+.fap-studio-toolbar .spacer { flex: 1 1 auto; }
+.fap-rail-head { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px;
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: var(--fap-tracking-wider); color: var(--fap-text-subtle); }
+.fap-rail-head::after { content: ""; flex: 1; height: 1px; background: var(--fap-border); }
+/* section cards in the editor rail */
+.fap-sec-card { display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-md);
+  background: var(--fap-surface); box-shadow: var(--fap-shadow-xs); }
+.fap-sec-card .grip { color: var(--fap-text-subtle); display: flex; flex: 0 0 auto; }
+.fap-sec-card .idx { width: 20px; text-align: center; font-size: 11px; font-weight: 800;
+  color: var(--fap-text-subtle); flex: 0 0 auto; }
+.fap-sec-card .name { flex: 1 1 auto; font-weight: 600; font-size: 0.88rem; color: var(--fap-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fap-sec-card.hidden .name { text-decoration: line-through; color: var(--fap-text-subtle); }
+/* outline / table of contents */
+.fap-outline { display: flex; flex-direction: column; gap: 2px; }
+.fap-outline .oi { display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  border-radius: var(--fap-radius-sm); color: var(--fap-text-muted); font-size: 0.82rem; }
+.fap-outline .oi:hover { background: var(--fap-hover); color: var(--fap-text); }
+.fap-outline .oi .n { width: 18px; color: var(--fap-text-subtle); font-size: 0.72rem;
+  font-weight: 700; text-align: center; }
+.fap-outline .oi.h1 { font-weight: 700; color: var(--fap-text); }
+.fap-outline .oi.muted { opacity: 0.55; }
+/* A4 preview stage header */
+.fap-stage-bar { display: flex; align-items: center; gap: var(--fap-space-3);
+  padding: 8px 12px; background: var(--fap-surface-alt); border: 1px solid var(--fap-border);
+  border-bottom: none; border-radius: var(--fap-radius-lg) var(--fap-radius-lg) 0 0;
+  color: var(--fap-text-muted); font-size: 0.8rem; }
+.fap-stage-bar .pg { font-weight: 700; color: var(--fap-text); }
+.fap-stage-wrap { border: 1px solid var(--fap-border); border-top: none;
+  border-radius: 0 0 var(--fap-radius-lg) var(--fap-radius-lg); overflow: hidden;
+  box-shadow: var(--fap-shadow-md); }
+"""
+
+
 def _responsive(brand: Branding) -> str:
     sp = brand.spacing
     return f"""
@@ -594,7 +641,7 @@ def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """
     brand = brand or DEFAULT_BRANDING
     body = "".join((_chrome(), _base(brand), _sidebar(), _components(), _forms(),
-                    _tables(), _a11y_and_motion(), _responsive(brand)))
+                    _tables(), _studio(), _a11y_and_motion(), _responsive(brand)))
 
     if mode == "light":
         roots = f":root, :root[data-theme=light] {{{_variables(brand, 'light')}\n}}"
