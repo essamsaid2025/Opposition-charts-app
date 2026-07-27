@@ -1,0 +1,48 @@
+# Production configuration example (Phase 11).
+#
+# Copy to config/settings.local.yaml (gitignored) and adjust. NON-secret values
+# only — every secret (auth tokens, S3 keys, redis password) comes from FAP_*
+# environment variables (see .env.example), never from this file.
+#
+# This turns the platform from "ephemeral on a stateless host" into a durable
+# production deployment: libSQL/Turso database + S3 object storage + Redis cache.
+
+environment: production
+app_name: First Team Analysis Platform
+
+database:
+  backend: libsql            # sqlite (local dev) | libsql (Turso, production)
+  path: user_data/fap.sqlite3   # embedded-replica local file (synced from Turso)
+  url: libsql://your-db.turso.io
+  # auth_token: set via FAP_DATABASE__AUTH_TOKEN
+  sync_interval_seconds: 0   # 0 = sync on open; >0 = periodic background sync
+  pool_size: 5               # bounded connection pool for the remote backend
+  busy_timeout_ms: 5000
+
+storage:
+  backend: s3                # local (dev) | s3 (S3 / Cloudflare R2 / B2 / MinIO)
+  bucket: fap-assets
+  prefix: prod               # optional key namespace inside the bucket
+  endpoint_url: ""           # set for R2/B2/MinIO; empty for AWS S3
+  region: auto
+  use_ssl: true
+  # access_key_id / secret_access_key: set via FAP_STORAGE__* env
+
+cache:
+  backend: redis             # memory | disk (dev) | redis (production shared)
+  # redis_url: set via FAP_CACHE__REDIS_URL (e.g. rediss://:pw@host:6379/0)
+  ttl_seconds: 3600
+  key_prefix: "fap:"
+
+logging:
+  level: INFO
+  json: true                 # structured logs for the aggregator
+  console: true
+
+auth:
+  enabled: true
+
+deployment:
+  base_url: https://analysis.yourclub.com
+  require_secure_secrets: true
+  # super_admin: set via FAP_SUPER_ADMIN

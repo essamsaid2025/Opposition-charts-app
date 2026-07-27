@@ -25,15 +25,37 @@ _ENV_PREFIX = "FAP_"
 
 @dataclass(frozen=True, slots=True)
 class CacheSettings:
-    backend: str = "disk"                  # "memory" | "disk"
+    backend: str = "disk"                  # "memory" | "disk" | "redis"
     directory: str = "user_data/cache"
     max_entries: int = 256
     ttl_seconds: int = 3600
+    # redis (production shared cache). URL wins; else host/port/db/password.
+    redis_url: str = ""                    # e.g. rediss://:pw@host:6379/0
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: str = ""               # secret -> FAP_CACHE__REDIS_PASSWORD
+    key_prefix: str = "fap:"
 
 
 @dataclass(frozen=True, slots=True)
 class DatabaseSettings:
+    # backend "sqlite" (default, local file) | "libsql" (Turso / embedded replica)
+    backend: str = "sqlite"
     path: str = "user_data/fap.sqlite3"
+    # libSQL / Turso. ``url`` is the remote (libsql://<db>.turso.io) used either
+    # directly or to sync an embedded replica living at ``path``. Secrets come
+    # from the environment (FAP_DATABASE__AUTH_TOKEN), never YAML.
+    url: str = ""
+    auth_token: str = ""                   # secret
+    sync_url: str = ""                     # embedded-replica sync target (optional)
+    sync_interval_seconds: int = 0         # 0 = sync on open only
+    encryption_key: str = ""               # secret (optional at-rest encryption)
+    # connection pool: 1 = the classic single serialized connection (default,
+    # correct for a local file); >1 = a bounded thread-safe pool (Turso/remote).
+    pool_size: int = 1
+    busy_timeout_ms: int = 5000
+    wal: bool = True                       # WAL journal for the sqlite/local file
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +71,34 @@ class LoggingSettings:
     directory: str = "user_data/logs"
     max_bytes: int = 2_000_000
     backup_count: int = 5
+    json: bool = False                     # structured JSON logs for aggregators
+    console: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class StorageSettings:
+    """Where uploaded binary assets live: player/club/team logos, report images,
+    generated chart PNGs, PDF assets, documents, video thumbnails, and dataset
+    frames. ``local`` (default) keeps the on-disk tiers; ``s3`` moves every tier
+    to S3-compatible object storage (AWS S3 / Cloudflare R2 / Backblaze B2 /
+    MinIO) behind the SAME storage interfaces — consumers never change."""
+    backend: str = "local"                 # "local" | "s3"
+    bucket: str = ""
+    prefix: str = ""                       # optional key prefix inside the bucket
+    endpoint_url: str = ""                 # R2/MinIO/B2 endpoint; empty = AWS
+    region: str = "auto"
+    access_key_id: str = ""                # secret
+    secret_access_key: str = ""            # secret
+    use_ssl: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class DeploymentSettings:
+    """Signals that flip production guardrails on. ``base_url`` is used for
+    invitation links; ``require_secure_secrets`` makes secret validation fatal."""
+    base_url: str = ""
+    require_secure_secrets: bool = True
+    super_admin: str = ""                  # bootstrap owner email
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +110,14 @@ class AppSettings:
     user_data_dir: str = "user_data"
     cache: CacheSettings = field(default_factory=CacheSettings)
     database: DatabaseSettings = field(default_factory=DatabaseSettings)
+    storage: StorageSettings = field(default_factory=StorageSettings)
     auth: AuthSettings = field(default_factory=AuthSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
+    deployment: DeploymentSettings = field(default_factory=DeploymentSettings)
+
+    @property
+    def is_production(self) -> bool:
+        return (self.environment or "").lower() != "development"
 
 
 def _merge_section(obj: Any, data: dict[str, Any]) -> Any:

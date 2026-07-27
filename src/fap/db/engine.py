@@ -1,13 +1,23 @@
-"""SQLite persistence with an explicit migration table. All persistence goes
-through repositories (fap.db.repositories) - services never write SQL."""
+"""Relational persistence with an explicit migration table. All persistence goes
+through repositories (fap.db.repositories) - services never write SQL.
+
+Backend-agnostic (Phase 11.1): the default is a local SQLite file (unchanged);
+setting ``database.backend='libsql'`` runs the identical repositories against
+libSQL / Turso. The connection details live in ``fap.db.connection``; this module
+owns the migration runner (forward + rollback), health checks and backup.
+"""
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterable
 
+from fap.config.settings import DatabaseSettings
 from fap.core.exceptions import PersistenceError
+from fap.db.connection import ConnectionPool, open_raw
 
 MIGRATIONS: list[tuple[int, str]] = [
     (1, """
@@ -761,41 +771,164 @@ MIGRATIONS: list[tuple[int, str]] = [
 ]
 
 
+# Optional reverse migrations, keyed by version. Forward migrations are additive
+# and safe to leave applied; a ``down`` script is only needed where a deployment
+# genuinely wants to step a version back. ``Database.rollback`` applies the ones
+# present and refuses (loudly) to "roll back" a version that has no down script,
+# so it can never silently leave the schema inconsistent with schema_migrations.
+DOWN_MIGRATIONS: dict[int, str] = {}
+
+_HIGHEST_VERSION = MIGRATIONS[-1][0] if MIGRATIONS else 0
+
+
 class Database:
-    def __init__(self, path: str | Path) -> None:
-        self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+    """A connection facade repositories depend on. ``execute``/``query`` keep the
+    exact pre-Phase-11 contract; the backend (sqlite | libsql) and whether a pool
+    is used are configuration details hidden behind this class."""
+
+    def __init__(self, path: "str | Path | None" = None, *,
+                 settings: DatabaseSettings | None = None, production: bool = True) -> None:
+        if settings is None:
+            settings = DatabaseSettings(path=str(path)) if path is not None else DatabaseSettings()
+        elif path is not None:                       # explicit path overrides
+            settings = replace(settings, path=str(path))
+        self._settings = settings
+        self.backend = (settings.backend or "sqlite").lower()
+        self._path = Path(settings.path)
         self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA foreign_keys = ON")
+
+        def _factory():
+            return open_raw(settings, production=production)
+
+        self._pool: ConnectionPool | None = None
+        self._conn: Any = None
+        if settings.pool_size and settings.pool_size > 1:
+            self._pool = ConnectionPool(_factory, size=settings.pool_size)
+        else:
+            self._conn = _factory()
         self._migrate()
 
+    # -- connection routing ------------------------------------------
+    @contextlib.contextmanager
+    def _connection(self):
+        """Yield a connection with exclusive use. Pooled: one connection per
+        caller (no global lock). Single: the shared connection under the lock -
+        exactly the original serialized behaviour."""
+        if self._pool is not None:
+            with self._pool.acquire() as conn:
+                yield conn
+        else:
+            with self._lock:
+                yield self._conn
+
+    # -- migrations ---------------------------------------------------
     def _migrate(self) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)"
-            )
-            applied = {r[0] for r in self._conn.execute("SELECT version FROM schema_migrations")}
+        with self._connection() as conn:
+            with conn:
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)")
+            applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
             for version, sql in MIGRATIONS:
                 if version in applied:
                     continue
-                self._conn.executescript(sql)
-                self._conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (version,))
+                try:
+                    with conn:                       # commit script + version together
+                        conn.executescript(sql)
+                        conn.execute("INSERT INTO schema_migrations (version) VALUES (?)",
+                                     (version,))
+                except Exception as exc:             # do NOT record a failed version
+                    raise PersistenceError(
+                        f"migration {version} failed and was not applied: {exc}") from exc
 
+    def applied_versions(self) -> list[int]:
+        with self._connection() as conn:
+            return sorted(r[0] for r in conn.execute("SELECT version FROM schema_migrations"))
+
+    def schema_version(self) -> int:
+        applied = self.applied_versions()
+        return applied[-1] if applied else 0
+
+    def pending_versions(self) -> list[int]:
+        applied = set(self.applied_versions())
+        return [v for v, _ in MIGRATIONS if v not in applied]
+
+    def rollback(self, target_version: int) -> list[int]:
+        """Step the schema back to ``target_version`` using registered down
+        migrations. Refuses (PersistenceError) if any version to be removed has
+        no down script, rather than corrupting the version table."""
+        rolled: list[int] = []
+        with self._connection() as conn:
+            applied = sorted((r[0] for r in conn.execute("SELECT version FROM schema_migrations")),
+                             reverse=True)
+            for version in applied:
+                if version <= target_version:
+                    break
+                down = DOWN_MIGRATIONS.get(version)
+                if down is None:
+                    raise PersistenceError(
+                        f"cannot roll back version {version}: no down migration registered")
+                try:
+                    with conn:
+                        conn.executescript(down)
+                        conn.execute("DELETE FROM schema_migrations WHERE version = ?", (version,))
+                    rolled.append(version)
+                except Exception as exc:
+                    raise PersistenceError(f"rollback of version {version} failed: {exc}") from exc
+        return rolled
+
+    # -- query surface (unchanged contract) --------------------------
     def execute(self, sql: str, params: Iterable[Any] = ()) -> None:
         try:
-            with self._lock, self._conn:
-                self._conn.execute(sql, tuple(params))
+            with self._connection() as conn, conn:
+                conn.execute(sql, tuple(params))
         except sqlite3.Error as exc:
+            raise PersistenceError(str(exc)) from exc
+        except PersistenceError:
+            raise
+        except Exception as exc:                     # non-sqlite backends
             raise PersistenceError(str(exc)) from exc
 
-    def query(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
+    def query(self, sql: str, params: Iterable[Any] = ()) -> list[Any]:
         try:
-            with self._lock:
-                return list(self._conn.execute(sql, tuple(params)))
+            with self._connection() as conn:
+                return list(conn.execute(sql, tuple(params)))
         except sqlite3.Error as exc:
             raise PersistenceError(str(exc)) from exc
+        except PersistenceError:
+            raise
+        except Exception as exc:
+            raise PersistenceError(str(exc)) from exc
+
+    # -- reliability --------------------------------------------------
+    def ping(self) -> bool:
+        """A cheap liveness probe used by health checks."""
+        try:
+            return bool(self.query("SELECT 1"))
+        except Exception:
+            return False
+
+    def backup(self, dest: "str | Path") -> str:
+        """Create a point-in-time file backup of a local sqlite database using
+        SQLite's online backup API (safe while the app runs). For libSQL/Turso,
+        backups are handled by Turso point-in-time recovery — see the deployment
+        docs — so this raises to avoid a false sense of a local backup."""
+        if self.backend not in ("sqlite", "", "local"):
+            raise PersistenceError(
+                f"backup() is for the local sqlite backend; backend={self.backend!r} "
+                f"uses managed backups (Turso PITR).")
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with self._connection() as conn:
+            target = sqlite3.connect(str(dest))
+            try:
+                conn.backup(target)
+            finally:
+                target.close()
+        return str(dest)
 
     def close(self) -> None:
-        self._conn.close()
+        if self._pool is not None:
+            self._pool.close()
+        if self._conn is not None:
+            with contextlib.suppress(Exception):
+                self._conn.close()

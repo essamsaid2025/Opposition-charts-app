@@ -7,7 +7,7 @@ from typing import Any, Callable, ParamSpec, TypeVar
 
 import pandas as pd
 
-from fap.cache.backends import CacheBackend, DiskCache, MemoryCache
+from fap.cache.backends import CacheBackend, DiskCache, MemoryCache, RedisCache
 from fap.config.settings import CacheSettings
 
 logger = logging.getLogger(__name__)
@@ -34,10 +34,18 @@ class CacheManager:
 
     def __init__(self, settings: CacheSettings) -> None:
         self._ttl = settings.ttl_seconds
-        self._backend: CacheBackend = (
-            DiskCache(settings.directory) if settings.backend == "disk"
-            else MemoryCache(settings.max_entries)
-        )
+        self.backend_name = settings.backend
+        self._backend: CacheBackend = self._make_backend(settings)
+
+    @staticmethod
+    def _make_backend(settings: CacheSettings) -> CacheBackend:
+        if settings.backend == "redis":
+            return RedisCache(url=settings.redis_url, host=settings.redis_host,
+                              port=settings.redis_port, db=settings.redis_db,
+                              password=settings.redis_password, key_prefix=settings.key_prefix)
+        if settings.backend == "disk":
+            return DiskCache(settings.directory)
+        return MemoryCache(settings.max_entries)
 
     def get(self, key: str) -> Any | None:
         return self._backend.get(key)

@@ -10,6 +10,14 @@ import pipeline. Consumers never touch this: they keep calling
 from fap.storage.base import DatasetStorage, safe_name
 from fap.storage.parquet import ParquetDatasetStorage
 from fap.storage.images import ALLOWED_MIME, ImageStorage, LocalImageStorage
+from fap.storage.files import FileStorage, LocalFileStorage
+from fap.storage.objectstore import (
+    MemoryObjectStore, ObjectDatasetStorage, ObjectFileStorage, ObjectImageStorage,
+    ObjectStore, S3ObjectStore, make_object_store,
+)
 
 __all__ = ["DatasetStorage", "ParquetDatasetStorage", "safe_name",
-           "ImageStorage", "LocalImageStorage", "ALLOWED_MIME"]
+           "ImageStorage", "LocalImageStorage", "ALLOWED_MIME",
+           "FileStorage", "LocalFileStorage",
+           "ObjectStore", "MemoryObjectStore", "S3ObjectStore", "make_object_store",
+           "ObjectImageStorage", "ObjectFileStorage", "ObjectDatasetStorage"]

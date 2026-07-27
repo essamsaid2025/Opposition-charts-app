@@ -96,3 +96,50 @@ class DiskCache(CacheBackend):
     def clear(self) -> None:
         for file in self._dir.glob("*.pkl"):
             file.unlink(missing_ok=True)
+
+
+class RedisCache(CacheBackend):
+    """Shared, cross-process, cross-instance cache for production (reports,
+    rendered previews/charts, expensive query results). Same ``CacheBackend``
+    interface as memory/disk — adding it changed one factory line, nothing else.
+    Values are pickled (the disk cache already relies on picklable values). The
+    redis client is lazy-imported and guarded; TTL is native (Redis ``EX``), and
+    ``clear`` is scoped to this app's key prefix so it never flushes a shared
+    Redis used by other services."""
+
+    def __init__(self, *, url: str = "", host: str = "localhost", port: int = 6379,
+                 db: int = 0, password: str = "", key_prefix: str = "fap:") -> None:
+        try:
+            import redis                              # type: ignore
+        except Exception as exc:
+            from fap.core.exceptions import ConfigurationError
+            raise ConfigurationError(
+                "cache.backend='redis' requires the redis client "
+                "(`pip install redis`). Install it, or use cache.backend='disk'.") from exc
+        self._prefix = key_prefix
+        if url:
+            self._r = redis.Redis.from_url(url)
+        else:
+            self._r = redis.Redis(host=host, port=port, db=db, password=password or None)
+
+    def _k(self, key: str) -> str:
+        return f"{self._prefix}{key}"
+
+    def get(self, key: str) -> Any | None:
+        raw = self._r.get(self._k(key))
+        if raw is None:
+            return None
+        try:
+            return pickle.loads(raw)
+        except Exception:                            # corrupt/foreign value -> miss
+            return None
+
+    def set(self, key: str, value: Any, ttl_seconds: int) -> None:
+        self._r.set(self._k(key), pickle.dumps(value), ex=max(1, int(ttl_seconds)))
+
+    def delete(self, key: str) -> None:
+        self._r.delete(self._k(key))
+
+    def clear(self) -> None:
+        for k in self._r.scan_iter(match=f"{self._prefix}*"):
+            self._r.delete(k)

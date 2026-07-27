@@ -43,7 +43,10 @@ from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.layout import LayoutEngine
 from fap.visuals.renderer import Renderer
 from fap.reports import ReportsManager
-from fap.storage import DatasetStorage, LocalImageStorage, ParquetDatasetStorage
+from fap.storage import (
+    DatasetStorage, LocalFileStorage, LocalImageStorage, ObjectDatasetStorage,
+    ObjectFileStorage, ObjectImageStorage, ParquetDatasetStorage, make_object_store,
+)
 from fap.workspaces import WorkspaceManager, WorkspaceService
 
 
@@ -180,6 +183,23 @@ class PlatformContext:
         reports/visualization/storage; independent of scouting (Phase 10)."""
         return self.services.get("players")
 
+    # -- Phase 11 operations (health / diagnostics / config validation) ----
+    def health(self) -> dict:
+        """Full health report (database, migrations, storage tiers, cache,
+        backup/restore readiness) as a serialisable dict — feeds a /healthz."""
+        from fap.ops import run_health_checks
+        return run_health_checks(self).to_dict()
+
+    def diagnostics(self) -> dict:
+        """Read-only runtime snapshot (backends, schema, counts, redacted config)."""
+        from fap.ops import diagnostics
+        return diagnostics(self)
+
+    def config_issues(self) -> dict:
+        """Environment/config validation summary (production readiness)."""
+        from fap.config.validation import summarize
+        return summarize(self.settings)
+
 
 def init_platform(root: Path | None = None, *,
                   settings: AppSettings | None = None) -> PlatformContext:
@@ -209,7 +229,8 @@ def init_platform(root: Path | None = None, *,
 
     services.register("settings", lambda _: settings)
     services.register("cache", lambda _: CacheManager(settings.cache))
-    services.register("db", lambda _: Database(settings.database.path))
+    services.register("db", lambda _: Database(settings=settings.database,
+                                               production=settings.is_production))
     services.register("templates", lambda reg: TemplateRepository(reg.get("db")))
     services.register("custom_providers", lambda reg: CustomProviderRepository(reg.get("db")))
     services.register("providers", _providers)
@@ -217,18 +238,20 @@ def init_platform(root: Path | None = None, *,
     services.register("validation", lambda _: ValidationEngine())
     services.register("pipeline", lambda _: DataPipeline())
     services.register("importer", _importer)
-    services.register("dataset_storage", lambda _: ParquetDatasetStorage(
-        Path(settings.user_data_dir) / "datasets"))
-    services.register("image_storage", lambda _: LocalImageStorage(
-        Path(settings.user_data_dir) / "images"))
+    # object store built once and shared by every asset tier (only when s3 is
+    # selected; local deployments never import boto3).
+    services.register("object_store", lambda _: (
+        make_object_store(settings.storage) if settings.storage.backend == "s3" else None))
+    services.register("dataset_storage", lambda reg: _dataset_storage(reg, settings))
+    services.register("image_storage", lambda reg: _image_storage(reg, settings))
     services.register("themes", lambda _: ThemeManager(
         settings.themes_dir, Path(settings.user_data_dir) / "themes"))
     services.register("workspace_manager",
                       lambda reg: WorkspaceManager(reg.get("db"), cache=reg.get("cache"),
                                                    storage=reg.get("dataset_storage")))
     services.register("reports", _reports_manager)
-    services.register("video_storage", lambda _: _local_file_storage(settings, "videos"))
-    services.register("attachment_storage", lambda _: _local_file_storage(settings, "attachments"))
+    services.register("video_storage", lambda reg: _file_storage(reg, settings, "videos"))
+    services.register("attachment_storage", lambda reg: _file_storage(reg, settings, "attachments"))
     services.register("permissions", _permissions)
     services.register("administration", lambda reg: _administration(reg, settings))
     services.register("scouting", _scouting)
@@ -239,10 +262,27 @@ def init_platform(root: Path | None = None, *,
                            version=platform_version())
 
 
-def _local_file_storage(settings: "AppSettings", subdir: str):
-    """The new local file tier (videos, attachments) - same pattern as
-    ParquetDatasetStorage / LocalImageStorage, under user_data/<subdir>."""
-    from fap.storage.files import LocalFileStorage
+def _image_storage(reg: "ServiceRegistry", settings: "AppSettings"):
+    """Image tier: object storage in production (s3), local disk otherwise. Same
+    ImageStorage interface either way, so reports/players/scouting never change."""
+    if settings.storage.backend == "s3":
+        return ObjectImageStorage(reg.get("object_store"), prefix=settings.storage.prefix)
+    return LocalImageStorage(Path(settings.user_data_dir) / "images")
+
+
+def _dataset_storage(reg: "ServiceRegistry", settings: "AppSettings"):
+    """Dataset-frame tier: object storage (s3) or local parquet, same interface."""
+    if settings.storage.backend == "s3":
+        return ObjectDatasetStorage(reg.get("object_store"), prefix=settings.storage.prefix)
+    return ParquetDatasetStorage(Path(settings.user_data_dir) / "datasets")
+
+
+def _file_storage(reg: "ServiceRegistry", settings: "AppSettings", subdir: str):
+    """Large-binary tier (videos, attachments, PDFs, thumbnails): object storage
+    (s3) or local disk under user_data/<subdir>, same FileStorage interface."""
+    if settings.storage.backend == "s3":
+        return ObjectFileStorage(reg.get("object_store"), prefix=settings.storage.prefix,
+                                 namespace=subdir)
     return LocalFileStorage(Path(settings.user_data_dir) / subdir)
 
 
