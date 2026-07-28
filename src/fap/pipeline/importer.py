@@ -169,10 +169,11 @@ class ImportService:
     def import_file(self, data: bytes, filename: str, *, provider_id: str | None = None,
                     mapping: dict[str, str] | None = None, coord_system: str | None = None,
                     flip_direction: bool = False, options: dict[str, Any] | None = None,
+                    constants: dict[str, str] | None = None,
                     use_cache: bool = True) -> ImportResult:
         provider, reported_id, detection = self._detect_and_resolve(data, filename, provider_id)
         cache_key = self._cache_key(data, reported_id, mapping, coord_system,
-                                    flip_direction, options)
+                                    flip_direction, options, constants)
         if use_cache:
             hit = self._cache.get(cache_key)
             if hit is not None:
@@ -187,6 +188,16 @@ class ImportService:
         if mapping:
             final_mapping.update(mapping)             # explicit user mapping wins
 
+        # single-kind files (a bare x,y heat map, a shot map...) carry no
+        # event_type column. Rather than fail the required-column check, infer the
+        # one event kind from the columns and inject it as a constant. An explicit
+        # user constant or a mapped event_type always wins over the inference.
+        eff_constants = dict(constants or {})
+        inferred = self._infer_constants(raw.frame, final_mapping, eff_constants)
+        if inferred is not None:
+            eff_constants.setdefault("event_type", inferred.event_type)
+            final_mapping.update(inferred.extra_mapping)
+
         # coordinate system: explicit > provider-declared > heuristic
         mapped_preview = raw.frame.rename(columns=final_mapping)
         heuristic_system, heuristic_conf = detect_coordinate_system(mapped_preview)
@@ -198,14 +209,17 @@ class ImportService:
             system, conf = heuristic_system, heuristic_conf
 
         frame = self._pipeline.run(raw, flip_direction=flip_direction,
-                                   column_mapping=final_mapping, coord_system=system)
+                                   column_mapping=final_mapping, coord_system=system,
+                                   constants=eff_constants)
         frame, cleaning_log = clean(frame)
         validation = self._validator.run(frame)
         quality = score(frame)
 
         # what the file actually supplied vs what the schema filled in, so the
-        # UI can tell the user which fields are real and which are placeholders
+        # UI can tell the user which fields are real and which are placeholders.
+        # An injected constant counts as provided (the value is real, if uniform).
         provided = set(schema.apply_mapping(schema.clean_columns(raw.frame), final_mapping).columns)
+        provided |= set(eff_constants)
         generated = [c for c in schema.CANONICAL if c in frame.columns and c not in provided]
         missing_required = [c for c in schema.REQUIRED if c not in provided]
 
@@ -235,6 +249,10 @@ class ImportService:
                 "mapping_confidence": round(detected.overall_confidence, 3),
                 "generated_fields": generated,
                 "missing_required": missing_required,
+                "inferred_event_type": inferred.event_type if inferred else None,
+                "inferred_shape": inferred.label if inferred else None,
+                "inferred_reason": inferred.reason if inferred else None,
+                "constants": dict(eff_constants),
                 "unknown_fields": list(detected.unmapped_sources),
                 "warnings": [str(i) for i in getattr(validation, "issues", [])][:12],
                 "event_schema": event_schema,
@@ -249,14 +267,47 @@ class ImportService:
         self._cache.set(cache_key, result)
         return result
 
+    @staticmethod
+    def _infer_constants(raw_frame: pd.DataFrame, final_mapping: dict[str, str],
+                         constants: dict[str, str]) -> "EventShape | None":
+        """Infer a constant event_type for a single-kind file, or None.
+
+        Two cases, neither of which touches a genuine event log:
+        * no event_type at all (a bare x,y heat map, a shot map) -> infer the one
+          event kind from the column names;
+        * an event column that is really pass qualifiers in disguise
+          (Accurate/Inaccurate/Key pass/Assist) with end coordinates present ->
+          reclassify to passes and route that column to ``outcome``.
+        An explicit user constant always wins over either.
+        """
+        from fap.pipeline.shapes import (
+            EventShape, infer_event_shape, looks_like_pass_qualifiers)
+        if "event_type" in constants:
+            return None
+        cleaned = schema.apply_mapping(schema.clean_columns(raw_frame), final_mapping)
+        mapped_cols = set(cleaned.columns)
+        if "event_type" not in mapped_cols:
+            return infer_event_shape([str(c) for c in raw_frame.columns])
+
+        # event_type is present - only reclassify a pass-qualifier column, and
+        # only when end coordinates confirm these rows are passes.
+        has_end = "end_x" in mapped_cols or "end_y" in mapped_cols
+        if not has_end or not looks_like_pass_qualifiers(cleaned["event_type"]):
+            return None
+        src = next((s for s, c in final_mapping.items() if c == "event_type"), None)
+        extra = {src: "outcome"} if src else {}      # keep accurate/inaccurate as the outcome
+        return EventShape("pass", extra, "Pass map",
+                          "the event column holds pass qualifiers, not event names")
+
     def save_template(self, name: str, provider_id: str, raw_columns: list[str],
                       mapping: dict[str, str]) -> None:
         self._templates.save(name, provider_id, raw_columns, mapping)
 
     @staticmethod
     def _cache_key(data: bytes, provider_id: str, mapping: dict[str, str] | None,
-                   coord_system: str | None, flip: bool, options: dict[str, Any] | None) -> str:
+                   coord_system: str | None, flip: bool, options: dict[str, Any] | None,
+                   constants: dict[str, str] | None = None) -> str:
         h = hashlib.sha256(data)
-        h.update(json.dumps([provider_id, mapping, coord_system, flip, options],
+        h.update(json.dumps([provider_id, mapping, coord_system, flip, options, constants],
                             sort_keys=True, default=str).encode())
         return f"import::{h.hexdigest()[:40]}"

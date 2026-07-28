@@ -67,11 +67,12 @@ class DataHubService:
     def run_import(self, data: bytes, filename: str, *, provider_id: str | None = None,
                    mapping: dict[str, str] | None = None, coord_system: str | None = None,
                    flip_direction: bool = False, options: dict[str, Any] | None = None,
+                   constants: dict[str, str] | None = None,
                    use_cache: bool = True) -> ImportResult:
         return self._imp.import_file(
             data, filename, provider_id=provider_id, mapping=mapping,
             coord_system=coord_system, flip_direction=flip_direction,
-            options=options, use_cache=use_cache)
+            options=options, constants=constants, use_cache=use_cache)
 
     def save_mapping_template(self, name: str, provider_id: str, raw_columns: list[str],
                               mapping: dict[str, str]) -> None:

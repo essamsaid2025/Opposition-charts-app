@@ -48,6 +48,21 @@ def apply_mapping(df: pd.DataFrame, mapping: dict[str, str]) -> pd.DataFrame:
                               for k, v in mapping.items()})
 
 
+def apply_constants(df: pd.DataFrame, constants: dict[str, str] | None) -> pd.DataFrame:
+    """Set canonical columns to a fixed value for every row.
+
+    Used for single-kind files that carry no such column of their own - e.g. a
+    shot map has no ``event_type`` column because every row is a shot. Runs
+    before :func:`validate` so an injected required field satisfies the contract.
+    Only the keys given are touched; an existing column is overwritten.
+    """
+    if not constants:
+        return df
+    for col, value in constants.items():
+        df[col] = value
+    return df
+
+
 def coerce_schema(df: pd.DataFrame) -> pd.DataFrame:
     """One controlled copy; every column of the canonical contract exists and
     has the right dtype afterwards."""

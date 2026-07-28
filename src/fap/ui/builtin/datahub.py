@@ -134,6 +134,13 @@ class DataHubPage(Page):
         with cols[0]:
             C.render_section_title("Column mapping", eyebrow="Step 5", icon_name="layers")
             st.caption(f"Confidence {result.mapping_confidence:.0%}")
+            inferred = summary.get("inferred_event_type")
+            if inferred:
+                C.render_alert(
+                    f"This file has no event-type column - it was read as "
+                    f"**{summary.get('inferred_shape', 'a single event kind')}** and every "
+                    f"row set to event type **{inferred}** ({summary.get('inferred_reason', '')}).",
+                    "info")
             rows = [{"source": s, "canonical": c} for s, c in list(result.mapping.items())[:20]]
             if rows:
                 st.dataframe(rows, use_container_width=True, hide_index=True)

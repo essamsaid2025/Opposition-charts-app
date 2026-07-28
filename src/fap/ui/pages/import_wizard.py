@@ -156,6 +156,24 @@ def _step3_mapping(ctx: AppContext) -> None:
             st.caption("Unmapped source columns (kept as extra data): "
                        + ", ".join(detected.unmapped_sources))
 
+    # single-kind files (a bare x,y heat map, a shot map...) have no event-type
+    # column. Offer the inferred event kind as the value applied to every row.
+    constants: dict[str, str] = {}
+    if "event_type" not in set(mapping.values()):
+        from fap.pipeline.shapes import infer_event_shape
+        shape = infer_event_shape([str(c) for c in raw.frame.columns])
+        options = ["pass", "carry", "cross", "dribble", "shot", "touch", "recovery",
+                   "interception", "clearance", "tackle", "duel"]
+        default = shape.event_type if shape and shape.event_type in options else "touch"
+        note_box("No event-type column was found in this file. "
+                 + (f"It looks like a <b>{shape.label}</b> - "
+                    if shape else "")
+                 + "choose the event type to apply to every row.")
+        chosen = st.selectbox("Event type for every row", options,
+                              index=options.index(default), key="const::event_type")
+        constants["event_type"] = chosen
+    file["constants"] = constants
+
     save_as = st.text_input("Save this mapping as a template (optional)", "")
     file["mapping"] = mapping
     file["save_template_as"] = save_as.strip()
@@ -218,6 +236,7 @@ def _step5_import(ctx: AppContext) -> None:
             file["data"], file["name"], provider_id=file.get("provider_id"),
             mapping=file.get("mapping"), coord_system=file.get("coord_system"),
             flip_direction=bool(file.get("flip")), options=file.get("options"),
+            constants=file.get("constants") or None,
         )
         progress.progress(80, text="Validating and scoring...")
         if file.get("save_template_as"):

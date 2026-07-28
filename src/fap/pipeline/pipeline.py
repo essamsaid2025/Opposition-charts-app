@@ -32,10 +32,12 @@ class DataPipeline:
 
     def run(self, raw: RawDataset, *, flip_direction: bool = False,
             column_mapping: dict[str, str] | None = None,
-            coord_system: str | None = None) -> pd.DataFrame:
+            coord_system: str | None = None,
+            constants: dict[str, str] | None = None) -> pd.DataFrame:
         df = schema.clean_columns(raw.frame)
         mapping = column_mapping if column_mapping is not None else raw.column_mapping
         df = schema.apply_mapping(df, mapping)
+        df = schema.apply_constants(df, constants)  # single-kind files inject e.g. event_type
         schema.validate(df)          # required columns must come from the source/mapping,
         df = schema.coerce_schema(df)  # coercion only fills in the optional remainder
         system = coord_system or raw.native_coord_system
