@@ -163,19 +163,30 @@ class ScoutingPage(Page):
             if data:
                 st.image(data, width=140)
 
-        tabs = st.tabs(["Profile", "Notes", "Images", "Videos", "Attachments", "Reports"])
+        tabs = st.tabs(["Profile", "Visualization", "Notes", "Images", "Videos",
+                        "Attachments", "Reports"])
         with tabs[0]:
             self._profile(shell, svc, p)
         with tabs[1]:
-            self._notes(shell, svc, p)
+            self._tab_visualization(shell, svc, p)
         with tabs[2]:
-            self._images(shell, svc, p)
+            self._notes(shell, svc, p)
         with tabs[3]:
-            self._videos(shell, svc, p)
+            self._images(shell, svc, p)
         with tabs[4]:
-            self._attachments(shell, svc, p)
+            self._videos(shell, svc, p)
         with tabs[5]:
+            self._attachments(shell, svc, p)
+        with tabs[6]:
             self._reports(shell, svc, p)
+
+    def _tab_visualization(self, shell, svc, p) -> None:
+        """Visualization workspace (reuses the platform visualization engine) over
+        the scouting player's events from the active dataset."""
+        from fap.ui.components.viz_workspace import render_visualization_workspace
+        frame = svc.player_event_frame(shell.user, p.id)
+        render_visualization_workspace(shell, frame=frame, player_name=p.name,
+                                       key=f"sc_viz_{p.id}")
 
     def _active_analysis(self, shell, svc, p) -> None:
         """Match analysis from the ACTIVE dataset (single source of truth), joined

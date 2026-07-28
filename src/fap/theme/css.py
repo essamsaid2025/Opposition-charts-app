@@ -653,6 +653,13 @@ def _studio() -> str:
   font-size: 0.82rem; font-weight: 600; }
 .fap-active-ds.empty span { font-weight: 400; font-size: 0.74rem; color: var(--fap-text-subtle);
   margin-top: 2px; }
+/* player visualization workspace context bar */
+.fap-viz-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+  padding: 9px 13px; margin-bottom: var(--fap-space-3); border: 1px solid var(--fap-border);
+  border-radius: var(--fap-radius-md); background: var(--fap-surface-alt); font-size: 0.84rem;
+  color: var(--fap-text-muted); }
+.fap-viz-context b { color: var(--fap-text); }
+.fap-viz-context .fap-icon { color: var(--fap-text-subtle); }
 """
 
 

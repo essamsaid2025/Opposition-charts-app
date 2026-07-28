@@ -342,8 +342,8 @@ class FirstTeamPlayersPage(Page):
         p = ov["player"]
         self._header(svc, p, ov)
 
-        tabs = st.tabs(["Overview", "Analysis", "Statistics", "Career", "Matches", "Training",
-                        "Medical", "Videos", "Reports", "Settings"])
+        tabs = st.tabs(["Overview", "Analysis", "Statistics", "Visualization", "Career", "Matches",
+                        "Training", "Medical", "Videos", "Reports", "Settings"])
         with tabs[0]:
             self._tab_overview(shell, svc, player_id, ov)
         with tabs[1]:
@@ -351,19 +351,28 @@ class FirstTeamPlayersPage(Page):
         with tabs[2]:
             self._tab_statistics(shell, svc, player_id)
         with tabs[3]:
-            self._tab_career(shell, svc, player_id)
+            self._tab_visualization(shell, svc, player_id, p)
         with tabs[4]:
-            self._tab_matches(shell, svc, player_id)
+            self._tab_career(shell, svc, player_id)
         with tabs[5]:
-            self._tab_training(shell, svc, player_id)
+            self._tab_matches(shell, svc, player_id)
         with tabs[6]:
-            self._tab_medical(shell, svc, player_id)
+            self._tab_training(shell, svc, player_id)
         with tabs[7]:
-            self._tab_videos(shell, svc, player_id)
+            self._tab_medical(shell, svc, player_id)
         with tabs[8]:
-            self._tab_reports(shell, svc, player_id)
+            self._tab_videos(shell, svc, player_id)
         with tabs[9]:
+            self._tab_reports(shell, svc, player_id)
+        with tabs[10]:
             self._tab_settings(shell, svc, player_id, p)
+
+    # ---- Visualization workspace (reuses the platform visualization engine) ----
+    def _tab_visualization(self, shell, svc, player_id, p) -> None:
+        from fap.ui.components.viz_workspace import render_visualization_workspace
+        frame = svc.player_event_frame(shell.user, player_id)
+        render_visualization_workspace(shell, frame=frame, player_name=p.name,
+                                       key=f"ftp_viz_{player_id}")
 
     # ---- professional header -------------------------------------------
     def _header(self, svc, p, ov) -> None:
