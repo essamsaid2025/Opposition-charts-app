@@ -266,7 +266,15 @@ def _signature(viz_id: str, controls: dict, filt, theme_id: str, frame, scope: s
 
 
 # ---------------------------------------------------------------- entry point
-def render_visualization_workspace(shell, *, frame, player_name: str, key: str) -> None:
+def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
+                                   on_assign=None) -> None:
+    """Render the player visualization workspace.
+
+    ``on_assign`` (optional): a callback ``(png_bytes, title, viz_id) -> None``. When
+    given, each rendered chart shows an "Assign to player report" button that hands
+    the exact PNG to the callback (Scouting persists it to the player). Keeps this
+    shared component decoupled - it never imports scouting/players, only calls back.
+    """
     try:
         active = shell.wm.active_dataset(shell.user) if shell.wm is not None else None
     except Exception:
@@ -329,7 +337,7 @@ def render_visualization_workspace(shell, *, frame, player_name: str, key: str) 
     if not sel or sel not in labels:
         st.caption("Select a visualization from the catalog to configure and render it.")
         return
-    _selected_workspace(shell, reg, key, sel, labels, frame, player_name, scope, infos)
+    _selected_workspace(shell, reg, key, sel, labels, frame, player_name, scope, infos, on_assign)
 
 
 # ---------------------------------------------------------------- quick rows
@@ -465,7 +473,8 @@ def _cards(shell, key: str, section: str, items: list[dict], fav_ids: list[str])
 
 
 # ---------------------------------------------------------------- selected viz
-def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name, scope, infos) -> None:
+def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name, scope, infos,
+                        on_assign=None) -> None:
     info = next((i for i in infos if i["id"] == sel), {"id": sel, "name": labels.get(sel, sel)})
     try:
         viz = reg.create(sel)
@@ -542,7 +551,8 @@ def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name,
     if st.session_state.get(f"{key}_req") != signature:
         st.caption("Adjust options/filters, then click Render.")
         return
-    _render_and_export(shell, viz, render_frame, controls, filt, theme_id, player_name, key, themes)
+    _render_and_export(shell, viz, render_frame, controls, filt, theme_id, player_name, key, themes,
+                       on_assign=on_assign, viz_id=sel)
 
 
 def _theme_manager(shell):
@@ -571,7 +581,8 @@ def _prepare_frame(frame):
     return out
 
 
-def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name, key, themes) -> None:
+def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name, key, themes,
+                       on_assign=None, viz_id: str = "") -> None:
     from fap.core.types import RenderContext
     from fap.visuals.renderer import Renderer
     from fap.visuals.export import ExportEngine
@@ -588,16 +599,34 @@ def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name,
     try:
         export = ExportEngine()
         title = controls.get("title") or player_name
+        png_bytes = None
         ecols = st.columns(3)
         for col, fmt in zip(ecols, ("png", "svg", "pdf")):
             try:
                 res = export.export(fig, title, fmt=fmt,
                                     dpi=controls.get("export_dpi", "standard"),
                                     transparent=bool(controls.get("transparent_bg")))
+                if fmt == "png":
+                    png_bytes = res.data
                 col.download_button(fmt.upper(), data=res.data, file_name=res.filename,
                                     mime=res.mime, key=f"{key}_exp_{fmt}", use_container_width=True)
             except Exception:
                 col.caption(f"{fmt.upper()} unavailable")
+
+        # assign the exact rendered chart to the player's report (Scouting/Players)
+        if on_assign is not None:
+            if png_bytes is None:
+                try:
+                    png_bytes = export.export(fig, title, fmt="png").data
+                except Exception:
+                    png_bytes = None
+            if png_bytes and st.button("Assign to player report", key=f"{key}_assign",
+                                       type="primary", use_container_width=True):
+                try:
+                    on_assign(png_bytes, title, viz_id)
+                    st.toast("Chart assigned to the player report")
+                except Exception as exc:
+                    st.error(f"Could not assign this chart: {exc}")
     finally:
         import matplotlib.pyplot as plt
         plt.close(fig)

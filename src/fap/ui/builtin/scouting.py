@@ -41,6 +41,7 @@ class ScoutingPage(Page):
             return
         self._can_edit = perms.can(shell.user, str(Capability.EDIT_SCOUTING))
         self._can_report = perms.can(shell.user, str(Capability.CREATE_REPORT))
+        self._can_export = perms.can(shell.user, str(Capability.EXPORT_REPORT))
 
         C.render_section_title(
             "Scouting", eyebrow="Recruitment",
@@ -182,11 +183,19 @@ class ScoutingPage(Page):
 
     def _tab_visualization(self, shell, svc, p) -> None:
         """Visualization workspace (reuses the platform visualization engine) over
-        the scouting player's events from the active dataset."""
+        the scouting player's events from the active dataset. When the scout can
+        edit, each rendered chart can be assigned (frozen) to the player's report."""
         from fap.ui.components.viz_workspace import render_visualization_workspace
         frame = svc.player_event_frame(shell.user, p.id)
+
+        def _assign(png, title, viz_id):
+            svc.assign_chart(shell.user, p.id, png, title=title, viz_id=viz_id)
+
         render_visualization_workspace(shell, frame=frame, player_name=p.name,
-                                       key=f"sc_viz_{p.id}")
+                                       key=f"sc_viz_{p.id}",
+                                       on_assign=_assign if self._can_edit else None)
+        if self._can_edit:
+            self._assigned_charts_panel(shell, svc, p)
 
     def _active_analysis(self, shell, svc, p) -> None:
         """Match analysis from the ACTIVE dataset (single source of truth), joined
@@ -277,8 +286,27 @@ class ScoutingPage(Page):
             if st.button("Add note", type="primary", key="add_note") and body.strip():
                 svc.add_note(shell.user, p.id, body, pinned=pinned); st.rerun()
 
+    def _assigned_charts_panel(self, shell, svc, p) -> None:
+        """The charts pinned to this player for their report (frozen PNGs)."""
+        charts = svc.list_assigned_charts(p.id)
+        st.divider()
+        st.markdown(f"**Assigned to report** · {len(charts)} chart(s)")
+        if not charts:
+            st.caption("Render a chart above and click **Assign to player report** to pin it here. "
+                       "Assigned charts are embedded when you generate or download the report.")
+            return
+        cols = st.columns(4)
+        for i, m in enumerate(charts):
+            data = svc.image_bytes(m.image_id)
+            with cols[i % 4]:
+                if data:
+                    st.image(data, caption=m.caption or "Chart", use_container_width=True)
+                if st.button("Remove", key=f"unassign_{m.id}", use_container_width=True):
+                    svc.unassign_chart(shell.user, m.id)
+                    st.rerun()
+
     def _images(self, shell, svc, p) -> None:
-        media = svc.list_media(p.id)
+        media = [m for m in svc.list_media(p.id) if m.kind != "report_chart"]
         cols = st.columns(4)
         for i, m in enumerate(media):
             data = svc.image_bytes(m.image_id)
@@ -334,17 +362,29 @@ class ScoutingPage(Page):
                 st.rerun()
 
     def _reports(self, shell, svc, p) -> None:
+        n_charts = len(svc.list_assigned_charts(p.id))
+        st.caption(f"{icon('grid', 13)} {n_charts} chart(s) assigned to this player — new "
+                   f"reports embed them automatically; use **Add charts** to add them to an "
+                   f"existing report.")
         links = svc.list_reports(p.id)
         if not links:
-            C.render_empty_state("No reports yet", "Generate a scouting report to open it in "
-                                 "Report Studio.", icon_name="reports")
+            C.render_empty_state("No reports yet", "Generate a scouting report — assigned charts "
+                                 "are included and it opens in Report Studio.", icon_name="reports")
         for link in links:
-            cols = st.columns([4, 1], vertical_alignment="center")
+            cols = st.columns([3, 1, 1, 1], vertical_alignment="center")
             cols[0].markdown(f"{icon('reports', 14)} {link.title} · {link.created_at}",
                              unsafe_allow_html=True)
-            if cols[1].button("Open in Studio", key=f"open_rep_{link.id}", use_container_width=True):
+            if cols[1].button("Open", key=f"open_rep_{link.id}", use_container_width=True):
                 st.session_state[OPEN_REPORT] = link.report_id
                 shell.goto("report_editor")           # reuse the existing Report Studio
+            if self._can_report and cols[2].button("Add charts", key=f"addc_{link.id}",
+                                                    use_container_width=True):
+                added = svc.add_charts_to_report(shell.user, link.report_id, p.id)
+                st.toast(f"Added {added} chart(s) to the report" if added
+                         else "No assigned charts to add")
+                st.rerun()
+            if self._can_export:
+                self._download_report(shell, svc, link)
         if self._can_report:
             st.divider()
             if st.button("Generate scouting report", type="primary", key="gen_rep",
@@ -352,6 +392,23 @@ class ScoutingPage(Page):
                 link = svc.create_report(shell.user, p.id)
                 st.session_state[OPEN_REPORT] = link.report_id
                 shell.goto("report_editor")           # open the auto-generated report in Studio
+
+    def _download_report(self, shell, svc, link) -> None:
+        """Render a linked report to a file and offer it for download (charts
+        embedded by the reports engine). Uses the existing export pipeline."""
+        formats = svc.report_formats() or ["html"]
+        pick_key = f"fmt_{link.id}"
+        fmt = st.session_state.get(pick_key, "pdf" if "pdf" in formats else formats[0])
+        cols = st.columns([2, 2], vertical_alignment="center")
+        fmt = cols[0].selectbox("Format", formats, index=formats.index(fmt) if fmt in formats else 0,
+                                key=pick_key, label_visibility="collapsed")
+        try:
+            rendered = svc.render_report(shell.user, link.report_id, fmt)
+            cols[1].download_button(
+                "Download report", data=rendered.content, file_name=rendered.filename,
+                mime=rendered.mime, key=f"dl_{link.id}_{fmt}", use_container_width=True)
+        except Exception as exc:
+            cols[1].caption(f"{fmt.upper()} unavailable: {exc}")
 
     # ------------------------------------------------------------ watchlists
     def _watchlists(self, shell, svc) -> None:

@@ -28,6 +28,9 @@ from fap.scouting.repository import (
 
 _ALLOWED_IMAGE = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"}
 
+# media kind for charts the scout pinned to a player for their report (frozen PNGs)
+CHART_MEDIA_KIND = "report_chart"
+
 
 class ScoutingService:
     def __init__(self, db: Any, *, permissions: Any, audit: Any, reports: Any = None,
@@ -301,6 +304,27 @@ class ScoutingService:
     def list_media(self, player_id: str, *, kind: str | None = None) -> list[PlayerMedia]:
         return self.media.list(player_id, kind=kind)
 
+    # ------------------------------------------------------------ assigned charts
+    # A chart the scout rendered in the Visualization workspace and pinned to the
+    # player. Stored as a FROZEN PNG (reusing ImageStorage via add_image, kind
+    # 'report_chart') so it survives regardless of which dataset is active later,
+    # then embedded into the player's report as an image block at generate time.
+    def assign_chart(self, user: User, player_id: str, png: bytes, *,
+                     title: str = "", viz_id: str = "") -> PlayerMedia:
+        self._require(user, Capability.EDIT_SCOUTING)
+        caption = (title or viz_id or "Chart").strip()
+        m = self.add_image(user, player_id, png, "image/png",
+                           kind=CHART_MEDIA_KIND, caption=caption)
+        self.audit.record(user, "scouting.chart.assign", target_type="player",
+                          target_id=player_id, detail={"viz_id": viz_id, "title": caption})
+        return m
+
+    def list_assigned_charts(self, player_id: str) -> list[PlayerMedia]:
+        return self.media.list(player_id, kind=CHART_MEDIA_KIND)
+
+    def unassign_chart(self, user: User, media_id: str) -> None:
+        self.delete_media(user, media_id)
+
     def image_bytes(self, image_id: str) -> bytes | None:
         return self._images.load(image_id) if self._images else None
 
@@ -394,10 +418,12 @@ class ScoutingService:
                           target_id=attachment_id)
 
     # ================================================================ reports (reuse Studio)
-    def create_report(self, user: User, player_id: str, *, title: str = "") -> ScoutingReportLink:
+    def create_report(self, user: User, player_id: str, *, title: str = "",
+                      include_charts: bool = True) -> ScoutingReportLink:
         """Auto-generate a professional scouting report through ReportsManager and
-        link it to the player. The report is then edited in the EXISTING Report
-        Studio (open by its report_id) - no second editor is built here."""
+        link it to the player. Assigned charts (pinned in the Visualization tab)
+        are embedded as image blocks so a downloaded report already contains them.
+        The report is then edited in the EXISTING Report Studio - no second editor."""
         self._require(user, Capability.CREATE_REPORT)
         if self._reports is None:
             raise ValueError("Reports engine is not configured.")
@@ -408,12 +434,50 @@ class ScoutingService:
                  "analyst": user.name or user.email, "match_date": ""}
         df = self._player_frame(p)
         record = self._auto_report(user, p, title, cover, df)
+        if include_charts:
+            try:
+                self.add_charts_to_report(user, record.id, player_id)
+            except Exception:
+                pass                                   # a report without charts is still valid
         link = ScoutingReportLink(id=self._uid(), player_id=player_id, report_id=record.id,
                                   title=title, created_by=user.email)
         self.links.add(link)
         self.audit.record(user, "scouting.report.create", target_type="player", target_id=player_id,
                           detail={"report_id": record.id, "title": title})
         return link
+
+    def add_charts_to_report(self, user: User, report_id: str, player_id: str) -> int:
+        """Append every chart assigned to the player onto a report as image blocks.
+        Reuses the reports engine's document mutation + shared ImageStorage; the
+        exporter embeds the image at download. Returns how many were added."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            return 0
+        charts = self.list_assigned_charts(player_id)
+        if not charts:
+            return 0
+        from fap.reports.blocks import add_block, image_block
+
+        def mutate(doc):
+            for m in charts:
+                add_block(doc, image_block(m.image_id, caption=m.caption or "",
+                                           title=m.caption or "Chart"))
+        self._reports.update_blocks(user, report_id, mutate)
+        self.audit.record(user, "scouting.report.charts", target_type="report",
+                          target_id=report_id, detail={"count": len(charts), "player": player_id})
+        return len(charts)
+
+    def report_formats(self) -> list[str]:
+        return self._reports.available_formats() if self._reports is not None else []
+
+    def render_report(self, user: User, report_id: str, fmt: str = "pdf"):
+        """Render a linked report to a downloadable file (PDF/HTML/DOCX/PPTX) via
+        the existing reports engine - charts embedded. Returns a RenderedReport
+        (``.content`` bytes, ``.filename``, ``.mime``)."""
+        self._require(user, Capability.EXPORT_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        return self._reports.render(user, report_id, fmt)
 
     def _auto_report(self, user: User, player: Player, title: str, cover: dict[str, Any],
                      df: pd.DataFrame):
