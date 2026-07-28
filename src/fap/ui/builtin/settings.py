@@ -5,6 +5,7 @@ import streamlit as st
 
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
+from fap.theme import components as C
 from fap.ui.page import Page, page_registry
 
 _SCOPE = "settings"
@@ -21,7 +22,9 @@ class SettingsPage(Page):
     min_role = Role.READ_ONLY           # personal settings for everyone
 
     def render(self, shell) -> None:
-        st.title("Settings")
+        C.render_section_title(
+            "Settings", eyebrow="Preferences", icon_name="settings",
+            subtitle="Personal defaults, saved automatically to your account.")
         saved = {}
         if shell.wm is not None:
             try:
@@ -30,20 +33,32 @@ class SettingsPage(Page):
                 saved = {}
         settings = {**_DEFAULTS, **saved}
 
-        st.caption("Application theme is fixed; charts keep their own figure themes.")
-        language = st.selectbox("Language", ["English", "Español", "Français", "Deutsch"],
-                                index=_idx(["English", "Español", "Français", "Deutsch"],
-                                           settings["language"]))
-        units = st.radio("Units", ["Metric", "Imperial"], horizontal=True,
-                         index=_idx(["Metric", "Imperial"], settings["units"]))
-        pitch = st.selectbox("Pitch defaults", ["100 x 68", "105 x 68", "120 x 80"],
-                             index=_idx(["100 x 68", "105 x 68", "120 x 80"], settings["pitch"]))
-        export = st.selectbox("Export defaults", ["PNG", "SVG", "PDF"],
-                              index=_idx(["PNG", "SVG", "PDF"], settings["export"]))
-        provider = st.selectbox("Provider defaults",
-                                ["Auto-detect", "StatsBomb", "Wyscout", "Opta", "Generic"],
-                                index=_idx(["Auto-detect", "StatsBomb", "Wyscout", "Opta",
-                                            "Generic"], settings["provider"]))
+        C.render_alert("Changes save automatically. The application theme is chosen in the sidebar; "
+                       "charts keep their own figure themes.", "info")
+
+        C.render_section_title("Localization", icon_name="flag")
+        lc = st.columns(2)
+        with lc[0]:
+            language = st.selectbox("Language", ["English", "Español", "Français", "Deutsch"],
+                                    index=_idx(["English", "Español", "Français", "Deutsch"],
+                                               settings["language"]))
+        with lc[1]:
+            units = st.radio("Units", ["Metric", "Imperial"], horizontal=True,
+                             index=_idx(["Metric", "Imperial"], settings["units"]))
+
+        C.render_section_title("Data & export", icon_name="datasets")
+        dc = st.columns(3)
+        with dc[0]:
+            pitch = st.selectbox("Pitch defaults", ["100 x 68", "105 x 68", "120 x 80"],
+                                 index=_idx(["100 x 68", "105 x 68", "120 x 80"], settings["pitch"]))
+        with dc[1]:
+            export = st.selectbox("Export defaults", ["PNG", "SVG", "PDF"],
+                                  index=_idx(["PNG", "SVG", "PDF"], settings["export"]))
+        with dc[2]:
+            provider = st.selectbox("Provider defaults",
+                                    ["Auto-detect", "StatsBomb", "Wyscout", "Opta", "Generic"],
+                                    index=_idx(["Auto-detect", "StatsBomb", "Wyscout", "Opta",
+                                                "Generic"], settings["provider"]))
 
         new = {"language": language, "units": units, "pitch": pitch,
                "export": export, "provider": provider}

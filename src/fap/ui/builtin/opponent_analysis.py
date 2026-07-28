@@ -10,6 +10,7 @@ import streamlit as st
 
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
+from fap.theme import components as C
 from fap.ui.page import Page, get_renderer, page_registry
 
 
@@ -24,7 +25,9 @@ class OpponentAnalysisPage(Page):
     def render(self, shell) -> None:
         renderer = get_renderer("opponent_analysis")
         if renderer is None:
-            st.title("Opponent Analysis")
-            st.info("The Open Play visualization engine is not connected.")
+            C.render_section_title(
+                "Opponent Analysis", eyebrow="Analysis", icon_name="analysis",
+                subtitle="Open Play visualization engine.")
+            C.render_alert("The Open Play visualization engine is not connected.", "warning")
             return
         renderer()               # app.run_app: draws its own controls + charts

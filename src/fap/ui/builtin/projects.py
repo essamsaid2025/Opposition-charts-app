@@ -6,6 +6,8 @@ import streamlit as st
 from fap.core.exceptions import AuthError
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
+from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
 
@@ -18,21 +20,28 @@ class ProjectsPage(Page):
     min_role = Role.READ_ONLY
 
     def render(self, shell) -> None:
-        st.title("Projects")
+        C.render_section_title(
+            "Projects", eyebrow="Workspace", icon_name="projects",
+            subtitle="Saved analysis projects and their version history in this workspace.")
         if shell.wm is None or not shell.workspace_id:
-            st.info("Select a workspace to see its projects.")
+            C.render_alert("Select a workspace to see its projects.", "info")
             return
         try:
             projects = shell.wm.list_projects(shell.workspace_id)
         except Exception:
             projects = []
         if not projects:
-            st.caption("No projects in this workspace yet.")
+            C.render_empty_state(
+                "No projects yet",
+                "Projects capture a saved visualization and its version history. Create one from "
+                "the analysis screen and it will appear here.", icon_name="projects")
             return
 
         for project in projects:
             with st.expander(f"{project.name}"):
-                st.caption(f"Visualization: {project.document.get('visual_id', '—')}")
+                st.markdown(
+                    f'{icon("layers", 13)} Visualization: '
+                    f'<b>{project.document.get("visual_id", "—")}</b>', unsafe_allow_html=True)
                 if st.button("Version history", key=f"vh_{project.id}"):
                     st.session_state[f"_versions_{project.id}"] = True
                 if st.session_state.get(f"_versions_{project.id}"):

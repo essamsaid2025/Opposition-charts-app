@@ -14,6 +14,7 @@ from fap.core.exceptions import AuthError
 from fap.core.plugin import PluginInfo
 from fap.identity import ALL_CAPABILITIES, Capability, POSITIONS
 from fap.identity.roles import Role
+from fap.theme import components as C
 from fap.ui.page import Page, page_registry
 
 
@@ -27,14 +28,16 @@ class AdministrationPage(Page):
 
     # ------------------------------------------------------------ entry
     def render(self, shell) -> None:
-        st.title("Administration")
+        C.render_section_title(
+            "Administration", eyebrow="Enterprise", icon_name="admin",
+            subtitle="Users, roles, organizations, sessions, audit and platform settings.")
         admin = getattr(shell.platform, "administration", None) if shell.platform else None
         perms = getattr(shell.platform, "permissions", None) if shell.platform else None
         if admin is None or perms is None:
-            st.info("Administration services unavailable.")
+            C.render_alert("Administration services are unavailable.", "warning")
             return
         if not perms.can(shell.user, str(Capability.VIEW_ADMIN)):
-            st.warning("You do not have permission to view administration.")
+            C.render_alert("You do not have permission to view administration.", "danger")
             return
 
         # only show sections the user is allowed to see (capability-gated tabs)
@@ -68,11 +71,13 @@ class AdministrationPage(Page):
                    "holds each user's platform role, position, scope and status.")
         can_edit = perms.can(shell.user, str(Capability.EDIT_USERS))
         role_slugs = [r.slug for r in admin.list_roles()]
+        _status_kind = {"active": "success", "suspended": "warning", "disabled": "danger"}
         for u in admin.list_users(shell.user):
             with st.container(border=True):
-                st.markdown(f"**{u.name or u.email}** · `{u.email}`  \n"
+                badge = C.badge_html(u.status.title(), _status_kind.get(u.status, "neutral"))
+                st.markdown(f"**{u.name or u.email}** · `{u.email}` &nbsp; {badge}  \n"
                             f"Role **{u.role_slug}** · Position _{u.position or '—'}_ · "
-                            f"Status **{u.status}** · Last login {u.last_login_at or '—'}")
+                            f"Last login {u.last_login_at or '—'}", unsafe_allow_html=True)
                 if not can_edit:
                     continue
                 c1, c2, c3 = st.columns(3)
@@ -192,9 +197,13 @@ class AdministrationPage(Page):
     # ------------------------------------------------------------ Storage
     def _storage(self, shell, admin, perms) -> None:
         rep = admin.storage_report(shell.user)
-        c1, c2 = st.columns(2)
-        c1.metric("Dataset storage", f"{rep['datasets_bytes'] / 1e6:.1f} MB")
-        c2.metric("Image storage", f"{rep['images_bytes'] / 1e6:.1f} MB")
+        C.render_metric_row([
+            C.metric_card_html("Dataset storage", f"{rep['datasets_bytes'] / 1e6:.1f} MB",
+                               icon_name="datasets", accent="primary"),
+            C.metric_card_html("Image storage", f"{rep['images_bytes'] / 1e6:.1f} MB",
+                               icon_name="grid", accent="info"),
+        ])
+        st.write("")
         st.markdown("**Row counts**")
         for t, n in rep["tables"].items():
             st.write(f"• {t}: **{n if n is not None else '—'}**")
