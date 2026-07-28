@@ -660,6 +660,18 @@ def _studio() -> str:
   color: var(--fap-text-muted); }
 .fap-viz-context b { color: var(--fap-text); }
 .fap-viz-context .fap-icon { color: var(--fap-text-subtle); }
+/* visualization catalog cards */
+.fap-viz-card { border: 1px solid var(--fap-border); border-radius: var(--fap-radius-md);
+  background: var(--fap-surface); padding: 10px 12px; margin-bottom: 4px;
+  box-shadow: var(--fap-shadow-xs); }
+.fap-viz-card .h { display: flex; align-items: center; gap: 7px; font-size: 0.9rem;
+  color: var(--fap-text); }
+.fap-viz-card .h .fap-icon { color: var(--fap-primary); }
+.fap-viz-card .h b { font-weight: 700; }
+.fap-viz-card .d { color: var(--fap-text-muted); font-size: 0.78rem; margin: 3px 0 4px;
+  min-height: 1.1em; }
+.fap-viz-card .e { color: var(--fap-text-subtle); font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.03em; }
 """
 
 
