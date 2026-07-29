@@ -1,15 +1,19 @@
-"""The professional application shell (Phase 3C, Phase 5.1 integration).
+"""The professional application shell (Phase 3C · Phase 5.1 · Phase 13.0).
 
-Top header · left navigation · main content · status bar. The shell owns the
-chrome and the professional theme (fap.theme); it dispatches to the active Page
-and never touches the visualization engine - the Open Play screen is just
-another page whose renderer app.py injects.
+A fixed custom navigation rail + a top header + main content + a slim status bar.
+Phase 13.0 REPLACES Streamlit's native sidebar with a pure-HTML fixed rail
+(``fap.ui.nav``, styled by ``fap.theme.css``): the native sidebar and its collapse
+control are hidden, and the shell owns width/collapse/state. Navigation REUSES the
+existing routing verbatim - each rail item is an ``<a href="?nav=ID">`` link the
+shell maps to the SAME active-page state and ``page_registry``; there is no second
+registry and no duplicated routing. Collapse (``?shell=toggle``) and pin
+(``?fav=ID``) use the same pattern, and their state persists per-user through the
+existing ``WorkspaceManager`` autosave/recents - never browser storage.
 
-The platform accessors are injected by app.py (no ``import app`` here, which
-would be circular because Streamlit runs app.py as ``__main__``). Only
-``render_shell`` and the ``_render_*`` helpers touch Streamlit; the navigation
-model (fap.ui.page) and the theme (fap.theme) are pure and unit-tested. This is
-a NEW shell, separate from the legacy fap.ui.shell (left untouched).
+The platform accessors are injected by app.py (no ``import app`` here, which would
+be circular). Only ``render_shell`` and the ``_render_*`` helpers touch Streamlit;
+the navigation model (fap.ui.page), the HTML builders (fap.ui.nav) and the theme
+(fap.theme) are pure and unit-tested.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from fap.identity import logout, require_login
 from fap.identity.models import User
 from fap.theme import components as C
 from fap.theme import icon
+from fap.ui import nav
 from fap.ui.page import (
     default_page_id, get_page, load_builtin_pages, register_renderer,
     visible_by_section, visible_pages,
@@ -32,6 +37,10 @@ from fap.ui.page import (
 _ACTIVE = "_active_page"
 _WORKSPACE = "_active_workspace"
 _PROJECT = "_active_project"
+
+# per-user persisted shell state (WorkspaceManager autosave scopes - never localStorage)
+_SHELL_SCOPE = "shell_ui"          # {"collapsed": bool}
+_FAV_SCOPE = "nav_favorites"       # {"pages": [page_id, ...]}
 
 # injected by app.py so the shell never imports app (circular)
 _platform_getter: "Callable[[], Any] | None" = None
@@ -49,6 +58,7 @@ class ShellContext:
 
     def goto(self, page_id: str) -> None:
         st.session_state[_ACTIVE] = page_id
+        _record_recent(self, page_id)
         st.rerun()
 
     @property
@@ -70,10 +80,10 @@ class ShellContext:
 def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
                  platform_getter: "Callable[[], Any] | None" = None,
                  wm_getter: "Callable[[], Any] | None" = None) -> None:
-    """Render the whole application: apply the theme, gate on identity, then
-    header + nav + active page + status bar. ``open_play_renderer`` is app.py's
-    run_app, injected as the Opponent Analysis page body; the platform/wm
-    getters are injected so the shell never imports app."""
+    """Render the whole application: theme, identity gate, then a fixed nav rail +
+    header + active page + status bar. ``open_play_renderer`` is app.py's run_app,
+    injected as the Opponent Analysis page body; platform/wm getters are injected
+    so the shell never imports app."""
     global _platform_getter, _wm_getter
     if open_play_renderer is not None:
         register_renderer("opponent_analysis", open_play_renderer)
@@ -82,9 +92,6 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     if wm_getter is not None:
         _wm_getter = wm_getter
 
-    # Bridge the (provider-agnostic) identity session layer to the enterprise
-    # services so login is DIRECTORY-FIRST: resolved lazily, only when a user
-    # actually signs in, and never importing bootstrap from the identity layer.
     from fap.identity import enterprise
     enterprise.bind(lambda: _platform_getter() if _platform_getter else None)
 
@@ -93,8 +100,6 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     brand = theme.branding_for(preset_id, base_brand)
     theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
 
-    # Login page: not signed in -> show both brand logos centered above the
-    # sign-in controls (dev mode short-circuits current_user, so this is skipped).
     from fap.identity import current_user
     if current_user() is None:
         _render_login_branding(brand)
@@ -103,28 +108,136 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     load_builtin_pages()
 
     platform, wm = _resolve_services()
-    active = _resolve_active_page(user)
-    ctx = ShellContext(user=user, platform=platform, wm=wm, active_page_id=active)
+    ctx = ShellContext(user=user, platform=platform, wm=wm, active_page_id="")
 
-    _render_header(ctx, brand)
-    _render_sidebar(ctx, brand)
+    # 1) apply query-param actions (nav / collapse / theme / pin) BEFORE rendering
+    _process_shell_actions(ctx)
+
+    active = _resolve_active_page(user)
+    ctx.active_page_id = active
+
+    collapsed = _is_collapsed(ctx)
+    # per-run width variable -> the collapse animates via the CSS width transition
+    st.markdown(f'<style>:root{{--fap-rail-width:'
+                f'{"var(--fap-rail-collapsed)" if collapsed else "var(--fap-rail-expanded)"}}}</style>',
+                unsafe_allow_html=True)
+
+    _render_rail(ctx, brand, collapsed)
+    _render_header(ctx, brand, collapsed)
+    _render_controls_bar(ctx, brand)
 
     page = get_page(active)
     if page is not None:
         page.render(ctx)                 # only the active page initializes (lazy)
     else:
-        st.info("Select a page from the navigation.")
+        C.render_alert("Select a page from the navigation.", "info")
 
     _render_status_bar(ctx)
+    _inject_search_enhancement()
+
+
+# ---------------------------------------------------------------- query-param actions
+def _process_shell_actions(ctx: "ShellContext") -> None:
+    """Map the rail's ``<a href="?...">`` links onto existing state. ``nav`` is
+    idempotent (left in the URL); toggles (collapse/theme/pin) are cleared so a
+    refresh does not re-fire them. Each is the single rerun the user approved."""
+    qp = st.query_params
+    role = ctx.user.role
+    allowed = {p.info.id for p in visible_pages(role)}
+
+    nav_id = qp.get("nav")
+    if nav_id and nav_id in allowed:
+        st.session_state[_ACTIVE] = nav_id
+        _record_recent(ctx, nav_id)
+
+    toggled = False
+    shell_action = qp.get("shell")
+    if shell_action == "toggle":
+        _set_collapsed(ctx, not _is_collapsed(ctx))
+        toggled = True
+    elif shell_action == "theme":
+        current = theme.resolve_mode(st.session_state.get("_theme_mode"),
+                                     theme.branding_for(
+                                         st.session_state.get("_theme_preset")
+                                         or theme.DEFAULT_PRESET_ID, _branding()))
+        st.session_state["_theme_mode"] = "light" if current == "dark" else "dark"
+        toggled = True
+
+    fav_id = qp.get("fav")
+    if fav_id and fav_id in allowed:
+        _toggle_favorite(ctx, fav_id)
+        toggled = True
+
+    if toggled:
+        st.query_params.clear()
+        st.rerun()
+
+
+# ---------------------------------------------------------------- persisted state
+def _is_collapsed(ctx: "ShellContext") -> bool:
+    doc = _load_scope(ctx, _SHELL_SCOPE)
+    if "collapsed" in doc:
+        return bool(doc["collapsed"])
+    return bool(st.session_state.get("_rail_collapsed", False))
+
+
+def _set_collapsed(ctx: "ShellContext", value: bool) -> None:
+    st.session_state["_rail_collapsed"] = bool(value)
+    _save_scope(ctx, _SHELL_SCOPE, {"collapsed": bool(value)})
+
+
+def _favorites(ctx: "ShellContext") -> list[str]:
+    doc = _load_scope(ctx, _FAV_SCOPE)
+    return [str(x) for x in (doc.get("pages") or [])]
+
+
+def _toggle_favorite(ctx: "ShellContext", page_id: str) -> None:
+    favs = _favorites(ctx)
+    favs.remove(page_id) if page_id in favs else favs.append(page_id)
+    _save_scope(ctx, _FAV_SCOPE, {"pages": favs})
+
+
+def _record_recent(ctx: "ShellContext", page_id: str) -> None:
+    if ctx.wm is None:
+        recents = [x for x in st.session_state.get("_recent_pages", []) if x != page_id]
+        st.session_state["_recent_pages"] = [page_id, *recents][:10]
+        return
+    try:
+        ctx.wm.touch_recent(ctx.user, "page", page_id)
+    except Exception:
+        pass
+
+
+def _recent_page_ids(ctx: "ShellContext") -> list[str]:
+    if ctx.wm is None:
+        return list(st.session_state.get("_recent_pages", []))
+    try:
+        return [tid for (ttype, tid) in ctx.wm.recents(ctx.user, limit=30) if ttype == "page"]
+    except Exception:
+        return []
+
+
+def _load_scope(ctx: "ShellContext", scope: str) -> dict:
+    if ctx.wm is None:
+        return dict(st.session_state.get(f"_scope_{scope}", {}))
+    try:
+        return ctx.wm.load_autosave(ctx.user, scope=scope) or {}
+    except Exception:
+        return {}
+
+
+def _save_scope(ctx: "ShellContext", scope: str, doc: dict) -> None:
+    st.session_state[f"_scope_{scope}"] = dict(doc)   # session mirror (instant restore)
+    if ctx.wm is None:
+        return
+    try:
+        ctx.wm.autosave(ctx.user, doc, scope=scope)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------- helpers
 def _branding() -> theme.Branding:
-    # Reading secrets is soft: with no secrets.toml Streamlit raises
-    # StreamlitSecretNotFoundError (a FileNotFoundError subclass), which must NOT
-    # be treated as a missing-asset failure - fall back to the default brand.
-    # Missing *asset* files still fail loudly, but that happens at render time
-    # (logo_html), surfaced there as a visible error.
     try:
         cfg = dict(st.secrets.get("branding", {}) or {})
     except Exception:
@@ -133,8 +246,7 @@ def _branding() -> theme.Branding:
 
 
 def _logo_pair_html(brand: theme.Branding, height: int) -> str:
-    """FC Masar × Right To Dream, side by side. Raises loudly on a missing asset
-    (never silently falls back to generic branding)."""
+    """FC Masar × Right To Dream, side by side. Raises loudly on a missing asset."""
     club = C.logo_html(brand.primary_logo, height=height, alt=brand.club_name)
     org = C.logo_html(brand.secondary_logo, height=height, alt=brand.organization_name)
     return f'<span class="fap-logos">{club}<span class="sep">·</span>{org}</span>'
@@ -173,13 +285,75 @@ def _org_context() -> dict[str, str]:
     return ctx if isinstance(ctx, dict) else {}
 
 
-def _active_page_meta(page_id: str):
-    return get_page(page_id)
+# ---------------------------------------------------------------- navigation model
+def _nav_model(ctx: "ShellContext") -> tuple[list[nav.NavGroup], list[nav.NavItem], list[nav.NavItem]]:
+    """Build the rail's model from the EXISTING registry (role-filtered, grouped,
+    ordered). Reuses ids/names/icons verbatim - no second registry."""
+    role = ctx.user.role
+    pages = visible_pages(role)
+    by_id = {p.info.id: p for p in pages}
+    fav_ids = [i for i in _favorites(ctx) if i in by_id]
+    fav_set = set(fav_ids)
+
+    def item(p) -> nav.NavItem:
+        return nav.NavItem(id=p.info.id, name=p.info.name, icon=p.icon,
+                           active=p.info.id == ctx.active_page_id,
+                           favorite=p.info.id in fav_set)
+
+    groups = [nav.NavGroup(title=section, icon=nav.section_icon(section),
+                           items=[item(p) for p in section_pages])
+              for section, section_pages in visible_by_section(role).items()]
+    favorites = [item(by_id[i]) for i in fav_ids][:8]
+    recent_ids = [i for i in _recent_page_ids(ctx) if i in by_id and i != ctx.active_page_id]
+    recents = [item(by_id[i]) for i in recent_ids][:5]
+    return groups, favorites, recents
 
 
-def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
+def _footer_info(ctx: "ShellContext", brand: theme.Branding) -> nav.FooterInfo:
+    dataset, provider, rows, quality = "No active dataset", "", "", ""
+    try:
+        ds = ctx.wm.active_dataset(ctx.user) if ctx.wm is not None else None
+    except Exception:
+        ds = None
+    if ds is not None:
+        dataset = ds.name
+        provider = ds.provider_id or ""
+        rows = f"{ds.rows:,}" if isinstance(getattr(ds, "rows", None), int) else ""
+        doc = ds.document if isinstance(getattr(ds, "document", None), dict) else {}
+        q = doc.get("quality")
+        quality = f"{q:.0f}" if isinstance(q, (int, float)) else ""
+    preset = theme.get_preset(st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID)
+    mode = theme.resolve_mode(st.session_state.get("_theme_mode"), brand)
+    theme_label = f"{preset.name} · {mode.title()}"
+    storage = "Local"
+    try:
+        storage = getattr(getattr(ctx.platform, "cache", None), "backend_name", "Local").title()
+    except Exception:
+        pass
+    return nav.FooterInfo(dataset=dataset, provider=provider, rows=rows, quality=quality,
+                          user=ctx.user.name, theme=theme_label, storage=storage,
+                          connection="online")
+
+
+# ---------------------------------------------------------------- rail + header
+def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
+    try:
+        brand_logos = _logo_pair_html(brand, height=28)
+    except FileNotFoundError as exc:
+        st.error(f"Branding asset missing: {exc}")
+        brand_logos = ""
+    groups, favorites, recents = _nav_model(ctx)
+    footer = _footer_info(ctx, brand)
+    st.markdown(
+        nav.rail_html(brand_html=brand_logos, platform_name=brand.platform_name,
+                      groups=groups, favorites=favorites, recents=recents,
+                      footer=footer, collapsed=collapsed),
+        unsafe_allow_html=True)
+
+
+def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
     org = _org_context()
-    page = _active_page_meta(ctx.active_page_id)
+    page = get_page(ctx.active_page_id)
     crumbs = [brand.club_name if org.get("club") else "", org.get("season", ""),
               org.get("competition", ""), org.get("opponent", "")]
     crumbs = [c for c in crumbs if c] or [brand.organization_name]
@@ -187,67 +361,38 @@ def _render_header(ctx: ShellContext, brand: theme.Branding) -> None:
         crumbs.append(page.info.name)
 
     notifications = st.session_state.get("_notifications", [])
-    try:
-        logos = _logo_pair_html(brand, height=34)
-    except FileNotFoundError as exc:
-        st.error(f"Branding asset missing: {exc}")
-        logos = ""
-    page_glyph = icon(page.icon, 20) if page and page.icon else ""
     module_title = page.info.name if page else brand.platform_name
-    n = len(notifications)
-    bell_cls = "has" if n else ""
+    module_icon = page.icon if page and page.icon else ""
     initials = "".join(p[0] for p in ctx.user.name.split()[:2]).upper() or "?"
-    # One sticky flex header owns the top and stays put on scroll: module title +
-    # breadcrumb on the left; notifications + user identity on the right.
+    mode = theme.resolve_mode(st.session_state.get("_theme_mode"), brand)
     st.markdown(
-        f'<header class="fap-shell-header">'
-        f'  <div class="left">'
-        f'    <span class="mod-chip">{page_glyph or logos}</span>'
-        f'    <div class="titles"><b class="mod-title">{module_title}</b>'
-        f'      <span class="crumbs">{C.breadcrumb_html(crumbs)}</span>'
-        f'    </div>'
-        f'  </div>'
-        f'  <div class="right">'
-        f'    <span class="hbtn bell {bell_cls}" title="Notifications">{icon("bell", 17)}'
-        f'      {f"<span class=chip-count>{n}</span>" if n else ""}</span>'
-        f'    <span class="hsep"></span>'
-        f'    <span class="user"><span class="uava">{initials}</span>'
-        f'      <span class="uinfo"><b>{ctx.user.name}</b>'
-        f'      {C.badge_html(ctx.user.role_label, "info")}</span></span>'
-        f'  </div>'
-        f'</header>',
+        nav.header_html(
+            module_title=module_title, module_icon=module_icon,
+            breadcrumb_html=C.breadcrumb_html(crumbs),
+            notif_count=len(notifications), user_name=ctx.user.name,
+            user_initials=initials, role_badge_html=C.badge_html(ctx.user.role_label, "info"),
+            collapsed=collapsed, theme_mode=mode),
         unsafe_allow_html=True)
 
 
-def _render_sidebar(ctx: ShellContext, brand: theme.Branding) -> None:
-    with st.sidebar:
-        try:
-            logos = _logo_pair_html(brand, height=40)
-        except FileNotFoundError as exc:
-            st.error(f"Branding asset missing: {exc}")
-            logos = ""
-        st.markdown(f'<div class="fap-brandbar">{logos}</div>'
-                    f'<div class="fap-brand"><b>{brand.platform_name}</b></div>',
-                    unsafe_allow_html=True)
-
-        if ctx.wm is not None:
-            _workspace_and_project_selectors(ctx)
-            _render_active_dataset(ctx)
-
-        query = st.text_input("Search", key="_global_search",
-                              placeholder="players, teams, datasets, projects…",
-                              label_visibility="collapsed")
-        if query.strip():
-            _render_search_results(ctx, query)
-
-        st.divider()
-        _render_navigation(ctx)
-        st.divider()
-        _render_appearance()
-        _render_profile(ctx)
+def _render_controls_bar(ctx: "ShellContext", brand: theme.Branding) -> None:
+    """The interactive controls Streamlit cannot express as static HTML: workspace
+    and project selectors, appearance and account. A slim toolbar under the header;
+    navigation itself stays in the HTML rail."""
+    if ctx.wm is None:
+        return
+    cols = st.columns([3, 3, 6, 2, 2], vertical_alignment="center")
+    with cols[0]:
+        _workspace_selector(ctx)
+    with cols[1]:
+        _project_selector(ctx)
+    with cols[3]:
+        _appearance_popover()
+    with cols[4]:
+        _account_popover(ctx)
 
 
-def _workspace_and_project_selectors(ctx: ShellContext) -> None:
+def _workspace_selector(ctx: "ShellContext") -> None:
     try:
         workspaces = ctx.wm.list_workspaces()
         if not workspaces:
@@ -259,95 +404,48 @@ def _workspace_and_project_selectors(ctx: ShellContext) -> None:
             return
         current = ctx.workspace_id if ctx.workspace_id in names else ids[0]
         chosen = st.selectbox("Workspace", ids, index=ids.index(current),
-                              format_func=lambda i: names[i])
+                              format_func=lambda i: names[i], key="_ws_select")
         st.session_state[_WORKSPACE] = chosen
-        projects = ctx.wm.list_projects(chosen)
-        if projects:
-            pnames = {p.id: p.name for p in projects}
-            pid = st.selectbox("Project", ["—", *pnames],
-                               format_func=lambda i: "— none —" if i == "—" else pnames[i])
-            if pid != "—":
-                st.session_state[_PROJECT] = pid
-                st.session_state["_active_project_name"] = pnames[pid]
-                ctx.wm.touch_recent(ctx.user, "project", pid)
     except Exception:
         st.caption("Workspace unavailable.")
 
 
-def _render_active_dataset(ctx: ShellContext) -> None:
-    """The always-visible Current Dataset indicator (Phase 12.1). Reads the single
-    source of truth (WorkspaceManager.active_dataset); every module knows exactly
-    which dataset it is using, and there is one place to switch it."""
-    import html as _html
+def _project_selector(ctx: "ShellContext") -> None:
     try:
-        ds = ctx.wm.active_dataset(ctx.user)
+        chosen = st.session_state.get(_WORKSPACE)
+        if not chosen:
+            return
+        projects = ctx.wm.list_projects(chosen)
+        if not projects:
+            st.selectbox("Project", ["— none —"], disabled=True, key="_pj_none")
+            return
+        pnames = {p.id: p.name for p in projects}
+        pid = st.selectbox("Project", ["—", *pnames], key="_pj_select",
+                           format_func=lambda i: "— none —" if i == "—" else pnames[i])
+        if pid != "—":
+            st.session_state[_PROJECT] = pid
+            st.session_state["_active_project_name"] = pnames[pid]
+            ctx.wm.touch_recent(ctx.user, "project", pid)
     except Exception:
-        ds = None
-    st.markdown('<div class="fap-nav-section">Current Dataset</div>', unsafe_allow_html=True)
-    if ds is None:
-        st.markdown('<div class="fap-active-ds empty">No active dataset'
-                    '<span>Choose one in the Data Hub</span></div>', unsafe_allow_html=True)
-        if st.button("Open Data Hub", key="sb_goto_datahub", use_container_width=True):
-            ctx.goto("data_hub")
-        return
-    doc = ds.document if isinstance(ds.document, dict) else {}
-    quality = doc.get("quality")
-    qtxt = f"  ·  Quality {quality:.0f}" if isinstance(quality, (int, float)) else ""
-    meta = " · ".join(b for b in (ds.competition or "", ds.season or "") if b)
-    st.markdown(
-        f'<div class="fap-active-ds">'
-        f'<div class="prov">{C.badge_html(ds.provider_id or "dataset", "info")}</div>'
-        f'<div class="nm">{_html.escape(ds.name)}</div>'
-        f'<div class="mt">{_html.escape(meta) or "—"}</div>'
-        f'<div class="mt">{ds.rows:,} events{qtxt}</div>'
-        f'</div>', unsafe_allow_html=True)
+        pass
 
 
-def _render_search_results(ctx: ShellContext, query: str) -> None:
-    hits = ctx.search(query)
-    if not hits:
-        st.caption("No matches.")
-        return
-    st.caption(f"{len(hits)} result(s)")
-    for hit in hits[:12]:
-        st.write(f"**{hit.name}** · _{hit.type}_" + (f" · {hit.context}" if hit.context else ""))
-
-
-def _render_navigation(ctx: ShellContext) -> None:
-    """Grouped, collapsible navigation. Each section is a collapsible group; the
-    group containing the active page starts expanded so the user always sees
-    where they are without hunting."""
-    grouped = visible_by_section(ctx.user.role)
-    for section, pages in grouped.items():
-        has_active = any(p.info.id == ctx.active_page_id for p in pages)
-        with st.expander(section.upper(), expanded=has_active or len(grouped) <= 2):
-            for page in pages:
-                active = page.info.id == ctx.active_page_id
-                # Streamlit buttons render text only; the active page is highlighted
-                # via the primary style and the registry icon appears in the header.
-                if st.button(page.info.name, key=f"nav_{page.info.id}",
-                             use_container_width=True,
-                             type="primary" if active else "secondary"):
-                    ctx.goto(page.info.id)
-
-
-def _render_appearance() -> None:
-    """Theme controls: a preset picker (Professional Dark/Light, Club, Opta,
-    Hudl) plus a light/dark/auto override — the shell's 'theme selector'."""
-    with st.expander("Appearance", expanded=False):
+def _appearance_popover() -> None:
+    """Theme preset + light/dark/auto - the header's quick toggle handles mode; this
+    exposes the full preset set (Professional Dark/Light, Club, Opta, Hudl)."""
+    with st.popover("Theme", use_container_width=True):
         ids = theme.preset_ids()
         labels = {pid: lbl for pid, lbl in theme.preset_choices()}
         current = st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID
         if current not in ids:
             current = theme.DEFAULT_PRESET_ID
-        chosen = st.selectbox("Theme", ids, index=ids.index(current),
+        chosen = st.selectbox("Preset", ids, index=ids.index(current),
                               format_func=lambda i: labels.get(i, i), key="_theme_preset_select")
         if chosen != st.session_state.get("_theme_preset"):
             st.session_state["_theme_preset"] = chosen
-            st.session_state.pop("_theme_mode", None)   # let the preset's default mode win
+            st.session_state.pop("_theme_mode", None)
             st.rerun()
         st.caption(theme.get_preset(chosen).description)
-
         modes = ["auto", "light", "dark"]
         labels_m = {"auto": "Auto", "light": "Light", "dark": "Dark"}
         cur_mode = st.session_state.get("_theme_mode") or theme.get_preset(chosen).mode
@@ -359,8 +457,8 @@ def _render_appearance() -> None:
             st.rerun()
 
 
-def _render_profile(ctx: ShellContext) -> None:
-    with st.expander("Account", expanded=False):
+def _account_popover(ctx: "ShellContext") -> None:
+    with st.popover("Account", use_container_width=True):
         st.markdown(
             f'{icon("user", 16)} **{ctx.user.name}**  \n{ctx.user.email}  \n'
             f'{C.badge_html(ctx.user.role_label, "info")}'
@@ -373,9 +471,9 @@ def _render_profile(ctx: ShellContext) -> None:
             st.rerun()
 
 
-def _render_status_bar(ctx: ShellContext) -> None:
-    provider = st.session_state.get("_status_provider", "—")
-    dataset = st.session_state.get("_status_dataset", "—")
+def _render_status_bar(ctx: "ShellContext") -> None:
+    """A slim desktop-style status strip at the very bottom (version · workspace ·
+    connection) - complements the rail footer's dataset panel."""
     ws_name = "—"
     try:
         if ctx.wm and ctx.workspace_id:
@@ -386,10 +484,20 @@ def _render_status_bar(ctx: ShellContext) -> None:
     connection = C.badge_html("online", "success", icon_name="check")
     st.markdown(
         C.footer_html([
-            ("Provider", provider), ("Dataset", dataset), ("Workspace", ws_name),
-            ("User", ctx.user.name), ("Version", _short_version()),
+            ("Workspace", ws_name), ("User", ctx.user.name), ("Version", _short_version()),
         ]).replace("</div>", f"<span>{connection}</span></div>"),
         unsafe_allow_html=True)
+
+
+def _inject_search_enhancement() -> None:
+    """Progressive enhancement: live-filter the rail's modules as the user types.
+    Isolated in a 0-height component; if the browser sandboxes it, navigation still
+    works via the links and every module stays visible."""
+    try:
+        import streamlit.components.v1 as components
+        components.html(nav.SEARCH_JS, height=0)
+    except Exception:
+        pass
 
 
 def _short_version() -> str:

@@ -58,6 +58,9 @@ def _variables(brand: Branding, mode: str) -> str:
   --fap-radius-2xl: {sp.radius_2xl};
   --fap-radius-full: {sp.radius_full};
   --fap-sidebar-width: {sp.sidebar_width};
+  --fap-rail-expanded: 280px;
+  --fap-rail-collapsed: 72px;
+  --fap-rail-width: 280px;
   --fap-header-height: {sp.header_height};
   --fap-shadow-xs: {sp.shadow_xs};
   --fap-shadow-sm: {sp.shadow_sm};
@@ -699,6 +702,133 @@ def _responsive(brand: Branding) -> str:
 """
 
 
+def _app_shell() -> str:
+    """Phase 13.0 professional application shell: a fixed custom navigation rail
+    that REPLACES Streamlit's native sidebar (hidden here, along with its collapse
+    control). Width is driven by --fap-rail-width (the shell sets it per run:
+    280px expanded, 72px collapsed) so the collapse animates via a CSS transition.
+    Theme-aware (all colours are tokens); no flashing (transitions only)."""
+    return """
+/* retire Streamlit's native sidebar AND its collapse control - the shell owns nav */
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"],
+button[data-testid="stSidebarCollapseButton"] { display: none !important; }
+
+/* main content sits to the RIGHT of the fixed rail and reflows when it collapses */
+[data-testid="stAppViewContainer"] { margin-left: var(--fap-rail-width, 280px);
+  transition: margin-left var(--fap-transition); }
+[data-testid="stMainBlockContainer"], .block-container {
+  padding-left: var(--fap-space-5) !important; padding-right: var(--fap-space-5) !important; }
+
+/* the fixed navigation rail (rendered once, position:fixed so it never scrolls away) */
+.fap-navrail { position: fixed; inset: 0 auto 0 0; z-index: 1000;
+  width: var(--fap-rail-width, 280px); display: flex; flex-direction: column;
+  background: var(--fap-surface); border-right: 1px solid var(--fap-border);
+  box-shadow: var(--fap-shadow-sm); overflow: hidden;
+  transition: width var(--fap-transition); }
+.fap-rail-brand { display: flex; align-items: center; gap: 10px; padding: 14px 16px 12px;
+  min-height: var(--fap-header-height); border-bottom: 1px solid var(--fap-border); }
+.fap-rail-brand img { height: 30px; width: auto; }
+.fap-rail-brandname { font-weight: var(--fap-weight-bold); white-space: nowrap; font-size: 0.95rem; }
+.fap-rail-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px; }
+.fap-rail-search { display: flex; align-items: center; gap: 8px; margin: 12px; padding: 8px 10px;
+  background: var(--fap-bg); border: 1px solid var(--fap-border);
+  border-radius: var(--fap-radius-md); transition: border-color var(--fap-transition-fast); }
+.fap-rail-search:focus-within { border-color: var(--fap-primary); }
+.fap-rail-search .s-ic { color: var(--fap-text-subtle); display: flex; }
+.fap-nav-search { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0;
+  color: var(--fap-text); font-family: var(--fap-font-sans); font-size: var(--fap-text-sm); }
+.fap-nav-search::placeholder { color: var(--fap-text-subtle); }
+
+.fap-nav-group { margin-bottom: 8px; }
+.fap-nav-group-title { display: flex; align-items: center; gap: 8px; margin: 12px 8px 4px;
+  color: var(--fap-text-subtle); font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: var(--fap-tracking-wider); white-space: nowrap; }
+.fap-nav-group-title .gt-ic { display: flex; }
+.fap-nav-row { display: flex; align-items: center; position: relative;
+  border-radius: var(--fap-radius-md); margin: 1px 0;
+  transition: background var(--fap-transition-fast); }
+.fap-nav-row:hover { background: var(--fap-hover); }
+.fap-nav-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
+  padding: 9px 12px; color: var(--fap-text-muted); border-radius: var(--fap-radius-md);
+  white-space: nowrap; overflow: hidden;
+  transition: color var(--fap-transition-fast); }
+.fap-nav-link:hover { text-decoration: none; color: var(--fap-text); }
+.fap-nav-link .ic { flex: 0 0 auto; width: 20px; display: flex; justify-content: center; color: inherit; }
+.fap-nav-link .label { overflow: hidden; text-overflow: ellipsis; }
+/* active page: blue accent bar + tint + colour (StatsBomb IQ style) */
+.fap-nav-row.active { background: color-mix(in srgb, var(--fap-primary) 14%, transparent); }
+.fap-nav-row.active .fap-nav-link { color: var(--fap-primary); font-weight: 650; }
+.fap-nav-row.active::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px;
+  width: 3px; border-radius: 0 3px 3px 0; background: var(--fap-primary); }
+.fap-nav-pin { flex: 0 0 auto; display: flex; align-items: center; padding: 0 10px;
+  color: var(--fap-text-subtle); opacity: 0;
+  transition: opacity var(--fap-transition-fast), color var(--fap-transition-fast); }
+.fap-nav-row:hover .fap-nav-pin { opacity: 0.85; }
+.fap-nav-pin:hover { color: var(--fap-primary); text-decoration: none; }
+.fap-nav-pin.on { opacity: 1; color: var(--fap-warning); }
+
+.fap-rail-footer { border-top: 1px solid var(--fap-border); padding: 10px 14px; background: var(--fap-surface); }
+.fap-rail-footer .ft-title { display: flex; align-items: center; gap: 7px; color: var(--fap-text-subtle);
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--fap-tracking-wider); }
+.fap-rail-footer .ft-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--fap-primary); }
+.fap-rail-footer .ft-name { font-weight: 600; font-size: var(--fap-text-sm); margin: 3px 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fap-rail-footer .ft-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  color: var(--fap-text-muted); font-size: 0.72rem; }
+.fap-rail-footer .ft-badge { background: var(--fap-bg); border: 1px solid var(--fap-border);
+  border-radius: var(--fap-radius-sm); padding: 1px 7px; font-weight: 600; }
+.fap-rail-footer .ft-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
+  margin-top: 10px; font-size: 0.72rem; }
+.fap-rail-footer .ft-k { color: var(--fap-text-subtle); }
+.fap-rail-footer .ft-v { color: var(--fap-text); text-align: right; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.fap-rail-footer .conn { display: flex; align-items: center; justify-content: flex-end; gap: 5px; }
+.fap-rail-footer .conn .cdot { width: 7px; height: 7px; border-radius: 999px; }
+.fap-rail-footer .conn.ok .cdot { background: var(--fap-success); }
+.fap-rail-footer .conn.off .cdot { background: var(--fap-danger); }
+
+/* collapsed (72px): icons only; labels, search, pins, footer detail hidden */
+.fap-navrail.collapsed .fap-rail-brandname,
+.fap-navrail.collapsed .fap-nav-link .label,
+.fap-navrail.collapsed .fap-nav-group-title .gt-label,
+.fap-navrail.collapsed .fap-nav-pin,
+.fap-navrail.collapsed .fap-rail-search,
+.fap-navrail.collapsed .fap-rail-footer .ft-name,
+.fap-navrail.collapsed .fap-rail-footer .ft-meta,
+.fap-navrail.collapsed .fap-rail-footer .ft-grid,
+.fap-navrail.collapsed .fap-rail-footer .ft-title { display: none; }
+.fap-navrail.collapsed .fap-nav-link { justify-content: center; padding: 10px 0; gap: 0; }
+.fap-navrail.collapsed .fap-nav-group-title { justify-content: center; margin: 10px 0 4px; }
+.fap-navrail.collapsed .fap-rail-brand { justify-content: center; padding: 14px 0 12px; }
+.fap-navrail.collapsed .fap-rail-footer { padding: 10px 0; text-align: center; }
+/* tooltip flyout for the collapsed icons (labels disappear -> tips appear) */
+.fap-navrail.collapsed .fap-nav-link::after { content: attr(data-tip); position: absolute;
+  left: 100%; margin-left: 12px; top: 50%; transform: translateY(-50%); background: var(--fap-raised);
+  color: var(--fap-text); border: 1px solid var(--fap-border); padding: 5px 10px;
+  border-radius: var(--fap-radius-sm); font-size: var(--fap-text-xs); white-space: nowrap;
+  box-shadow: var(--fap-shadow-md); opacity: 0; pointer-events: none; z-index: 1200;
+  transition: opacity var(--fap-transition-fast); }
+.fap-navrail.collapsed .fap-nav-link:hover::after { opacity: 1; }
+
+/* header: the collapse button is ours (native control is hidden above) */
+.fap-shell-header .hbtn.collapse { cursor: pointer; }
+.fap-shell-header .hbtn { transition: background var(--fap-transition-fast),
+  color var(--fap-transition-fast); }
+
+/* narrow screens: force the compact rail so the layout never breaks */
+@media (max-width: 900px) {
+  :root { --fap-rail-width: var(--fap-rail-collapsed) !important; }
+  .fap-navrail .fap-rail-brandname, .fap-navrail .fap-nav-link .label,
+  .fap-navrail .fap-nav-group-title .gt-label, .fap-navrail .fap-nav-pin,
+  .fap-navrail .fap-rail-search, .fap-navrail .fap-rail-footer .ft-name,
+  .fap-navrail .fap-rail-footer .ft-meta, .fap-navrail .fap-rail-footer .ft-grid,
+  .fap-navrail .fap-rail-footer .ft-title { display: none; }
+  .fap-navrail .fap-nav-link { justify-content: center; padding: 10px 0; gap: 0; }
+}
+"""
+
+
 def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """The complete application stylesheet for ``mode`` (light|dark|auto).
 
@@ -708,7 +838,8 @@ def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """
     brand = brand or DEFAULT_BRANDING
     body = "".join((_chrome(), _base(brand), _sidebar(), _components(), _forms(),
-                    _tables(), _studio(), _a11y_and_motion(), _responsive(brand)))
+                    _tables(), _studio(), _a11y_and_motion(), _responsive(brand),
+                    _app_shell()))
 
     if mode == "light":
         roots = f":root, :root[data-theme=light] {{{_variables(brand, 'light')}\n}}"
