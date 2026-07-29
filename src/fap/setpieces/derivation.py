@@ -46,8 +46,13 @@ def _int(value: Any):
     return int(f) if f is not None else None
 
 
-def _did(match_id: Any, minute: Any, second: Any, t: str, x: Any, y: Any, player: Any) -> str:
-    raw = f"{match_id}|{minute}|{second}|{t}|{x}|{y}|{player}"
+def _did(row_key: Any, match_id: Any, minute: Any, second: Any, t: str,
+         x: Any, y: Any, player: Any) -> str:
+    # ``row_key`` is the source event's stable identity in the frame; it makes the id
+    # unique even when two set-piece events share match/minute/second/type/x/y/player
+    # (e.g. sparse frames where those fields are blank). Deterministic: the same
+    # immutable frame -> the same ids, so the per-dataset derivation cache stays valid.
+    raw = f"{row_key}|{match_id}|{minute}|{second}|{t}|{x}|{y}|{player}"
     return "af_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
 
 
@@ -87,7 +92,10 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
             primary = teams.value_counts().idxmax()
 
     out: list[SetPiece] = []
-    for row in subset.to_dict("records"):
+    # enumerate gives each event a stable ordinal within this (immutable) frame, so
+    # the derived id is unique per source row even when the event attributes collide
+    # - and deterministic, since df[mask] preserves order for the same frame.
+    for row_key, row in enumerate(subset.to_dict("records")):
         t = _classify(row)
         if t is None:
             continue
@@ -99,7 +107,7 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
         shot = goal or shot_result in _SHOTISH or (shot_result not in ("", "nan"))
         x, y = _num(row.get("x")), _num(row.get("y"))
         out.append(SetPiece(
-            id=_did(row.get("match_id", ""), row.get("minute"), row.get("second"),
+            id=_did(row_key, row.get("match_id", ""), row.get("minute"), row.get("second"),
                     t, x, y, row.get("player", "")),
             workspace_id=workspace_id or None,
             match_id=str(row.get("match_id", "") or ""),
