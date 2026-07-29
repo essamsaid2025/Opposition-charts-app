@@ -332,9 +332,16 @@ def _footer_info(ctx: "ShellContext", brand: theme.Branding) -> nav.FooterInfo:
         storage = getattr(getattr(ctx.platform, "cache", None), "backend_name", "Local").title()
     except Exception:
         pass
+    workspace = ""
+    try:
+        if ctx.wm is not None and ctx.workspace_id:
+            workspace = next((w.name for w in ctx.wm.list_workspaces()
+                              if w.id == ctx.workspace_id), "")
+    except Exception:
+        pass
     return nav.FooterInfo(dataset=dataset, provider=provider, rows=rows, quality=quality,
                           user=ctx.user.name, theme=theme_label, storage=storage,
-                          connection="online")
+                          connection="online", workspace=workspace, version=_short_version())
 
 
 # ---------------------------------------------------------------- rail + header
@@ -342,22 +349,25 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
     """The fixed navigation rail. The clickable items are REAL st.button widgets
     (in-session; no href/query params), CSS-styled to look like the desktop rail."""
     try:
-        brand_logos = _logo_pair_html(brand, height=28)
+        brand_logo = C.logo_html(brand.primary_logo, height=44, alt=brand.club_name,
+                                 cls="fap-brand-logo")
     except FileNotFoundError as exc:
         st.error(f"Branding asset missing: {exc}")
-        brand_logos = ""
+        brand_logo = ""
     groups, favorites, recents = _nav_model(ctx)
     footer = _footer_info(ctx, brand)
     icon_specs: list[tuple[str, str]] = []
 
     with st.container(key="fap_rail"):
-        st.markdown(nav.brand_html(brand_logos, brand.platform_name, collapsed),
+        st.markdown(nav.brand_html(brand_logo, brand.platform_name,
+                                   brand.organization_name, collapsed),
                     unsafe_allow_html=True)
         query = ""
         if not collapsed:
             query = (st.text_input("Search modules", key="_nav_search",
-                                   placeholder="Search modules…",
+                                   placeholder="Search modules...",
                                    label_visibility="collapsed") or "").strip().lower()
+            st.markdown(nav.input_icon_css("_nav_search", "search"), unsafe_allow_html=True)
         with st.container(key="fap_rail_nav"):
             _render_nav_group(ctx, "Favorites", "star", favorites, "fav", collapsed, query, icon_specs)
             _render_nav_group(ctx, "Recent", "clock", recents, "rec", collapsed, query, icon_specs)
@@ -385,7 +395,8 @@ def _render_nav_group(ctx: "ShellContext", title: str, icon_name: str,
         st.markdown(nav.group_title_html(title, icon_name), unsafe_allow_html=True)
     for it in visible:
         key = f"{prefix}_{it.id}"
-        icon_specs.append((key, it.icon or nav.section_icon(title)))
+        row_icon = "clock" if prefix == "rec" else (it.icon or nav.section_icon(title))
+        icon_specs.append((key, row_icon))
         if collapsed:
             st.button("", key=key, on_click=_cb_set_active, args=(it.id,),
                       type="primary" if it.active else "secondary",
