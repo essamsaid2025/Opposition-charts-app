@@ -324,7 +324,7 @@ def _footer_info(ctx: "ShellContext", brand: theme.Branding) -> nav.FooterInfo:
         quality = f"{q:.0f}" if isinstance(q, (int, float)) else ""
     preset = theme.get_preset(st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID)
     mode = theme.resolve_mode(st.session_state.get("_theme_mode"), brand)
-    theme_label = f"{preset.name} · {mode.title()}"
+    theme_label = f"{preset.label} · {mode.title()}"
     storage = "Local"
     try:
         storage = getattr(getattr(ctx.platform, "cache", None), "backend_name", "Local").title()
