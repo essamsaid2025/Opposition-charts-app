@@ -1,19 +1,21 @@
-"""The professional application shell (Phase 3C · Phase 5.1 · Phase 13.0).
+"""The professional application shell (Phase 3C · Phase 5.1 · Phase 13.1).
 
-A fixed custom navigation rail + a top header + main content + a slim status bar.
-Phase 13.0 REPLACES Streamlit's native sidebar with a pure-HTML fixed rail
-(``fap.ui.nav``, styled by ``fap.theme.css``): the native sidebar and its collapse
-control are hidden, and the shell owns width/collapse/state. Navigation REUSES the
-existing routing verbatim - each rail item is an ``<a href="?nav=ID">`` link the
-shell maps to the SAME active-page state and ``page_registry``; there is no second
-registry and no duplicated routing. Collapse (``?shell=toggle``) and pin
-(``?fav=ID``) use the same pattern, and their state persists per-user through the
-existing ``WorkspaceManager`` autosave/recents - never browser storage.
+A fixed navigation rail + a top header + main content + a slim status bar. Phase
+13.1 replaces Streamlit's native sidebar with a fixed rail whose clickable items
+are REAL ``st.button`` widgets (styled by ``fap.theme.css`` to look like a desktop
+rail). Navigation is fully IN-SESSION: a button click runs a Python ``on_click``
+callback that sets ``st.session_state["_active_page"]`` and lets Streamlit rerun in
+the same session - it uses NO browser navigation, NO URL/query-param change, and NO
+window scripting, so the session (workspace, active dataset, players, reports) is
+never recreated. Routing reuses the existing ``page_registry`` and the
+``ShellContext.goto`` semantics; there is no second registry. Collapse, theme and
+pin are the same in-session button pattern, persisted per-user through the existing
+``WorkspaceManager`` autosave/recents - never browser storage.
 
 The platform accessors are injected by app.py (no ``import app`` here, which would
 be circular). Only ``render_shell`` and the ``_render_*`` helpers touch Streamlit;
-the navigation model (fap.ui.page), the HTML builders (fap.ui.nav) and the theme
-(fap.theme) are pure and unit-tested.
+the navigation model (fap.ui.page), the presentation builders (fap.ui.nav) and the
+theme (fap.theme) are pure and unit-tested.
 """
 from __future__ import annotations
 
@@ -110,13 +112,21 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     platform, wm = _resolve_services()
     ctx = ShellContext(user=user, platform=platform, wm=wm, active_page_id="")
 
-    # 1) apply query-param actions (nav / collapse / theme / pin) BEFORE rendering
-    _process_shell_actions(ctx)
+    # Load persisted shell state (collapse + favorites) ONCE per session into
+    # session_state, which is then the in-session source of truth. All navigation
+    # below is IN-SESSION only: st.button widgets mutate session_state and trigger
+    # the normal Streamlit rerun - no href, no query params, no browser navigation,
+    # so the session (workspace, dataset, players, reports) is never recreated.
+    _ensure_shell_loaded(ctx)
 
     active = _resolve_active_page(user)
     ctx.active_page_id = active
+    # record 'recent' when the active page actually changed (the button callback set it)
+    if st.session_state.get("_last_recorded_active") != active:
+        _record_recent(ctx, active)
+        st.session_state["_last_recorded_active"] = active
 
-    collapsed = _is_collapsed(ctx)
+    collapsed = _is_collapsed()
     # per-run width variable -> the collapse animates via the CSS width transition
     st.markdown(f'<style>:root{{--fap-rail-width:'
                 f'{"var(--fap-rail-collapsed)" if collapsed else "var(--fap-rail-expanded)"}}}</style>',
@@ -133,68 +143,60 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
         C.render_alert("Select a page from the navigation.", "info")
 
     _render_status_bar(ctx)
-    _inject_search_enhancement()
+    # durably mirror the in-session shell state to the WorkspaceManager (only writes
+    # when it changed) so a genuine reopen restores it - never browser storage.
+    _persist_shell_state(ctx)
 
 
-# ---------------------------------------------------------------- query-param actions
-def _process_shell_actions(ctx: "ShellContext") -> None:
-    """Map the rail's ``<a href="?...">`` links onto existing state. ``nav`` is
-    idempotent (left in the URL); toggles (collapse/theme/pin) are cleared so a
-    refresh does not re-fire them. Each is the single rerun the user approved."""
-    qp = st.query_params
-    role = ctx.user.role
-    allowed = {p.info.id for p in visible_pages(role)}
-
-    nav_id = qp.get("nav")
-    if nav_id and nav_id in allowed:
-        st.session_state[_ACTIVE] = nav_id
-        _record_recent(ctx, nav_id)
-
-    toggled = False
-    shell_action = qp.get("shell")
-    if shell_action == "toggle":
-        _set_collapsed(ctx, not _is_collapsed(ctx))
-        toggled = True
-    elif shell_action == "theme":
-        current = theme.resolve_mode(st.session_state.get("_theme_mode"),
-                                     theme.branding_for(
-                                         st.session_state.get("_theme_preset")
-                                         or theme.DEFAULT_PRESET_ID, _branding()))
-        st.session_state["_theme_mode"] = "light" if current == "dark" else "dark"
-        toggled = True
-
-    fav_id = qp.get("fav")
-    if fav_id and fav_id in allowed:
-        _toggle_favorite(ctx, fav_id)
-        toggled = True
-
-    if toggled:
-        st.query_params.clear()
-        st.rerun()
+# ---------------------------------------------------------------- in-session state + callbacks
+def _ensure_shell_loaded(ctx: "ShellContext") -> None:
+    """Load persisted collapse + favorites into session_state once per session."""
+    if st.session_state.get("_shell_loaded"):
+        return
+    st.session_state.setdefault(
+        "_rail_collapsed", bool(_load_scope(ctx, _SHELL_SCOPE).get("collapsed", False)))
+    st.session_state.setdefault(
+        "_favorites", [str(x) for x in (_load_scope(ctx, _FAV_SCOPE).get("pages") or [])])
+    st.session_state["_shell_loaded"] = True
 
 
-# ---------------------------------------------------------------- persisted state
-def _is_collapsed(ctx: "ShellContext") -> bool:
-    doc = _load_scope(ctx, _SHELL_SCOPE)
-    if "collapsed" in doc:
-        return bool(doc["collapsed"])
+def _is_collapsed() -> bool:
     return bool(st.session_state.get("_rail_collapsed", False))
 
 
-def _set_collapsed(ctx: "ShellContext", value: bool) -> None:
-    st.session_state["_rail_collapsed"] = bool(value)
-    _save_scope(ctx, _SHELL_SCOPE, {"collapsed": bool(value)})
+def _favorites() -> list[str]:
+    return [str(x) for x in st.session_state.get("_favorites", [])]
 
 
-def _favorites(ctx: "ShellContext") -> list[str]:
-    doc = _load_scope(ctx, _FAV_SCOPE)
-    return [str(x) for x in (doc.get("pages") or [])]
+def _persist_shell_state(ctx: "ShellContext") -> None:
+    """Write shell state to the WorkspaceManager ONLY when it changed this session
+    (avoids redundant writes). Session-only fallback handled by _save_scope."""
+    want = {"collapsed": _is_collapsed(), "pages": _favorites()}
+    if st.session_state.get("_shell_persisted") == want:
+        return
+    _save_scope(ctx, _SHELL_SCOPE, {"collapsed": want["collapsed"]})
+    _save_scope(ctx, _FAV_SCOPE, {"pages": want["pages"]})
+    st.session_state["_shell_persisted"] = want
 
 
-def _toggle_favorite(ctx: "ShellContext", page_id: str) -> None:
-    favs = _favorites(ctx)
+# button callbacks: mutate session_state IN-SESSION; Streamlit reruns automatically.
+# No st.rerun() needed (the widget triggers one), no navigation of any kind.
+def _cb_set_active(page_id: str) -> None:
+    st.session_state[_ACTIVE] = page_id
+
+
+def _cb_toggle_collapse() -> None:
+    st.session_state["_rail_collapsed"] = not bool(st.session_state.get("_rail_collapsed", False))
+
+
+def _cb_toggle_theme() -> None:
+    st.session_state["_theme_mode"] = "light" if st.session_state.get("_theme_mode") == "dark" else "dark"
+
+
+def _cb_toggle_fav(page_id: str) -> None:
+    favs = _favorites()
     favs.remove(page_id) if page_id in favs else favs.append(page_id)
-    _save_scope(ctx, _FAV_SCOPE, {"pages": favs})
+    st.session_state["_favorites"] = favs
 
 
 def _record_recent(ctx: "ShellContext", page_id: str) -> None:
@@ -292,7 +294,7 @@ def _nav_model(ctx: "ShellContext") -> tuple[list[nav.NavGroup], list[nav.NavIte
     role = ctx.user.role
     pages = visible_pages(role)
     by_id = {p.info.id: p for p in pages}
-    fav_ids = [i for i in _favorites(ctx) if i in by_id]
+    fav_ids = [i for i in _favorites() if i in by_id]
     fav_set = set(fav_ids)
 
     def item(p) -> nav.NavItem:
@@ -337,6 +339,8 @@ def _footer_info(ctx: "ShellContext", brand: theme.Branding) -> nav.FooterInfo:
 
 # ---------------------------------------------------------------- rail + header
 def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
+    """The fixed navigation rail. The clickable items are REAL st.button widgets
+    (in-session; no href/query params), CSS-styled to look like the desktop rail."""
     try:
         brand_logos = _logo_pair_html(brand, height=28)
     except FileNotFoundError as exc:
@@ -344,14 +348,65 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
         brand_logos = ""
     groups, favorites, recents = _nav_model(ctx)
     footer = _footer_info(ctx, brand)
-    st.markdown(
-        nav.rail_html(brand_html=brand_logos, platform_name=brand.platform_name,
-                      groups=groups, favorites=favorites, recents=recents,
-                      footer=footer, collapsed=collapsed),
-        unsafe_allow_html=True)
+    icon_specs: list[tuple[str, str]] = []
+
+    with st.container(key="fap_rail"):
+        st.markdown(nav.brand_html(brand_logos, brand.platform_name, collapsed),
+                    unsafe_allow_html=True)
+        query = ""
+        if not collapsed:
+            query = (st.text_input("Search modules", key="_nav_search",
+                                   placeholder="Search modules…",
+                                   label_visibility="collapsed") or "").strip().lower()
+        with st.container(key="fap_rail_nav"):
+            _render_nav_group(ctx, "Favorites", "star", favorites, "fav", collapsed, query, icon_specs)
+            _render_nav_group(ctx, "Recent", "clock", recents, "rec", collapsed, query, icon_specs)
+            for g in groups:
+                _render_nav_group(ctx, g.title, g.icon, g.items, "nav", collapsed, query, icon_specs)
+        with st.container(key="fap_rail_footer"):
+            st.markdown(nav.footer_html(footer, collapsed), unsafe_allow_html=True)
+
+    # inject per-button icon masks + (when collapsed) the icon-only layout rules
+    st.markdown(nav.icon_css(icon_specs), unsafe_allow_html=True)
+    if collapsed:
+        st.markdown(
+            '<style>.st-key-fap_rail .stButton>button{justify-content:center;}'
+            '.st-key-fap_rail .stButton>button::before{margin-right:0;}</style>',
+            unsafe_allow_html=True)
+
+
+def _render_nav_group(ctx: "ShellContext", title: str, icon_name: str,
+                      items: list[nav.NavItem], prefix: str, collapsed: bool,
+                      query: str, icon_specs: list[tuple[str, str]]) -> None:
+    visible = [it for it in items if not query or query in it.name.lower()]
+    if not visible:
+        return
+    if not collapsed:
+        st.markdown(nav.group_title_html(title, icon_name), unsafe_allow_html=True)
+    for it in visible:
+        key = f"{prefix}_{it.id}"
+        icon_specs.append((key, it.icon or nav.section_icon(title)))
+        if collapsed:
+            st.button("", key=key, on_click=_cb_set_active, args=(it.id,),
+                      type="primary" if it.active else "secondary",
+                      use_container_width=True, help=it.name)
+        else:
+            row = st.columns([8, 1], vertical_alignment="center")
+            with row[0]:
+                st.button(it.name, key=key, on_click=_cb_set_active, args=(it.id,),
+                          type="primary" if it.active else "secondary",
+                          use_container_width=True)
+            with row[1]:
+                pin_key = f"pin_{prefix}_{it.id}"
+                icon_specs.append((pin_key, "star"))
+                st.button("", key=pin_key, on_click=_cb_toggle_fav, args=(it.id,),
+                          use_container_width=True,
+                          help="Unpin" if it.favorite else "Pin to favorites")
 
 
 def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
+    """Top bar. Collapse + theme are REAL st.button widgets (in-session, no href);
+    title/breadcrumb/user are static HTML."""
     org = _org_context()
     page = get_page(ctx.active_page_id)
     crumbs = [brand.club_name if org.get("club") else "", org.get("season", ""),
@@ -359,20 +414,34 @@ def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) 
     crumbs = [c for c in crumbs if c] or [brand.organization_name]
     if page is not None:
         crumbs.append(page.info.name)
-
-    notifications = st.session_state.get("_notifications", [])
     module_title = page.info.name if page else brand.platform_name
     module_icon = page.icon if page and page.icon else ""
     initials = "".join(p[0] for p in ctx.user.name.split()[:2]).upper() or "?"
+    notifications = st.session_state.get("_notifications", [])
+
+    with st.container(key="fap_header"):
+        c = st.columns([0.6, 8, 0.6, 3], vertical_alignment="center")
+        with c[0]:
+            st.button("", key="hdr_collapse", on_click=_cb_toggle_collapse,
+                      help="Expand navigation" if collapsed else "Collapse navigation",
+                      use_container_width=True)
+        with c[1]:
+            st.markdown(nav.header_titles_html(module_title, module_icon,
+                                               C.breadcrumb_html(crumbs)),
+                        unsafe_allow_html=True)
+        with c[2]:
+            st.button("", key="hdr_theme", on_click=_cb_toggle_theme,
+                      help="Toggle light / dark", use_container_width=True)
+        with c[3]:
+            st.markdown(nav.header_user_html(
+                ctx.user.name, initials, C.badge_html(ctx.user.role_label, "info"),
+                len(notifications)), unsafe_allow_html=True)
+    # header button glyphs (collapse chevron + theme sun/moon) via the same mask trick
     mode = theme.resolve_mode(st.session_state.get("_theme_mode"), brand)
-    st.markdown(
-        nav.header_html(
-            module_title=module_title, module_icon=module_icon,
-            breadcrumb_html=C.breadcrumb_html(crumbs),
-            notif_count=len(notifications), user_name=ctx.user.name,
-            user_initials=initials, role_badge_html=C.badge_html(ctx.user.role_label, "info"),
-            collapsed=collapsed, theme_mode=mode),
-        unsafe_allow_html=True)
+    st.markdown(nav.icon_css([
+        ("hdr_collapse", "chevron-right" if collapsed else "chevron-left"),
+        ("hdr_theme", "sun" if mode == "dark" else "moon"),
+    ]), unsafe_allow_html=True)
 
 
 def _render_controls_bar(ctx: "ShellContext", brand: theme.Branding) -> None:
@@ -487,17 +556,6 @@ def _render_status_bar(ctx: "ShellContext") -> None:
             ("Workspace", ws_name), ("User", ctx.user.name), ("Version", _short_version()),
         ]).replace("</div>", f"<span>{connection}</span></div>"),
         unsafe_allow_html=True)
-
-
-def _inject_search_enhancement() -> None:
-    """Progressive enhancement: live-filter the rail's modules as the user types.
-    Isolated in a 0-height component; if the browser sandboxes it, navigation still
-    works via the links and every module stays visible."""
-    try:
-        import streamlit.components.v1 as components
-        components.html(nav.SEARCH_JS, height=0)
-    except Exception:
-        pass
 
 
 def _short_version() -> str:

@@ -1,18 +1,22 @@
-"""Pure HTML builders for the professional application shell (Phase 13.0).
+"""Pure presentation helpers for the professional application shell (Phase 13.1).
 
-The shell is a fixed left navigation rail + a top header, rendered as custom
-HTML/CSS (styled by ``fap.theme.css``) rather than Streamlit's native sidebar.
-Everything here is a PURE string builder - no Streamlit, no I/O - so the whole
-navigation surface is unit-testable and carries no page/routing logic of its own.
+Phase 13.1 replaced the earlier link-based rail (an anchor is a browser navigation,
+which starts a NEW Streamlit session and restarts app.py - unacceptable for a
+desktop app). The clickable navigation is now real ``st.button`` widgets (rendered
+by ``fap.ui.app_shell``) that change ``st.session_state["_active_page"]`` IN-SESSION
+via the existing ``ShellContext.goto`` semantics - no anchors, no query params, no
+window scripting, no browser navigation.
 
-Navigation reuses the existing routing: each item is an ``<a href="?nav=ID">``
-link; the shell reads that query param and drives the SAME active-page state and
-``page_registry`` the app already uses. Collapse/pin are the same pattern
-(``?shell=toggle`` / ``?fav=ID``). No second registry, no duplicated routing.
+This module therefore holds only PURE, non-interactive pieces (no Streamlit, no
+routing): the rail's static HTML chrome (brand, group titles, footer) and the CSS
+that paints each button as a professional nav item (icon + accent). The buttons
+themselves live in the shell because only Streamlit can make a click run Python in
+the same session.
 """
 from __future__ import annotations
 
 import html as _html
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -58,60 +62,29 @@ class FooterInfo:
     connection: str = "online"
 
 
-# ---------------------------------------------------------------- nav rows
-def _icon_for(item: NavItem, group_icon: str = "") -> str:
-    name = item.icon or group_icon or "grid"
-    return icon(name, 18)
-
-
-def nav_row_html(item: NavItem, *, group_icon: str = "") -> str:
-    """A navigation row: the page link (icon + label) plus a pin toggle. The pin
-    is a SIBLING link (never nested in the page link - nested <a> is invalid)."""
-    cls = "fap-nav-row" + (" active" if item.active else "")
-    label = _esc(item.name)
-    star = "star" if item.favorite else "star"
-    pin_cls = "fap-nav-pin" + (" on" if item.favorite else "")
-    # target="_self" keeps navigation INSIDE the current tab. Streamlit renders
-    # markdown anchors so they open in a NEW tab by default; _self overrides that
-    # so a click updates the query param in-app, exactly like the old sidebar.
-    return (
-        f'<div class="{cls}">'
-        f'<a class="fap-nav-link" href="?nav={_esc(item.id)}" target="_self" aria-label="{label}" '
-        f'title="{label}" data-tip="{label}">'
-        f'<span class="ic">{_icon_for(item, group_icon)}</span>'
-        f'<span class="label">{label}</span></a>'
-        f'<a class="{pin_cls}" href="?fav={_esc(item.id)}" target="_self" tabindex="0" '
-        f'title="{"Unpin" if item.favorite else "Pin to favorites"}" '
-        f'aria-label="{"Unpin " if item.favorite else "Pin "}{label}">{icon(star, 13)}</a>'
-        f'</div>')
-
-
-def nav_group_html(group: NavGroup) -> str:
-    if not group.items:
-        return ""
-    rows = "".join(nav_row_html(i, group_icon=group.icon) for i in group.items)
-    head = (f'<div class="fap-nav-group-title">'
-            f'<span class="gt-ic">{icon(group.icon, 14)}</span>'
-            f'<span class="gt-label">{_esc(group.title)}</span></div>') if group.title else ""
-    return f'<div class="fap-nav-group">{head}{rows}</div>'
-
-
 def section_icon(section: str) -> str:
     return _SECTION_ICON.get((section or "").strip().lower(), "grid")
 
 
-# ---------------------------------------------------------------- rail
-def _quick_group(title: str, icon_name: str, items: Sequence[NavItem]) -> str:
-    if not items:
-        return ""
-    rows = "".join(nav_row_html(i) for i in items)
-    head = (f'<div class="fap-nav-group-title">'
+# ---------------------------------------------------------------- static chrome (HTML)
+def brand_html(logos_html: str, platform_name: str, collapsed: bool) -> str:
+    name = "" if collapsed else f'<span class="fap-rail-brandname">{_esc(platform_name)}</span>'
+    return f'<div class="fap-rail-brand">{logos_html}{name}</div>'
+
+
+def group_title_html(title: str, icon_name: str) -> str:
+    return (f'<div class="fap-nav-group-title">'
             f'<span class="gt-ic">{icon(icon_name, 14)}</span>'
             f'<span class="gt-label">{_esc(title)}</span></div>')
-    return f'<div class="fap-nav-group">{head}{rows}</div>'
 
 
-def _footer_html(f: FooterInfo) -> str:
+def footer_html(f: FooterInfo, collapsed: bool = False) -> str:
+    if collapsed:
+        conn_ok = (f.connection or "").lower() in ("online", "connected", "ok")
+        dot = "ok" if conn_ok else "off"
+        return (f'<div class="fap-rail-footer collapsed">'
+                f'<span class="conn {dot}" title="{_esc(f.connection)}"><span class="cdot"></span></span>'
+                f'</div>')
     conn_ok = (f.connection or "").lower() in ("online", "connected", "ok")
     conn_cls = "ok" if conn_ok else "off"
     prov = f'<span class="ft-badge">{_esc(f.provider)}</span>' if f.provider else ""
@@ -121,7 +94,7 @@ def _footer_html(f: FooterInfo) -> str:
     return (
         '<div class="fap-rail-footer">'
         '<div class="ft-ds">'
-        f'<div class="ft-title"><span class="ft-dot"></span>Current dataset</div>'
+        '<div class="ft-title"><span class="ft-dot"></span>Current dataset</div>'
         f'<div class="ft-name" title="{_esc(f.dataset)}">{_esc(f.dataset)}</div>'
         f'<div class="ft-meta">{prov}{rows}{qual}</div>'
         '</div>'
@@ -135,93 +108,43 @@ def _footer_html(f: FooterInfo) -> str:
         '</div>')
 
 
-def rail_html(*, brand_html: str, platform_name: str, groups: Sequence[NavGroup],
-              favorites: Sequence[NavItem], recents: Sequence[NavItem],
-              footer: FooterInfo, collapsed: bool) -> str:
-    """The whole fixed navigation rail as one HTML string (rendered once)."""
-    nav = "".join(nav_group_html(g) for g in groups)
-    fav = _quick_group("Favorites", "star", favorites)
-    rec = _quick_group("Recent", "clock", recents)
-    search = (
-        '<div class="fap-rail-search">'
-        f'<span class="s-ic">{icon("search", 15)}</span>'
-        '<input class="fap-nav-search" type="text" autocomplete="off" spellcheck="false" '
-        'placeholder="Search modules…" aria-label="Search modules" />'
-        '</div>')
-    cls = "fap-navrail" + (" collapsed" if collapsed else "")
-    return (
-        f'<nav class="{cls}" aria-label="Primary" role="navigation">'
-        f'<div class="fap-rail-brand">{brand_html}'
-        f'<span class="fap-rail-brandname">{_esc(platform_name)}</span></div>'
-        f'{search}'
-        f'<div class="fap-rail-scroll">{fav}{rec}{nav}</div>'
-        f'{_footer_html(footer)}'
-        f'</nav>')
+# ---------------------------------------------------------------- header display (HTML)
+def header_titles_html(module_title: str, module_icon: str, breadcrumb_html: str) -> str:
+    chip = f'<span class="mod-chip">{icon(module_icon, 20)}</span>' if module_icon else ""
+    return (f'<div class="fap-hdr-titles">{chip}'
+            f'<div class="titles"><b class="mod-title">{_esc(module_title)}</b>'
+            f'<span class="crumbs">{breadcrumb_html}</span></div></div>')
 
 
-# ---------------------------------------------------------------- header
-def header_html(*, module_title: str, module_icon: str, breadcrumb_html: str,
-                notif_count: int, user_name: str, user_initials: str,
-                role_badge_html: str, collapsed: bool, theme_mode: str) -> str:
-    """The top bar: collapse button, module title + breadcrumb, search hint,
-    theme switch, notifications, user. Collapse/theme are query-param links so
-    they reuse the shell's single-rerun state flow."""
+def header_user_html(user_name: str, user_initials: str, role_badge_html: str,
+                     notif_count: int) -> str:
     n = int(notif_count or 0)
-    bell_cls = "has" if n else ""
-    theme_icon = "sun" if (theme_mode or "").lower() == "dark" else "moon"
-    toggle_icon = "chevron-right" if collapsed else "chevron-left"
-    return (
-        '<header class="fap-shell-header">'
-        '  <div class="left">'
-        f'    <a class="hbtn collapse" href="?shell=toggle" target="_self" role="button" '
-        f'       aria-label="{"Expand" if collapsed else "Collapse"} navigation" '
-        f'       title="{"Expand" if collapsed else "Collapse"} navigation">{icon(toggle_icon, 18)}</a>'
-        f'    <span class="mod-chip">{icon(module_icon, 20) if module_icon else ""}</span>'
-        f'    <div class="titles"><b class="mod-title">{_esc(module_title)}</b>'
-        f'      <span class="crumbs">{breadcrumb_html}</span></div>'
-        '  </div>'
-        '  <div class="right">'
-        f'    <a class="hbtn" href="?shell=theme" target="_self" role="button" aria-label="Toggle theme" '
-        f'       title="Toggle light / dark">{icon(theme_icon, 17)}</a>'
-        f'    <span class="hbtn bell {bell_cls}" title="Notifications" aria-label="Notifications">'
-        f'      {icon("bell", 17)}{f"<span class=chip-count>{n}</span>" if n else ""}</span>'
-        '    <span class="hsep"></span>'
-        f'    <span class="user"><span class="uava">{_esc(user_initials)}</span>'
-        f'      <span class="uinfo"><b>{_esc(user_name)}</b>{role_badge_html}</span></span>'
-        '  </div>'
-        '</header>')
+    bell = (f'<span class="hbtn bell {"has" if n else ""}" title="Notifications">'
+            f'{icon("bell", 17)}{f"<span class=chip-count>{n}</span>" if n else ""}</span>')
+    return (f'<div class="fap-hdr-user">{bell}<span class="hsep"></span>'
+            f'<span class="user"><span class="uava">{_esc(user_initials)}</span>'
+            f'<span class="uinfo"><b>{_esc(user_name)}</b>{role_badge_html}</span></span></div>')
 
 
-# ---------------------------------------------------------------- search JS (enhancement)
-# Progressive enhancement ONLY: live-filters the rail's nav rows as the user types.
-# Runs from a components iframe against the parent document; if blocked, every page
-# stays visible (nothing is lost) and navigation still works via the links.
-SEARCH_JS = """
-<script>
-(function () {
-  try {
-    var doc = window.parent.document;
-    function wire() {
-      var input = doc.querySelector('.fap-nav-search');
-      if (!input || input.dataset.wired) return;
-      input.dataset.wired = '1';
-      input.addEventListener('input', function () {
-        var q = (input.value || '').trim().toLowerCase();
-        doc.querySelectorAll('.fap-navrail .fap-nav-row').forEach(function (row) {
-          var link = row.querySelector('.fap-nav-link');
-          var name = (link && (link.getAttribute('data-tip') || link.textContent) || '').toLowerCase();
-          row.style.display = (!q || name.indexOf(q) !== -1) ? '' : 'none';
-        });
-        doc.querySelectorAll('.fap-navrail .fap-nav-group').forEach(function (g) {
-          var any = Array.prototype.some.call(g.querySelectorAll('.fap-nav-row'),
-            function (r) { return r.style.display !== 'none'; });
-          g.style.display = any ? '' : 'none';
-        });
-      });
-    }
-    wire();
-    new MutationObserver(wire).observe(doc.body, {childList: true, subtree: true});
-  } catch (e) { /* sandboxed: navigation still works via links */ }
-})();
-</script>
-"""
+# ---------------------------------------------------------------- per-button icon CSS
+def _icon_data_uri(name: str) -> str:
+    """A registry SVG as a URL-encoded data URI, for a CSS mask (so the icon takes
+    the button's currentColor and tints with hover/active - our icon set, no emoji)."""
+    svg = icon(name, 18) or icon("grid", 18)
+    return "data:image/svg+xml," + urllib.parse.quote(svg)
+
+
+def icon_css(specs: Sequence[tuple[str, str]]) -> str:
+    """A ``<style>`` mapping each button's ``st-key-<key>`` wrapper to its icon mask.
+    ``specs`` is a list of ``(widget_key, icon_name)``. Pure string; no Streamlit."""
+    rules = []
+    seen: set[str] = set()
+    for key, name in specs:
+        if key in seen:
+            continue
+        seen.add(key)
+        uri = _icon_data_uri(name)
+        rules.append(
+            f'.st-key-{key} button::before{{-webkit-mask-image:url("{uri}");'
+            f'mask-image:url("{uri}");}}')
+    return "<style>" + "".join(rules) + "</style>"

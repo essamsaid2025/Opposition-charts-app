@@ -703,11 +703,13 @@ def _responsive(brand: Branding) -> str:
 
 
 def _app_shell() -> str:
-    """Phase 13.0 professional application shell: a fixed custom navigation rail
-    that REPLACES Streamlit's native sidebar (hidden here, along with its collapse
-    control). Width is driven by --fap-rail-width (the shell sets it per run:
-    280px expanded, 72px collapsed) so the collapse animates via a CSS transition.
-    Theme-aware (all colours are tokens); no flashing (transitions only)."""
+    """Phase 13.1 professional application shell: a fixed navigation rail whose
+    clickable items are REAL st.button widgets (in-session navigation - no href,
+    no query params, no browser navigation), CSS-styled to look like a desktop
+    rail. The rail is a keyed st.container (``.st-key-fap_rail``); the header is
+    ``.st-key-fap_header``. Streamlit's native sidebar + collapse control are
+    hidden. Width is driven by --fap-rail-width (280 expanded / 72 collapsed), so
+    collapse animates via the CSS transition. Theme-aware; transitions only."""
     return """
 /* retire Streamlit's native sidebar AND its collapse control - the shell owns nav */
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
@@ -720,55 +722,65 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 [data-testid="stMainBlockContainer"], .block-container {
   padding-left: var(--fap-space-5) !important; padding-right: var(--fap-space-5) !important; }
 
-/* the fixed navigation rail (rendered once, position:fixed so it never scrolls away) */
-.fap-navrail { position: fixed; inset: 0 auto 0 0; z-index: 1000;
-  width: var(--fap-rail-width, 280px); display: flex; flex-direction: column;
-  background: var(--fap-surface); border-right: 1px solid var(--fap-border);
-  box-shadow: var(--fap-shadow-sm); overflow: hidden;
-  transition: width var(--fap-transition); }
+/* ---- the fixed rail: a keyed st.container holding styled st.buttons ---- */
+.st-key-fap_rail { position: fixed; inset: 0 auto 0 0; z-index: 1000;
+  width: var(--fap-rail-width, 280px); background: var(--fap-surface);
+  border-right: 1px solid var(--fap-border); box-shadow: var(--fap-shadow-sm);
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: width var(--fap-transition); padding: 0 !important; }
+.st-key-fap_rail > div { height: 100%; display: flex; flex-direction: column; }
+.st-key-fap_rail_nav { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 2px 10px; }
+.st-key-fap_rail_footer { margin-top: auto; }
+.st-key-fap_rail [data-testid="stTextInput"] { padding: 8px 12px 2px; }
+.st-key-fap_rail [data-testid="stTextInput"] input { background: var(--fap-bg);
+  border: 1px solid var(--fap-border); }
+
 .fap-rail-brand { display: flex; align-items: center; gap: 10px; padding: 14px 16px 12px;
   min-height: var(--fap-header-height); border-bottom: 1px solid var(--fap-border); }
-.fap-rail-brand img { height: 30px; width: auto; }
+.fap-rail-brand img { height: 28px; width: auto; }
 .fap-rail-brandname { font-weight: var(--fap-weight-bold); white-space: nowrap; font-size: 0.95rem; }
-.fap-rail-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px; }
-.fap-rail-search { display: flex; align-items: center; gap: 8px; margin: 12px; padding: 8px 10px;
-  background: var(--fap-bg); border: 1px solid var(--fap-border);
-  border-radius: var(--fap-radius-md); transition: border-color var(--fap-transition-fast); }
-.fap-rail-search:focus-within { border-color: var(--fap-primary); }
-.fap-rail-search .s-ic { color: var(--fap-text-subtle); display: flex; }
-.fap-nav-search { flex: 1; min-width: 0; background: transparent; border: 0; outline: 0;
-  color: var(--fap-text); font-family: var(--fap-font-sans); font-size: var(--fap-text-sm); }
-.fap-nav-search::placeholder { color: var(--fap-text-subtle); }
 
-.fap-nav-group { margin-bottom: 8px; }
-.fap-nav-group-title { display: flex; align-items: center; gap: 8px; margin: 12px 8px 4px;
+.fap-nav-group-title { display: flex; align-items: center; gap: 8px; margin: 12px 6px 4px;
   color: var(--fap-text-subtle); font-size: 0.66rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: var(--fap-tracking-wider); white-space: nowrap; }
 .fap-nav-group-title .gt-ic { display: flex; }
-.fap-nav-row { display: flex; align-items: center; position: relative;
-  border-radius: var(--fap-radius-md); margin: 1px 0;
-  transition: background var(--fap-transition-fast); }
-.fap-nav-row:hover { background: var(--fap-hover); }
-.fap-nav-link { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px;
-  padding: 9px 12px; color: var(--fap-text-muted); border-radius: var(--fap-radius-md);
-  white-space: nowrap; overflow: hidden;
-  transition: color var(--fap-transition-fast); }
-.fap-nav-link:hover { text-decoration: none; color: var(--fap-text); }
-.fap-nav-link .ic { flex: 0 0 auto; width: 20px; display: flex; justify-content: center; color: inherit; }
-.fap-nav-link .label { overflow: hidden; text-overflow: ellipsis; }
-/* active page: blue accent bar + tint + colour (StatsBomb IQ style) */
-.fap-nav-row.active { background: color-mix(in srgb, var(--fap-primary) 14%, transparent); }
-.fap-nav-row.active .fap-nav-link { color: var(--fap-primary); font-weight: 650; }
-.fap-nav-row.active::before { content: ""; position: absolute; left: 0; top: 6px; bottom: 6px;
-  width: 3px; border-radius: 0 3px 3px 0; background: var(--fap-primary); }
-.fap-nav-pin { flex: 0 0 auto; display: flex; align-items: center; padding: 0 10px;
-  color: var(--fap-text-subtle); opacity: 0;
-  transition: opacity var(--fap-transition-fast), color var(--fap-transition-fast); }
-.fap-nav-row:hover .fap-nav-pin { opacity: 0.85; }
-.fap-nav-pin:hover { color: var(--fap-primary); text-decoration: none; }
-.fap-nav-pin.on { opacity: 1; color: var(--fap-warning); }
 
-.fap-rail-footer { border-top: 1px solid var(--fap-border); padding: 10px 14px; background: var(--fap-surface); }
+/* nav items = styled st.buttons (the click runs Python in-session) */
+.st-key-fap_rail .stButton { margin: 1px 0; }
+.st-key-fap_rail [data-testid="stHorizontalBlock"] { gap: 2px; align-items: center; }
+.st-key-fap_rail .stButton > button { display: flex; align-items: center;
+  justify-content: flex-start; width: 100%; text-align: left; font-weight: 500;
+  padding: 8px 12px; border: 1px solid transparent; background: transparent;
+  border-radius: var(--fap-radius-md); color: var(--fap-text-muted);
+  white-space: nowrap; overflow: hidden;
+  transition: background var(--fap-transition-fast), color var(--fap-transition-fast); }
+.st-key-fap_rail .stButton > button:hover { background: var(--fap-hover);
+  color: var(--fap-text); border-color: transparent; }
+/* the icon: a mask taking currentColor (per-item mask URL injected at runtime) */
+.st-key-fap_rail .stButton > button::before { content: ""; display: inline-block;
+  flex: 0 0 auto; width: 18px; height: 18px; margin-right: 12px;
+  background-color: currentColor; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center; -webkit-mask-size: contain;
+  mask-size: contain; }
+/* active page: primary button -> blue accent bar + tint (StatsBomb IQ style) */
+.st-key-fap_rail .stButton > button[kind="primary"] {
+  background: color-mix(in srgb, var(--fap-primary) 14%, transparent);
+  color: var(--fap-primary); font-weight: 650;
+  box-shadow: inset 3px 0 0 var(--fap-primary); }
+.st-key-fap_rail .stButton > button[kind="primary"]:hover {
+  background: color-mix(in srgb, var(--fap-primary) 20%, transparent); }
+/* the pin star (narrow second column): appears on row hover */
+.st-key-fap_rail [data-testid="column"]:last-child .stButton > button { opacity: 0;
+  padding: 8px 4px; color: var(--fap-text-subtle); }
+.st-key-fap_rail [data-testid="stHorizontalBlock"]:hover
+  [data-testid="column"]:last-child .stButton > button { opacity: 0.75; }
+.st-key-fap_rail [data-testid="column"]:last-child .stButton > button:hover {
+  opacity: 1; color: var(--fap-warning); background: transparent; }
+.st-key-fap_rail [data-testid="column"]:last-child .stButton > button::before {
+  width: 14px; height: 14px; margin-right: 0; }
+
+.fap-rail-footer { border-top: 1px solid var(--fap-border); padding: 10px 14px;
+  background: var(--fap-surface); }
 .fap-rail-footer .ft-title { display: flex; align-items: center; gap: 7px; color: var(--fap-text-subtle);
   font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--fap-tracking-wider); }
 .fap-rail-footer .ft-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--fap-primary); }
@@ -787,44 +799,44 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 .fap-rail-footer .conn .cdot { width: 7px; height: 7px; border-radius: 999px; }
 .fap-rail-footer .conn.ok .cdot { background: var(--fap-success); }
 .fap-rail-footer .conn.off .cdot { background: var(--fap-danger); }
+.fap-rail-footer.collapsed { display: flex; justify-content: center; padding: 12px 0; }
 
-/* collapsed (72px): icons only; labels, search, pins, footer detail hidden */
-.fap-navrail.collapsed .fap-rail-brandname,
-.fap-navrail.collapsed .fap-nav-link .label,
-.fap-navrail.collapsed .fap-nav-group-title .gt-label,
-.fap-navrail.collapsed .fap-nav-pin,
-.fap-navrail.collapsed .fap-rail-search,
-.fap-navrail.collapsed .fap-rail-footer .ft-name,
-.fap-navrail.collapsed .fap-rail-footer .ft-meta,
-.fap-navrail.collapsed .fap-rail-footer .ft-grid,
-.fap-navrail.collapsed .fap-rail-footer .ft-title { display: none; }
-.fap-navrail.collapsed .fap-nav-link { justify-content: center; padding: 10px 0; gap: 0; }
-.fap-navrail.collapsed .fap-nav-group-title { justify-content: center; margin: 10px 0 4px; }
-.fap-navrail.collapsed .fap-rail-brand { justify-content: center; padding: 14px 0 12px; }
-.fap-navrail.collapsed .fap-rail-footer { padding: 10px 0; text-align: center; }
-/* tooltip flyout for the collapsed icons (labels disappear -> tips appear) */
-.fap-navrail.collapsed .fap-nav-link::after { content: attr(data-tip); position: absolute;
-  left: 100%; margin-left: 12px; top: 50%; transform: translateY(-50%); background: var(--fap-raised);
-  color: var(--fap-text); border: 1px solid var(--fap-border); padding: 5px 10px;
-  border-radius: var(--fap-radius-sm); font-size: var(--fap-text-xs); white-space: nowrap;
-  box-shadow: var(--fap-shadow-md); opacity: 0; pointer-events: none; z-index: 1200;
-  transition: opacity var(--fap-transition-fast); }
-.fap-navrail.collapsed .fap-nav-link:hover::after { opacity: 1; }
-
-/* header: the collapse button is ours (native control is hidden above) */
-.fap-shell-header .hbtn.collapse { cursor: pointer; }
-.fap-shell-header .hbtn { transition: background var(--fap-transition-fast),
-  color var(--fap-transition-fast); }
+/* ---- header: a keyed st.container; collapse + theme are real st.buttons ---- */
+.st-key-fap_header { position: sticky; top: 0; z-index: 900; background: var(--fap-bg);
+  border-bottom: 1px solid var(--fap-border); padding: 4px 6px; margin-bottom: 10px; }
+.st-key-fap_header [data-testid="stHorizontalBlock"] { gap: 8px; align-items: center; }
+.st-key-fap_header .stButton > button { display: flex; align-items: center; justify-content: center;
+  width: 100%; background: transparent; border: 1px solid transparent; color: var(--fap-text-muted);
+  border-radius: var(--fap-radius-md); padding: 8px;
+  transition: background var(--fap-transition-fast), color var(--fap-transition-fast); }
+.st-key-fap_header .stButton > button:hover { background: var(--fap-hover); color: var(--fap-text); }
+.st-key-fap_header .stButton > button::before { content: ""; display: inline-block;
+  width: 18px; height: 18px; background-color: currentColor; -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat; -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain; }
+.fap-hdr-titles { display: flex; align-items: center; gap: 12px; }
+.fap-hdr-titles .mod-chip { display: flex; color: var(--fap-primary); }
+.fap-hdr-titles .mod-title { font-size: 1.05rem; font-weight: var(--fap-weight-bold);
+  line-height: 1.15; display: block; }
+.fap-hdr-titles .crumbs { display: block; }
+.fap-hdr-user { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.fap-hdr-user .hbtn { display: flex; align-items: center; color: var(--fap-text-muted);
+  position: relative; }
+.fap-hdr-user .bell.has { color: var(--fap-primary); }
+.fap-hdr-user .chip-count { position: absolute; top: -6px; right: -8px; background: var(--fap-primary);
+  color: var(--fap-on-primary); font-size: 0.6rem; font-weight: 700; border-radius: 999px;
+  min-width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
+.fap-hdr-user .hsep { width: 1px; height: 22px; background: var(--fap-border); }
+.fap-hdr-user .user { display: flex; align-items: center; gap: 8px; }
+.fap-hdr-user .uava { width: 30px; height: 30px; border-radius: 999px; background: var(--fap-primary);
+  color: var(--fap-on-primary); display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 0.72rem; }
+.fap-hdr-user .uinfo { display: flex; flex-direction: column; line-height: 1.1; }
+.fap-hdr-user .uinfo b { font-size: 0.82rem; }
 
 /* narrow screens: force the compact rail so the layout never breaks */
 @media (max-width: 900px) {
   :root { --fap-rail-width: var(--fap-rail-collapsed) !important; }
-  .fap-navrail .fap-rail-brandname, .fap-navrail .fap-nav-link .label,
-  .fap-navrail .fap-nav-group-title .gt-label, .fap-navrail .fap-nav-pin,
-  .fap-navrail .fap-rail-search, .fap-navrail .fap-rail-footer .ft-name,
-  .fap-navrail .fap-rail-footer .ft-meta, .fap-navrail .fap-rail-footer .ft-grid,
-  .fap-navrail .fap-rail-footer .ft-title { display: none; }
-  .fap-navrail .fap-nav-link { justify-content: center; padding: 10px 0; gap: 0; }
 }
 """
 
