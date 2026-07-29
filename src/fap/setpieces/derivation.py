@@ -20,6 +20,11 @@ import pandas as pd
 
 from fap.setpieces.models import SetPiece
 
+# Bump whenever the derivation OUTPUT changes (id scheme, fields, classification).
+# It is part of the derived-set-piece cache key, so a logic fix is never masked by
+# a stale cached result computed by an older version. v2: unique per-row derived ids.
+DERIVATION_VERSION = 2
+
 # canonical event_type / set_piece values -> the module's controlled type
 _TYPE_MAP = {
     "corner": "corner", "corner_kick": "corner", "from corner": "corner",

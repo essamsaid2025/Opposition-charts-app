@@ -146,7 +146,10 @@ class SetPieceService:
             dataset = self._wm.active_dataset(user)
             if dataset is None:
                 return None
-            key = f"sp_derived::{dataset.id}"
+            from fap.setpieces.derivation import DERIVATION_VERSION, derive_set_pieces
+            # the version is part of the key so a derivation fix is never served a
+            # stale result cached (on disk/redis, across restarts) by an older version.
+            key = f"sp_derived::v{DERIVATION_VERSION}::{dataset.id}"
             if self._cache is not None:
                 hit = self._cache.get(key)
                 if hit is not None:
@@ -154,7 +157,6 @@ class SetPieceService:
             frame = self._wm.active_frame(user)
             if frame is None or getattr(frame, "empty", True):
                 return []
-            from fap.setpieces.derivation import derive_set_pieces
             derived = derive_set_pieces(frame, workspace_id=dataset.workspace_id or workspace_id)
             if self._cache is not None:
                 self._cache.set(key, derived)
