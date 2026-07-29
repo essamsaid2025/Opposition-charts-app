@@ -71,13 +71,16 @@ def nav_row_html(item: NavItem, *, group_icon: str = "") -> str:
     label = _esc(item.name)
     star = "star" if item.favorite else "star"
     pin_cls = "fap-nav-pin" + (" on" if item.favorite else "")
+    # target="_self" keeps navigation INSIDE the current tab. Streamlit renders
+    # markdown anchors so they open in a NEW tab by default; _self overrides that
+    # so a click updates the query param in-app, exactly like the old sidebar.
     return (
         f'<div class="{cls}">'
-        f'<a class="fap-nav-link" href="?nav={_esc(item.id)}" aria-label="{label}" '
+        f'<a class="fap-nav-link" href="?nav={_esc(item.id)}" target="_self" aria-label="{label}" '
         f'title="{label}" data-tip="{label}">'
         f'<span class="ic">{_icon_for(item, group_icon)}</span>'
         f'<span class="label">{label}</span></a>'
-        f'<a class="{pin_cls}" href="?fav={_esc(item.id)}" tabindex="0" '
+        f'<a class="{pin_cls}" href="?fav={_esc(item.id)}" target="_self" tabindex="0" '
         f'title="{"Unpin" if item.favorite else "Pin to favorites"}" '
         f'aria-label="{"Unpin " if item.favorite else "Pin "}{label}">{icon(star, 13)}</a>'
         f'</div>')
@@ -170,7 +173,7 @@ def header_html(*, module_title: str, module_icon: str, breadcrumb_html: str,
     return (
         '<header class="fap-shell-header">'
         '  <div class="left">'
-        f'    <a class="hbtn collapse" href="?shell=toggle" role="button" '
+        f'    <a class="hbtn collapse" href="?shell=toggle" target="_self" role="button" '
         f'       aria-label="{"Expand" if collapsed else "Collapse"} navigation" '
         f'       title="{"Expand" if collapsed else "Collapse"} navigation">{icon(toggle_icon, 18)}</a>'
         f'    <span class="mod-chip">{icon(module_icon, 20) if module_icon else ""}</span>'
@@ -178,7 +181,7 @@ def header_html(*, module_title: str, module_icon: str, breadcrumb_html: str,
         f'      <span class="crumbs">{breadcrumb_html}</span></div>'
         '  </div>'
         '  <div class="right">'
-        f'    <a class="hbtn" href="?shell=theme" role="button" aria-label="Toggle theme" '
+        f'    <a class="hbtn" href="?shell=theme" target="_self" role="button" aria-label="Toggle theme" '
         f'       title="Toggle light / dark">{icon(theme_icon, 17)}</a>'
         f'    <span class="hbtn bell {bell_cls}" title="Notifications" aria-label="Notifications">'
         f'      {icon("bell", 17)}{f"<span class=chip-count>{n}</span>" if n else ""}</span>'
