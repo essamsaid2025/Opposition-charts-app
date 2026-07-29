@@ -22,7 +22,7 @@ from fap.ui.page import (
 
 load_builtin_pages()
 
-EXPECTED = {"dashboard", "opponent_analysis", "match_analysis", "set_piece_analysis",
+EXPECTED = {"dashboard", "opponent_analysis", "set_piece_analysis",
             "scouting", "players", "teams", "projects", "datasets", "reports",
             "templates", "administration", "settings"}
 

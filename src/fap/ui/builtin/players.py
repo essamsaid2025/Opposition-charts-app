@@ -593,12 +593,7 @@ class FirstTeamPlayersPage(Page):
                             try:
                                 shell.goto("opponent_analysis")
                             except Exception:
-                                st.info("Open Match Analysis from the navigation.")
-                        if st.button("Open Match Report", key=f"ftp_mr_{i}"):
-                            try:
-                                shell.goto("match_analysis")
-                            except Exception:
-                                st.info("Open from the navigation.")
+                                st.info("Open Opponent Analysis from the navigation.")
             st.caption("Match statistics come from the linked datasets — never duplicated here.")
         else:
             st.info("No matches linked. Match data is never duplicated here — link an existing dataset below.")

@@ -23,13 +23,6 @@ class _Placeholder(Page):
         st.caption("This screen is registered in the shell; its analysis is on the roadmap.")
 
 
-@page_registry.register
-class MatchAnalysisPage(_Placeholder):
-    info = PluginInfo(id="match_analysis", name="Match Analysis", category="page")
-    section = "Analysis"; icon = "match"; order = 10
-    _blurb = "Single-match breakdowns will build on the Open Play engine."
-
-
 # NOTE: the Set Piece Analysis page is no longer a placeholder - the real
 # implementation lives in fap.ui.builtin.setpieces (Phase 9.0), registered under
 # id="set_piece_analysis". The placeholder was removed so it no longer collides

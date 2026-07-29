@@ -374,9 +374,6 @@ class PlayersService:
             {"name": "Opponent Analysis", "page_id": "opponent_analysis", "datasets": datasets,
              "reports": n_reports, "last_analysis": last_analysis, "last_update": upd,
              "desc": "Opponent breakdowns."},
-            {"name": "Match Reports", "page_id": "match_analysis", "datasets": len(links),
-             "reports": n_reports, "last_analysis": last_analysis, "last_update": upd,
-             "desc": "Match analysis pages."},
         ]
 
     def match_rows(self, user: User, player_id: str) -> list[dict[str, Any]]:
