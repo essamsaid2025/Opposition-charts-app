@@ -128,7 +128,15 @@ def header_user_html(user_name: str, user_initials: str, role_badge_html: str,
 
 # ---------------------------------------------------------------- icon masks (header buttons + search)
 def _icon_data_uri(name: str) -> str:
+    # A data-URI SVG used as a CSS mask is parsed as a STANDALONE document, so it
+    # must carry an xmlns (inline HTML SVG doesn't need one, a mask does), and the
+    # mask alpha needs a solid stroke - "currentColor" is undefined out of context.
+    # The visible tint still comes from the element's background-color: currentColor.
     svg = icon(name, 20) or icon("grid", 20)
+    if "xmlns=" not in svg:
+        svg = svg.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" ', 1)
+    svg = svg.replace('stroke="currentColor"', 'stroke="black"') \
+             .replace('fill="currentColor"', 'fill="black"')
     return "data:image/svg+xml," + urllib.parse.quote(svg)
 
 
