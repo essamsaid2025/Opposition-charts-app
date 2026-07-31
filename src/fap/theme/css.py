@@ -728,15 +728,18 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
   padding-left: var(--fap-space-6) !important; padding-right: var(--fap-space-6) !important; }
 
 /* ---- the fixed rail ---- */
+/* the WHOLE rail scrolls as one column (robust: no reliance on Streamlit's nested
+   wrappers keeping a flex chain intact), so every element - including the footer
+   and the last nav items - is always reachable. */
 .st-key-fap_rail { position: fixed; inset: 0 auto 0 0; z-index: 1000;
   width: var(--fap-rail-width, 280px); background: var(--fap-surface);
   border-right: 1px solid var(--fap-border); box-shadow: var(--fap-shadow-lg);
-  display: flex; flex-direction: column; overflow: hidden; transition: width 0.3s ease;
-  padding: 0 !important; }
-.st-key-fap_rail > div { height: 100%; display: flex; flex-direction: column; }
-.st-key-fap_rail_nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
-  padding: var(--fap-space-2) var(--fap-space-3); }
-.st-key-fap_rail_footer { margin-top: auto; }
+  overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  transition: width 0.3s ease; padding: 0 0 var(--fap-space-4) !important; }
+.st-key-fap_rail_nav { padding: var(--fap-space-2) var(--fap-space-3); }
+.st-key-fap_rail_footer { margin-top: var(--fap-space-2); }
+/* brand stays pinned at the top while the rest scrolls */
+.st-key-fap_rail .nv-brand { position: sticky; top: 0; z-index: 3; background: var(--fap-surface); }
 
 /* ---- 1) brand block: FC Masar x Right To Dream, centred + divider accent ---- */
 .nv-brand { padding: 22px 20px 18px; border-bottom: 1px solid var(--fap-border); position: relative; }
