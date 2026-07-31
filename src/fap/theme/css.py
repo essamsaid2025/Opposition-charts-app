@@ -734,7 +734,7 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
   display: flex; flex-direction: column; overflow: hidden; transition: width 0.3s ease;
   padding: 0 !important; }
 .st-key-fap_rail > div { height: 100%; display: flex; flex-direction: column; }
-.st-key-fap_rail_nav { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
+.st-key-fap_rail_nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden;
   padding: var(--fap-space-2) var(--fap-space-3); }
 .st-key-fap_rail_footer { margin-top: auto; }
 
@@ -797,6 +797,15 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 .st-key-fap_rail [class*="st-key-rec_"] button { min-height: 40px; font-size: 13px;
   color: var(--fap-text-subtle); font-weight: 500; }
 .st-key-fap_rail [class*="st-key-rec_"] button::before { width: 16px; height: 16px; margin-right: 12px; }
+/* collapsible SECTION headers (dropdowns): a real button styled as a section label
+   with a chevron that flips down/right with the open state (keyed by st-key-grp_) */
+.st-key-fap_rail [class*="st-key-grp_"] .stButton > button { min-height: 34px; margin-top: 14px;
+  padding: 0 12px; background: transparent; color: var(--fap-text-subtle); font-size: 11px;
+  font-weight: 700; letter-spacing: .12em; text-transform: uppercase; transform: none; }
+.st-key-fap_rail [class*="st-key-grp_"] .stButton > button:hover { background: transparent;
+  color: var(--fap-text); transform: none; box-shadow: none; }
+.st-key-fap_rail [class*="st-key-grp_"] .stButton > button::before { width: 14px; height: 14px;
+  margin-right: 10px; opacity: .75; }
 
 /* ---- 6) footer status card ---- */
 .nv-footer { padding: var(--fap-space-4); }

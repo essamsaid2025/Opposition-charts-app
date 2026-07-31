@@ -374,7 +374,8 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
             _render_nav_group(ctx, "Favorites", favorites, "fav", collapsed, query, icon_specs)
             _render_nav_group(ctx, "Recent", recents, "rec", collapsed, query, icon_specs)
             for g in groups:
-                _render_nav_group(ctx, g.title, g.items, "nav", collapsed, query, icon_specs)
+                _render_nav_group(ctx, g.title, g.items, "nav", collapsed, query, icon_specs,
+                                  collapsible=True)
         with st.container(key="fap_rail_footer"):
             st.markdown(nav.footer_html(footer, collapsed), unsafe_allow_html=True)
 
@@ -389,22 +390,51 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
 
 def _render_nav_group(ctx: "ShellContext", title: str, items: list[nav.NavItem],
                       prefix: str, collapsed: bool, query: str,
-                      icon_specs: list[tuple[str, str]]) -> None:
+                      icon_specs: list[tuple[str, str]], collapsible: bool = False) -> None:
     """Each nav row is a REAL st.button (native, always clickable in Streamlit),
-    styled by CSS to look like a desktop nav item. No HTML overlay, no positioning
-    tricks - the click is the button itself, in-session via ``_cb_set_active``."""
+    styled by CSS to look like a desktop nav item. ``collapsible`` sections get a
+    clickable dropdown header (also a real button) that toggles the group open in
+    session - no HTML overlay, no positioning tricks."""
     visible = [it for it in items if not query or query in it.name.lower()]
     if not visible:
         return
-    if not collapsed:
-        st.markdown(nav.group_title_html(title), unsafe_allow_html=True)
     recent = prefix == "rec"
+    show_items = True
+    if collapsible and not collapsed and not query:
+        slug = _slug(title)
+        open_ = _group_open(slug, visible)
+        hdr_key = f"grp_{slug}"
+        icon_specs.append((hdr_key, "chevron-down" if open_ else "chevron-right"))
+        st.button(title, key=hdr_key, on_click=_cb_toggle_group, args=(slug,),
+                  use_container_width=True)
+        show_items = open_
+    elif not collapsed:
+        st.markdown(nav.group_title_html(title), unsafe_allow_html=True)
+    if not show_items:
+        return
     for it in visible:
         key = f"{prefix}_{it.id}"
         icon_specs.append((key, "clock" if recent else (it.icon or nav.section_icon(title))))
         st.button(it.name if not collapsed else "", key=key, on_click=_cb_set_active,
                   args=(it.id,), type="primary" if it.active else "secondary",
                   use_container_width=True, help=it.name if collapsed else None)
+
+
+def _slug(text: str) -> str:
+    return "".join(c if c.isalnum() else "_" for c in str(text).lower())
+
+
+def _group_open(slug: str, items: list[nav.NavItem]) -> bool:
+    """A section dropdown's open state (session-only presentation flag). The section
+    containing the ACTIVE page is always open so the user sees where they are."""
+    if any(getattr(it, "active", False) for it in items):
+        return True
+    return bool(st.session_state.get(f"_grpopen_{slug}", True))
+
+
+def _cb_toggle_group(slug: str) -> None:
+    key = f"_grpopen_{slug}"
+    st.session_state[key] = not st.session_state.get(key, True)
 
 
 def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
