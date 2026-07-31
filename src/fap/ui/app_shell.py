@@ -358,6 +358,7 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
         club = org = ""
     groups, favorites, recents = _nav_model(ctx)
     footer = _footer_info(ctx, brand)
+    icon_specs: list[tuple[str, str]] = []
 
     with st.container(key="fap_rail"):
         st.markdown(nav.brand_html(club, org, brand.platform_name,
@@ -370,16 +371,28 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
                                    label_visibility="collapsed") or "").strip().lower()
             st.markdown(nav.input_icon_css("_nav_search", "search"), unsafe_allow_html=True)
         with st.container(key="fap_rail_nav"):
-            _render_nav_group(ctx, "Favorites", favorites, "fav", collapsed, query)
-            _render_nav_group(ctx, "Recent", recents, "rec", collapsed, query)
+            _render_nav_group(ctx, "Favorites", favorites, "fav", collapsed, query, icon_specs)
+            _render_nav_group(ctx, "Recent", recents, "rec", collapsed, query, icon_specs)
             for g in groups:
-                _render_nav_group(ctx, g.title, g.items, "nav", collapsed, query)
+                _render_nav_group(ctx, g.title, g.items, "nav", collapsed, query, icon_specs)
         with st.container(key="fap_rail_footer"):
             st.markdown(nav.footer_html(footer, collapsed), unsafe_allow_html=True)
 
+    # per-row icon glyphs (a CSS mask on each button, keyed by st-key)
+    st.markdown(nav.icon_css(icon_specs), unsafe_allow_html=True)
+    if collapsed:  # icon-only rows when the rail is narrow
+        st.markdown(
+            '<style>.st-key-fap_rail .stButton>button{justify-content:center;padding:0;}'
+            '.st-key-fap_rail .stButton>button::before{margin-right:0;}</style>',
+            unsafe_allow_html=True)
+
 
 def _render_nav_group(ctx: "ShellContext", title: str, items: list[nav.NavItem],
-                      prefix: str, collapsed: bool, query: str) -> None:
+                      prefix: str, collapsed: bool, query: str,
+                      icon_specs: list[tuple[str, str]]) -> None:
+    """Each nav row is a REAL st.button (native, always clickable in Streamlit),
+    styled by CSS to look like a desktop nav item. No HTML overlay, no positioning
+    tricks - the click is the button itself, in-session via ``_cb_set_active``."""
     visible = [it for it in items if not query or query in it.name.lower()]
     if not visible:
         return
@@ -387,18 +400,11 @@ def _render_nav_group(ctx: "ShellContext", title: str, items: list[nav.NavItem],
         st.markdown(nav.group_title_html(title), unsafe_allow_html=True)
     recent = prefix == "rec"
     for it in visible:
-        row_icon = "clock" if recent else (it.icon or nav.section_icon(title))
-        # a wrapper container holds the VISIBLE custom row + the INVISIBLE click
-        # overlay(s); CSS positions the button(s) absolutely over the row.
-        with st.container(key=f"nw_{prefix}_{it.id}"):
-            st.markdown(nav.nav_row_html(it.name, row_icon, active=it.active,
-                                         favorite=it.favorite, recent=recent,
-                                         collapsed=collapsed), unsafe_allow_html=True)
-            st.button("", key=f"{prefix}_{it.id}", on_click=_cb_set_active,
-                      args=(it.id,), help=it.name)
-            if not recent and not collapsed:
-                st.button("", key=f"pin_{prefix}_{it.id}", on_click=_cb_toggle_fav,
-                          args=(it.id,), help="Unpin" if it.favorite else "Pin to favorites")
+        key = f"{prefix}_{it.id}"
+        icon_specs.append((key, "clock" if recent else (it.icon or nav.section_icon(title))))
+        st.button(it.name if not collapsed else "", key=key, on_click=_cb_set_active,
+                  args=(it.id,), type="primary" if it.active else "secondary",
+                  use_container_width=True, help=it.name if collapsed else None)
 
 
 def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:

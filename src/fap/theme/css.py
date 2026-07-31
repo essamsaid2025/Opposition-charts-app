@@ -705,16 +705,16 @@ def _responsive(brand: Branding) -> str:
 def _app_shell() -> str:
     """Phase 13.2 professional application shell - Concept B (Hudl Sportscode).
 
-    The visible navigation is entirely custom HTML/CSS: a fixed rail (keyed
-    st.container ``.st-key-fap_rail``) with a dual-logo brand block, a pill search,
-    uppercase section labels, chunky 48px rows (``.nv-row`` with inline registry
-    SVG icons), muted compact recent rows, and a footer status card. The clickable
-    layer is INVISIBLE: each row lives in a ``.st-key-nw_*`` wrapper where the
-    st.button element containers are absolutely positioned over the custom row at
-    ``opacity:0`` - so a click runs Python in-session (no href, no query params, no
-    browser navigation) while the user only ever sees the custom design. Native
-    sidebar + its collapse control are hidden. Width var --fap-rail-width drives the
-    280/72 collapse (0.3s). Theme-token colours only; transitions only."""
+    A fixed rail (keyed st.container ``.st-key-fap_rail``) with a dual-logo brand
+    block, a pill search, uppercase section labels, chunky 48px navigation rows,
+    muted compact recent rows, and a footer status card. The navigation rows are
+    REAL st.buttons (native, always clickable in Streamlit) styled here to look
+    like desktop nav items - the per-row icon is a CSS mask, the active page is the
+    ``[kind="primary"]`` button (filled pill + 4px accent bar + glow); the click
+    runs Python in-session (no href, no query params, no browser navigation). The
+    brand block, section labels and footer are non-interactive HTML. Native sidebar
+    + its collapse control are hidden. Width var --fap-rail-width drives the 280/72
+    collapse (0.3s). Theme-token colours only; transitions only."""
     return """
 /* retire Streamlit's native sidebar AND its collapse control - the shell owns nav */
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
@@ -770,44 +770,33 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 .nv-sec { margin: 20px 12px 10px; color: var(--fap-text-subtle); font-size: 11px; font-weight: 700;
   letter-spacing: .12em; text-transform: uppercase; }
 
-/* ================= INVISIBLE OVERLAY MECHANICS =================
-   Each nav wrapper (.st-key-nw_*) is position:relative and holds the VISIBLE custom
-   row (.nv-row, normal flow -> defines height) plus 1-2 st.button element containers
-   positioned absolutely over it at opacity:0. The click hits the button (in-session
-   rerun) while the user sees only the custom HTML. */
-[class*="st-key-nw_"] { position: relative; }
-[class*="st-key-nw_"] > div, [class*="st-key-nw_"] [data-testid="stVerticalBlock"] { gap: 0 !important; }
-[class*="st-key-nw_"] div[data-testid="stElementContainer"]:has(> [data-testid="stButton"]) {
-  position: absolute; top: 0; bottom: 0; left: 0; right: 0; margin: 0; z-index: 5; }
-[class*="st-key-nw_"] [class*="st-key-pin_"] { left: auto; right: 6px; width: 40px; z-index: 6; }
-[class*="st-key-nw_"] .stButton, [class*="st-key-nw_"] .stButton > button { width: 100%; height: 100%; }
-[class*="st-key-nw_"] .stButton > button { opacity: 0; min-height: 0; padding: 0; border: 0;
-  background: transparent; box-shadow: none; cursor: pointer; }
-[class*="st-key-nw_"] .stButton > button:focus-visible { opacity: 1; outline: 2px solid var(--fap-primary);
-  outline-offset: -2px; background: transparent; }
-
-/* ---- 2/5/6/7) navigation rows (VISIBLE custom HTML) ---- */
-.nv-row { display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 15px; border-radius: 12px;
-  color: var(--fap-text-muted); font-size: 14.5px; font-weight: 500; position: relative; margin: 3px 0;
-  transition: background 150ms ease, color 150ms ease, transform 200ms ease, box-shadow 200ms ease; }
-.nv-row .ic { flex: 0 0 auto; width: 20px; height: 20px; display: flex; align-items: center;
-  justify-content: center; color: inherit; }
-.nv-row .lbl { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-row .star { flex: 0 0 auto; color: var(--fap-text-subtle); opacity: 0;
-  transition: opacity 150ms ease, color 150ms ease; }
-.nv-row .star.on { opacity: 1; color: var(--fap-warning); }
-[class*="st-key-nw_"]:hover .nv-row { background: var(--fap-hover); color: var(--fap-text);
+/* ---- navigation rows = REAL st.buttons, styled as desktop nav items ----
+   The button IS the row (native, always clickable in Streamlit). No overlay. */
+.st-key-fap_rail .stButton { margin: 3px 0; }
+.st-key-fap_rail .stButton > button { display: flex; align-items: center; justify-content: flex-start;
+  width: 100%; min-height: 48px; text-align: left; font-weight: 500; font-size: 14.5px;
+  padding: 0 15px; border: 1px solid transparent; background: transparent; border-radius: 12px;
+  color: var(--fap-text-muted); white-space: nowrap; overflow: hidden;
+  transition: background 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 200ms ease; }
+.st-key-fap_rail .stButton > button:hover { background: var(--fap-hover); color: var(--fap-text);
   transform: translateX(3px); }
-[class*="st-key-nw_"]:hover .nv-row .star { opacity: .75; }
-.nv-row.active { background: color-mix(in srgb, var(--fap-primary) 18%, transparent);
+.st-key-fap_rail .stButton > button::before { content: ""; display: inline-block; flex: 0 0 auto;
+  width: 20px; height: 20px; margin-right: 14px; background-color: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center;
+  mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
+/* active page: filled blue pill + 4px accent bar + soft glow + bold */
+.st-key-fap_rail .stButton > button[kind="primary"] {
+  background: color-mix(in srgb, var(--fap-primary) 18%, transparent);
   color: var(--fap-primary); font-weight: 700; transform: none;
   box-shadow: inset 4px 0 0 var(--fap-primary),
     0 0 0 1px color-mix(in srgb, var(--fap-primary) 16%, transparent),
     0 6px 18px color-mix(in srgb, var(--fap-primary) 22%, transparent); }
-[class*="st-key-nw_"]:hover .nv-row.active { transform: none; }
-.nv-row.recent { height: 40px; font-size: 13px; color: var(--fap-text-subtle); }
-.nv-row.recent .ic { width: 16px; height: 16px; }
-.nv-row.only-icon { justify-content: center; gap: 0; padding: 0; }
+.st-key-fap_rail .stButton > button[kind="primary"]:hover {
+  background: color-mix(in srgb, var(--fap-primary) 24%, transparent); transform: none; }
+/* recent rows: smaller, muted (keyed by st-key-rec_ prefix) */
+.st-key-fap_rail [class*="st-key-rec_"] button { min-height: 40px; font-size: 13px;
+  color: var(--fap-text-subtle); font-weight: 500; }
+.st-key-fap_rail [class*="st-key-rec_"] button::before { width: 16px; height: 16px; margin-right: 12px; }
 
 /* ---- 6) footer status card ---- */
 .nv-footer { padding: var(--fap-space-4); }

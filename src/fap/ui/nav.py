@@ -1,16 +1,16 @@
 """Pure presentation helpers for the professional application shell (Phase 13.2).
 
-The navigation is a fixed desktop-style rail. Per the Phase 13.2 design, everything
-the user SEES is custom HTML/CSS (built here); the Streamlit ``st.button`` widgets
-that ``fap.ui.app_shell`` renders are INVISIBLE click overlays sitting on top of
-each custom row - so the click still runs Python IN-SESSION via the existing
-``ShellContext.goto`` semantics (no anchors, no query params, no window scripting,
-no browser navigation), while the visible surface never looks like a Streamlit
-button.
+The navigation is a fixed desktop-style rail. The clickable nav rows are REAL
+``st.button`` widgets (rendered by ``fap.ui.app_shell``) - native and always
+clickable in Streamlit - styled by ``fap.theme.css`` to look like desktop nav
+items; the click runs Python IN-SESSION via ``_cb_set_active`` (no anchors, no
+query params, no window scripting, no browser navigation). The non-interactive
+chrome that Streamlit cannot express as a widget - the dual-logo brand block,
+section labels, and the footer status panel - is built here as pure HTML.
 
-This module is pure (no Streamlit, no routing): the brand block, search field
-chrome, section labels, the visible nav rows (inline registry SVG icons), the
-footer status panel and the header display. Colours come only from theme tokens.
+This module is pure (no Streamlit, no routing): brand block, search-field icon,
+section labels, footer status panel, header display, and the per-button icon-mask
+CSS. Colours come only from theme tokens.
 """
 from __future__ import annotations
 
@@ -82,19 +82,6 @@ def brand_html(club_logo_html: str, org_logo_html: str, title: str, subtitle: st
 # ---------------------------------------------------------------- rows / groups
 def group_title_html(title: str) -> str:
     return f'<div class="nv-sec">{_esc(title)}</div>'
-
-
-def nav_row_html(name: str, icon_name: str, *, active: bool = False, favorite: bool = False,
-                 recent: bool = False, collapsed: bool = False) -> str:
-    """The VISIBLE nav row (an invisible st.button overlays it for the click)."""
-    cls = "nv-row" + (" active" if active else "") + (" recent" if recent else "")
-    glyph = icon(icon_name, 16 if recent else 20)
-    if collapsed:
-        return f'<div class="{cls} only-icon" title="{_esc(name)}"><span class="ic">{glyph}</span></div>'
-    star = "" if recent else (f'<span class="star{" on" if favorite else ""}">'
-                              f'{icon("star", 15)}</span>')
-    return (f'<div class="{cls}"><span class="ic">{glyph}</span>'
-            f'<span class="lbl">{_esc(name)}</span>{star}</div>')
 
 
 # ---------------------------------------------------------------- footer status panel
