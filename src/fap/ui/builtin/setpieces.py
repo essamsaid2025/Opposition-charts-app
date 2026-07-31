@@ -115,10 +115,11 @@ class SetPieceAnalysisPage(Page):
             self._browse(shell, svc)
 
     # ---------------------------------------------------------------- dashboards
-    def _dataset_empty_state(self, shell, svc) -> None:
+    def _dataset_empty_state(self, shell, svc, *, where: str = "ov") -> None:
         """Set Pieces reads from the active dataset (single source of truth). Guide
         the user to the Data Hub instead of a separate import when nothing is
-        available."""
+        available. ``where`` keeps the button key unique across the tabs that all
+        render this same empty state in a single run (Overview/Offensive/Defensive)."""
         if svc.has_active_dataset(shell.user):
             C.render_alert("The active dataset has no set-piece events (corners, free kicks, "
                            "throw-ins, penalties). Choose a different dataset in the Data Hub, "
@@ -127,13 +128,13 @@ class SetPieceAnalysisPage(Page):
             go = C.render_empty_state(
                 "No active dataset", "Set Pieces now reads from the active dataset. Import and "
                 "choose one in the Data Hub - it powers every set-piece dashboard automatically.",
-                icon_name="datasets", action_label="Open Data Hub", key="sp_goto_datahub")
+                icon_name="datasets", action_label="Open Data Hub", key=f"sp_goto_datahub_{where}")
             if go:
                 shell.goto("data_hub")
 
     def _overview(self, shell, svc) -> None:
         if not svc.dashboard(shell.user)["total"]:
-            self._dataset_empty_state(shell, svc)
+            self._dataset_empty_state(shell, svc, where="ov")
             return
         filt = self._filter_bar(shell, svc, key="ov")
         bundle = svc.analytics_overview(shell.user, filt, workspace_id=shell.workspace_id)
@@ -142,7 +143,7 @@ class SetPieceAnalysisPage(Page):
 
     def _phase_dashboard(self, shell, svc, phase: str) -> None:
         if not svc.dashboard(shell.user)["total"]:
-            self._dataset_empty_state(shell, svc)
+            self._dataset_empty_state(shell, svc, where=phase)
             return
         st.caption(f"{phase.title()} set pieces — "
                    f"{'your team attacking' if phase == 'offensive' else 'defending against'} dead balls.")
