@@ -703,13 +703,18 @@ def _responsive(brand: Branding) -> str:
 
 
 def _app_shell() -> str:
-    """Phase 13.1 professional application shell: a fixed navigation rail whose
-    clickable items are REAL st.button widgets (in-session navigation - no href,
-    no query params, no browser navigation), CSS-styled to look like a desktop
-    rail. The rail is a keyed st.container (``.st-key-fap_rail``); the header is
-    ``.st-key-fap_header``. Streamlit's native sidebar + collapse control are
-    hidden. Width is driven by --fap-rail-width (280 expanded / 72 collapsed), so
-    collapse animates via the CSS transition. Theme-aware; transitions only."""
+    """Phase 13.2 professional application shell - Concept B (Hudl Sportscode).
+
+    The visible navigation is entirely custom HTML/CSS: a fixed rail (keyed
+    st.container ``.st-key-fap_rail``) with a dual-logo brand block, a pill search,
+    uppercase section labels, chunky 48px rows (``.nv-row`` with inline registry
+    SVG icons), muted compact recent rows, and a footer status card. The clickable
+    layer is INVISIBLE: each row lives in a ``.st-key-nw_*`` wrapper where the
+    st.button element containers are absolutely positioned over the custom row at
+    ``opacity:0`` - so a click runs Python in-session (no href, no query params, no
+    browser navigation) while the user only ever sees the custom design. Native
+    sidebar + its collapse control are hidden. Width var --fap-rail-width drives the
+    280/72 collapse (0.3s). Theme-token colours only; transitions only."""
     return """
 /* retire Streamlit's native sidebar AND its collapse control - the shell owns nav */
 [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"],
@@ -722,123 +727,113 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 [data-testid="stMainBlockContainer"], .block-container {
   padding-left: var(--fap-space-6) !important; padding-right: var(--fap-space-6) !important; }
 
-/* ---- the fixed rail: a keyed st.container holding styled st.buttons ---- */
+/* ---- the fixed rail ---- */
 .st-key-fap_rail { position: fixed; inset: 0 auto 0 0; z-index: 1000;
   width: var(--fap-rail-width, 280px); background: var(--fap-surface);
-  border-right: 1px solid var(--fap-border); box-shadow: var(--fap-shadow-sm);
-  display: flex; flex-direction: column; overflow: hidden;
-  transition: width 0.3s ease; padding: 0 !important; }
+  border-right: 1px solid var(--fap-border); box-shadow: var(--fap-shadow-lg);
+  display: flex; flex-direction: column; overflow: hidden; transition: width 0.3s ease;
+  padding: 0 !important; }
 .st-key-fap_rail > div { height: 100%; display: flex; flex-direction: column; }
 .st-key-fap_rail_nav { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden;
   padding: var(--fap-space-2) var(--fap-space-3); }
 .st-key-fap_rail_footer { margin-top: auto; }
 
-/* --- 1) premium brand block: [logo] title / subtitle --- */
-.fap-rail-brand { display: flex; align-items: center; gap: var(--fap-space-5);
-  height: 76px; min-height: 76px; padding: 0 var(--fap-space-5);
-  border-bottom: 1px solid var(--fap-border); }
-.fap-rail-brand.collapsed { justify-content: center; padding: 0; gap: 0; }
-.fap-rail-brand img.fap-brand-logo { height: 44px; width: auto; object-fit: contain; flex: 0 0 auto; }
-.fap-rail-brand .brand-text { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
-.fap-rail-brand .brand-title { font-size: 18px; font-weight: 700; line-height: 1.1; color: var(--fap-text);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fap-rail-brand .brand-sub { font-size: 13px; font-weight: 400; line-height: 1.2;
-  color: var(--fap-text-muted); margin-top: 2px; white-space: nowrap; }
+/* ---- 1) brand block: FC Masar x Right To Dream, centred + divider accent ---- */
+.nv-brand { padding: 22px 20px 18px; border-bottom: 1px solid var(--fap-border); position: relative; }
+.nv-brand::after { content: ""; position: absolute; left: 20px; right: 20px; bottom: -1px; height: 2px;
+  background: var(--fap-primary); border-radius: 2px; opacity: .9; }
+.nv-brand.collapsed { padding: 16px 0; display: flex; justify-content: center; }
+.nv-logos { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.nv-logos img.nv-logo { height: 42px; width: auto; object-fit: contain; display: block; }
+.nv-logo-sep { width: 1px; height: 32px; background: var(--fap-border); }
+.nv-brand-title { text-align: center; margin-top: 16px; font-size: 16px; font-weight: 800; line-height: 1.2;
+  letter-spacing: -.01em; color: var(--fap-text); }
+.nv-brand-sub { text-align: center; margin-top: 4px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  color: var(--fap-text-subtle); }
 
-/* --- 3) search box: 42px, radius 12, soft bg, icon inside, hover/focus --- */
-.st-key-fap_rail [data-testid="stTextInput"] { padding: var(--fap-space-4) var(--fap-space-3)
-  var(--fap-space-2); }
+/* ---- 3) search pill (styled st.text_input; icon inside) ---- */
+.st-key-fap_rail [data-testid="stTextInput"] { padding: var(--fap-space-4) var(--fap-space-4) var(--fap-space-2); }
 .st-key-_nav_search [data-testid="stTextInputRootElement"] { position: relative; }
-.st-key-_nav_search [data-testid="stTextInputRootElement"]::before { content: ""; position: absolute;
-  left: 14px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; z-index: 3;
-  pointer-events: none; background-color: var(--fap-text-subtle); -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat; -webkit-mask-position: center; mask-position: center;
-  -webkit-mask-size: contain; mask-size: contain; }
+.st-key-_nav_search [data-testid="stTextInputRootElement"]::before { content: ""; position: absolute; left: 16px;
+  top: 50%; transform: translateY(-50%); width: 16px; height: 16px; z-index: 3; pointer-events: none;
+  background-color: var(--fap-text-subtle); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
 .st-key-_nav_search [data-baseweb="input"], .st-key-_nav_search [data-baseweb="base-input"] {
-  height: 42px; border-radius: 12px; background: var(--fap-surface-alt) !important;
-  border: 1px solid var(--fap-border); transition: border-color 150ms ease, background 150ms ease; }
-.st-key-_nav_search [data-baseweb="input"]:hover { background: var(--fap-hover) !important; }
-.st-key-_nav_search input { height: 40px; padding-left: 34px !important; background: transparent !important;
+  height: 46px; border-radius: 14px; background: var(--fap-bg) !important; border: 1px solid var(--fap-border);
+  transition: border-color 150ms ease, box-shadow 150ms ease; }
+.st-key-_nav_search input { height: 44px; padding-left: 38px !important; background: transparent !important;
   font-size: var(--fap-text-sm); border: 0 !important; }
-.st-key-_nav_search [data-testid="stTextInputRootElement"]:focus-within
-  [data-baseweb="input"] { border-color: var(--fap-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fap-primary) 18%, transparent); }
+.st-key-_nav_search [data-testid="stTextInputRootElement"]:focus-within [data-baseweb="input"] {
+  border-color: var(--fap-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fap-primary) 18%, transparent); }
 
-/* --- 4) navigation group titles: uppercase, spaced, muted --- */
-.fap-nav-group-title { margin: var(--fap-space-5) 10px var(--fap-space-3);
-  color: var(--fap-text-subtle); font-size: 0.68rem; font-weight: 600; text-transform: uppercase;
-  letter-spacing: var(--fap-tracking-wider); white-space: nowrap; }
+/* ---- 4) section titles ---- */
+.nv-sec { margin: 20px 12px 10px; color: var(--fap-text-subtle); font-size: 11px; font-weight: 700;
+  letter-spacing: .12em; text-transform: uppercase; }
 
-/* --- 5/6) navigation rows = styled st.buttons (click runs Python in-session) --- */
-.st-key-fap_rail .stButton { margin: 2px 0; }
-.st-key-fap_rail [data-testid="stHorizontalBlock"] { gap: 2px; align-items: center; }
-.st-key-fap_rail .stButton > button { display: flex; align-items: center; justify-content: flex-start;
-  width: 100%; min-height: 44px; text-align: left; font-weight: 500; padding: 0 var(--fap-space-3);
-  border: 1px solid transparent; background: transparent; border-radius: 12px;
-  color: var(--fap-text-muted); white-space: nowrap; overflow: hidden;
-  transition: background 150ms ease, color 150ms ease, box-shadow 200ms ease; }
-.st-key-fap_rail .stButton > button:hover { background: var(--fap-hover); color: var(--fap-text); }
-/* the icon: a 20px mask taking currentColor (per-item URL injected at runtime) */
-.st-key-fap_rail .stButton > button::before { content: ""; display: inline-block; flex: 0 0 auto;
-  width: 20px; height: 20px; margin-right: 12px; background-color: currentColor;
-  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center;
-  mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
-/* --- 7) active page: 4px blue accent + darker bg + bold + icon highlighted + soft glow --- */
-.st-key-fap_rail .stButton > button[kind="primary"] {
-  background: color-mix(in srgb, var(--fap-primary) 16%, transparent);
-  color: var(--fap-primary); font-weight: 700;
+/* ================= INVISIBLE OVERLAY MECHANICS =================
+   Each nav wrapper (.st-key-nw_*) is position:relative and holds the VISIBLE custom
+   row (.nv-row, normal flow -> defines height) plus 1-2 st.button element containers
+   positioned absolutely over it at opacity:0. The click hits the button (in-session
+   rerun) while the user sees only the custom HTML. */
+[class*="st-key-nw_"] { position: relative; }
+[class*="st-key-nw_"] > div, [class*="st-key-nw_"] [data-testid="stVerticalBlock"] { gap: 0 !important; }
+[class*="st-key-nw_"] div[data-testid="stElementContainer"]:has(> [data-testid="stButton"]) {
+  position: absolute; top: 0; bottom: 0; left: 0; right: 0; margin: 0; z-index: 5; }
+[class*="st-key-nw_"] [class*="st-key-pin_"] { left: auto; right: 6px; width: 40px; z-index: 6; }
+[class*="st-key-nw_"] .stButton, [class*="st-key-nw_"] .stButton > button { width: 100%; height: 100%; }
+[class*="st-key-nw_"] .stButton > button { opacity: 0; min-height: 0; padding: 0; border: 0;
+  background: transparent; box-shadow: none; cursor: pointer; }
+[class*="st-key-nw_"] .stButton > button:focus-visible { opacity: 1; outline: 2px solid var(--fap-primary);
+  outline-offset: -2px; background: transparent; }
+
+/* ---- 2/5/6/7) navigation rows (VISIBLE custom HTML) ---- */
+.nv-row { display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 15px; border-radius: 12px;
+  color: var(--fap-text-muted); font-size: 14.5px; font-weight: 500; position: relative; margin: 3px 0;
+  transition: background 150ms ease, color 150ms ease, transform 200ms ease, box-shadow 200ms ease; }
+.nv-row .ic { flex: 0 0 auto; width: 20px; height: 20px; display: flex; align-items: center;
+  justify-content: center; color: inherit; }
+.nv-row .lbl { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-row .star { flex: 0 0 auto; color: var(--fap-text-subtle); opacity: 0;
+  transition: opacity 150ms ease, color 150ms ease; }
+.nv-row .star.on { opacity: 1; color: var(--fap-warning); }
+[class*="st-key-nw_"]:hover .nv-row { background: var(--fap-hover); color: var(--fap-text);
+  transform: translateX(3px); }
+[class*="st-key-nw_"]:hover .nv-row .star { opacity: .75; }
+.nv-row.active { background: color-mix(in srgb, var(--fap-primary) 18%, transparent);
+  color: var(--fap-primary); font-weight: 700; transform: none;
   box-shadow: inset 4px 0 0 var(--fap-primary),
-    0 0 0 1px color-mix(in srgb, var(--fap-primary) 14%, transparent),
-    0 2px 10px color-mix(in srgb, var(--fap-primary) 16%, transparent); }
-.st-key-fap_rail .stButton > button[kind="primary"]:hover {
-  background: color-mix(in srgb, var(--fap-primary) 22%, transparent); }
-/* the pin star (narrow second column): appears on row hover */
-.st-key-fap_rail [data-testid="column"]:last-child .stButton > button { min-height: 44px; opacity: 0;
-  padding: 0 4px; color: var(--fap-text-subtle); }
-.st-key-fap_rail [data-testid="stHorizontalBlock"]:hover
-  [data-testid="column"]:last-child .stButton > button { opacity: 0.7; }
-.st-key-fap_rail [data-testid="column"]:last-child .stButton > button:hover {
-  opacity: 1; color: var(--fap-warning); background: transparent; box-shadow: none; }
-.st-key-fap_rail [data-testid="column"]:last-child .stButton > button::before {
-  width: 15px; height: 15px; margin-right: 0; }
+    0 0 0 1px color-mix(in srgb, var(--fap-primary) 16%, transparent),
+    0 6px 18px color-mix(in srgb, var(--fap-primary) 22%, transparent); }
+[class*="st-key-nw_"]:hover .nv-row.active { transform: none; }
+.nv-row.recent { height: 40px; font-size: 13px; color: var(--fap-text-subtle); }
+.nv-row.recent .ic { width: 16px; height: 16px; }
+.nv-row.only-icon { justify-content: center; gap: 0; padding: 0; }
 
-/* --- 8) recent rows: smaller, muted, own hover --- */
-.st-key-fap_rail [class*="st-key-rec_"] .stButton > button,
-.st-key-fap_rail [class*="st-key-rec_"] button { min-height: 36px; font-size: var(--fap-text-xs);
-  color: var(--fap-text-subtle); font-weight: 500; }
-.st-key-fap_rail [class*="st-key-rec_"] button::before { width: 16px; height: 16px; margin-right: 10px; }
-
-/* --- 9) footer: dataset · workspace · version · status --- */
-.fap-rail-footer { border-top: 1px solid var(--fap-border); padding: var(--fap-space-4);
-  background: var(--fap-surface); }
-.fap-rail-footer .ft-title { display: flex; align-items: center; gap: 7px; color: var(--fap-text-subtle);
-  font-size: 0.62rem; font-weight: 600; text-transform: uppercase; letter-spacing: var(--fap-tracking-wider); }
-.fap-rail-footer .ft-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--fap-primary); }
-.fap-rail-footer .ft-name { font-weight: 600; font-size: var(--fap-text-sm); margin: 4px 0;
+/* ---- 6) footer status card ---- */
+.nv-footer { padding: var(--fap-space-4); }
+.nv-card { border: 1px solid var(--fap-border); border-radius: 14px; background: var(--fap-bg); padding: 14px; }
+.nv-card-title { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--fap-text-subtle); }
+.nv-card-ds { font-size: 14px; font-weight: 700; color: var(--fap-text); margin: 6px 0 4px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fap-rail-footer .ft-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  color: var(--fap-text-muted); font-size: 0.72rem; }
-.fap-rail-footer .ft-badge { background: var(--fap-bg); border: 1px solid var(--fap-border);
-  border-radius: var(--fap-radius-sm); padding: 1px 7px; font-weight: 600; }
-.fap-rail-footer .ft-rows { color: var(--fap-text-muted); }
-.fap-rail-footer .ft-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px;
-  margin-top: var(--fap-space-3); padding-top: var(--fap-space-3);
-  border-top: 1px solid var(--fap-border); font-size: 0.72rem; align-items: center; }
-.fap-rail-footer .ft-k { color: var(--fap-text-subtle); }
-.fap-rail-footer .ft-v { color: var(--fap-text); text-align: right; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; }
-.fap-rail-footer .ft-status { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px;
-  border-radius: 999px; font-weight: 600; font-size: 0.68rem; }
-.fap-rail-footer .ft-status.ok { background: color-mix(in srgb, var(--fap-success) 16%, transparent);
-  color: var(--fap-success); }
-.fap-rail-footer .ft-status.off { background: color-mix(in srgb, var(--fap-danger) 16%, transparent);
-  color: var(--fap-danger); }
-.fap-rail-footer .ft-status-dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
-.fap-rail-footer .ft-status-dot.ok { background: var(--fap-success); }
-.fap-rail-footer .ft-status-dot.off { background: var(--fap-danger); }
-.fap-rail-footer.collapsed { display: flex; justify-content: center; padding: var(--fap-space-4) 0; }
+.nv-card-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fap-text-muted); }
+.nv-badge { background: var(--fap-surface); border: 1px solid var(--fap-border); border-radius: 6px;
+  padding: 1px 7px; font-weight: 600; }
+.nv-rows { color: var(--fap-text-muted); }
+.nv-card-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 12px 0; padding-top: 12px;
+  border-top: 1px solid var(--fap-border); font-size: 12px; }
+.nv-card-grid .k { color: var(--fap-text-subtle); }
+.nv-card-grid .v { text-align: right; color: var(--fap-text); font-weight: 600; }
+.nv-status { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; }
+.nv-status.ok { background: color-mix(in srgb, var(--fap-success) 16%, transparent); color: var(--fap-success); }
+.nv-status.off { background: color-mix(in srgb, var(--fap-danger) 16%, transparent); color: var(--fap-danger); }
+.nv-status-dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; }
+.nv-status-dot.ok { background: var(--fap-success); }
+.nv-status-dot.off { background: var(--fap-danger); }
+.nv-footer.collapsed { display: flex; justify-content: center; padding: var(--fap-space-4) 0; }
 
-/* ---- 10/11) header: a keyed st.container; collapse + theme are real st.buttons ---- */
+/* ---- 7/header) sticky header; collapse + theme are icon st.buttons ---- */
 .st-key-fap_header { position: sticky; top: 0; z-index: 900; background: var(--fap-bg);
   border-bottom: 1px solid var(--fap-border); padding: var(--fap-space-2) var(--fap-space-3);
   margin-bottom: var(--fap-space-4); }
@@ -848,36 +843,33 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
   color: var(--fap-text-muted); border-radius: var(--fap-radius-md); padding: 0;
   transition: background 150ms ease, color 150ms ease; }
 .st-key-fap_header .stButton > button:hover { background: var(--fap-hover); color: var(--fap-text); }
-.st-key-fap_header .stButton > button::before { content: ""; display: inline-block; width: 20px;
-  height: 20px; background-color: currentColor; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+.st-key-fap_header .stButton > button::before { content: ""; display: inline-block; width: 20px; height: 20px;
+  background-color: currentColor; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
 .fap-hdr-titles { display: flex; align-items: center; gap: var(--fap-space-3); }
 .fap-hdr-titles .mod-chip { display: flex; align-items: center; color: var(--fap-primary); }
-.fap-hdr-titles .mod-title { font-size: 1.05rem; font-weight: var(--fap-weight-bold);
-  line-height: 1.15; display: block; }
-.fap-hdr-titles .crumbs { display: block; }
+.fap-hdr-titles .titles { display: flex; flex-direction: column; line-height: 1.15; }
+.fap-hdr-titles .crumbs { font-size: 11px; color: var(--fap-text-muted); }
+.fap-hdr-titles .mod-title { font-size: 1.15rem; font-weight: var(--fap-weight-bold); letter-spacing: -.01em; }
 .fap-hdr-user { display: flex; align-items: center; justify-content: flex-end; gap: var(--fap-space-3); }
 .fap-hdr-user .hbtn { display: flex; align-items: center; justify-content: center; height: 40px; width: 40px;
   border-radius: var(--fap-radius-md); color: var(--fap-text-muted); position: relative; }
 .fap-hdr-user .hbtn:hover { background: var(--fap-hover); color: var(--fap-text); }
 .fap-hdr-user .bell.has { color: var(--fap-primary); }
 .fap-hdr-user .chip-count { position: absolute; top: 2px; right: 2px; background: var(--fap-primary);
-  color: var(--fap-on-primary); font-size: 0.6rem; font-weight: 700; border-radius: 999px;
-  min-width: 15px; height: 15px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
+  color: var(--fap-on-primary); font-size: .6rem; font-weight: 700; border-radius: 999px; min-width: 15px;
+  height: 15px; display: flex; align-items: center; justify-content: center; padding: 0 3px; }
 .fap-hdr-user .hsep { width: 1px; height: 22px; background: var(--fap-border); }
 .fap-hdr-user .user { display: flex; align-items: center; gap: var(--fap-space-2); }
 .fap-hdr-user .uava { width: 34px; height: 34px; border-radius: 999px; background: var(--fap-primary);
-  color: var(--fap-on-primary); display: flex; align-items: center; justify-content: center;
-  font-weight: 700; font-size: 0.74rem; flex: 0 0 auto; }
+  color: var(--fap-on-primary); display: flex; align-items: center; justify-content: center; font-weight: 700;
+  font-size: .74rem; flex: 0 0 auto; }
 .fap-hdr-user .uinfo { display: flex; flex-direction: column; line-height: 1.15; }
-.fap-hdr-user .uinfo b { font-size: 0.82rem; font-weight: 600; }
+.fap-hdr-user .uinfo b { font-size: .82rem; font-weight: 600; }
 
 /* narrow screens: force the compact rail so the layout never breaks (desktop-first) */
-@media (max-width: 900px) {
-  :root { --fap-rail-width: var(--fap-rail-collapsed) !important; }
-}
+@media (max-width: 900px) { :root { --fap-rail-width: var(--fap-rail-collapsed) !important; } }
 """
-
 
 def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """The complete application stylesheet for ``mode`` (light|dark|auto).

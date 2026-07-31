@@ -346,21 +346,22 @@ def _footer_info(ctx: "ShellContext", brand: theme.Branding) -> nav.FooterInfo:
 
 # ---------------------------------------------------------------- rail + header
 def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
-    """The fixed navigation rail. The clickable items are REAL st.button widgets
-    (in-session; no href/query params), CSS-styled to look like the desktop rail."""
+    """The fixed desktop navigation rail. Each row is CUSTOM HTML (the visible
+    surface); an INVISIBLE st.button is overlaid on top for the click, so routing
+    stays fully in-session (no href/query params) while nothing looks like a
+    Streamlit button."""
     try:
-        brand_logo = C.logo_html(brand.primary_logo, height=44, alt=brand.club_name,
-                                 cls="fap-brand-logo")
+        club = C.logo_html(brand.primary_logo, height=42, alt=brand.club_name, cls="nv-logo")
+        org = C.logo_html(brand.secondary_logo, height=42, alt=brand.organization_name, cls="nv-logo")
     except FileNotFoundError as exc:
         st.error(f"Branding asset missing: {exc}")
-        brand_logo = ""
+        club = org = ""
     groups, favorites, recents = _nav_model(ctx)
     footer = _footer_info(ctx, brand)
-    icon_specs: list[tuple[str, str]] = []
 
     with st.container(key="fap_rail"):
-        st.markdown(nav.brand_html(brand_logo, brand.platform_name,
-                                   brand.organization_name, collapsed),
+        st.markdown(nav.brand_html(club, org, brand.platform_name,
+                                   "Professional Football Intelligence", collapsed),
                     unsafe_allow_html=True)
         query = ""
         if not collapsed:
@@ -369,50 +370,35 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
                                    label_visibility="collapsed") or "").strip().lower()
             st.markdown(nav.input_icon_css("_nav_search", "search"), unsafe_allow_html=True)
         with st.container(key="fap_rail_nav"):
-            _render_nav_group(ctx, "Favorites", "star", favorites, "fav", collapsed, query, icon_specs)
-            _render_nav_group(ctx, "Recent", "clock", recents, "rec", collapsed, query, icon_specs)
+            _render_nav_group(ctx, "Favorites", favorites, "fav", collapsed, query)
+            _render_nav_group(ctx, "Recent", recents, "rec", collapsed, query)
             for g in groups:
-                _render_nav_group(ctx, g.title, g.icon, g.items, "nav", collapsed, query, icon_specs)
+                _render_nav_group(ctx, g.title, g.items, "nav", collapsed, query)
         with st.container(key="fap_rail_footer"):
             st.markdown(nav.footer_html(footer, collapsed), unsafe_allow_html=True)
 
-    # inject per-button icon masks + (when collapsed) the icon-only layout rules
-    st.markdown(nav.icon_css(icon_specs), unsafe_allow_html=True)
-    if collapsed:
-        st.markdown(
-            '<style>.st-key-fap_rail .stButton>button{justify-content:center;}'
-            '.st-key-fap_rail .stButton>button::before{margin-right:0;}</style>',
-            unsafe_allow_html=True)
 
-
-def _render_nav_group(ctx: "ShellContext", title: str, icon_name: str,
-                      items: list[nav.NavItem], prefix: str, collapsed: bool,
-                      query: str, icon_specs: list[tuple[str, str]]) -> None:
+def _render_nav_group(ctx: "ShellContext", title: str, items: list[nav.NavItem],
+                      prefix: str, collapsed: bool, query: str) -> None:
     visible = [it for it in items if not query or query in it.name.lower()]
     if not visible:
         return
     if not collapsed:
-        st.markdown(nav.group_title_html(title, icon_name), unsafe_allow_html=True)
+        st.markdown(nav.group_title_html(title), unsafe_allow_html=True)
+    recent = prefix == "rec"
     for it in visible:
-        key = f"{prefix}_{it.id}"
-        row_icon = "clock" if prefix == "rec" else (it.icon or nav.section_icon(title))
-        icon_specs.append((key, row_icon))
-        if collapsed:
-            st.button("", key=key, on_click=_cb_set_active, args=(it.id,),
-                      type="primary" if it.active else "secondary",
-                      use_container_width=True, help=it.name)
-        else:
-            row = st.columns([8, 1], vertical_alignment="center")
-            with row[0]:
-                st.button(it.name, key=key, on_click=_cb_set_active, args=(it.id,),
-                          type="primary" if it.active else "secondary",
-                          use_container_width=True)
-            with row[1]:
-                pin_key = f"pin_{prefix}_{it.id}"
-                icon_specs.append((pin_key, "star"))
-                st.button("", key=pin_key, on_click=_cb_toggle_fav, args=(it.id,),
-                          use_container_width=True,
-                          help="Unpin" if it.favorite else "Pin to favorites")
+        row_icon = "clock" if recent else (it.icon or nav.section_icon(title))
+        # a wrapper container holds the VISIBLE custom row + the INVISIBLE click
+        # overlay(s); CSS positions the button(s) absolutely over the row.
+        with st.container(key=f"nw_{prefix}_{it.id}"):
+            st.markdown(nav.nav_row_html(it.name, row_icon, active=it.active,
+                                         favorite=it.favorite, recent=recent,
+                                         collapsed=collapsed), unsafe_allow_html=True)
+            st.button("", key=f"{prefix}_{it.id}", on_click=_cb_set_active,
+                      args=(it.id,), help=it.name)
+            if not recent and not collapsed:
+                st.button("", key=f"pin_{prefix}_{it.id}", on_click=_cb_toggle_fav,
+                          args=(it.id,), help="Unpin" if it.favorite else "Pin to favorites")
 
 
 def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) -> None:
