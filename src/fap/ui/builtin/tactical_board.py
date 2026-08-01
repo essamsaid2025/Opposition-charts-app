@@ -32,6 +32,24 @@ TB_SEL = "_tb_sel"
 TB_GRID = "_tb_grid"
 TB_SNAP = "_tb_snap"
 TB_CANVAS_TS = "_tb_canvas_ts"    # last processed canvas action (dedups Streamlit reruns)
+TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are currently synced to
+
+# Every Properties widget that follows the "read the widget, write it back to the model if
+# it differs" pattern. Those widgets keep their OWN value in session_state, so after the
+# canvas moves/adds/selects an object the widgets hold STALE values and would overwrite the
+# model (this was the drag "snap-back": the X/Y sliders wrote the old position back over the
+# drop). We pop these whenever the canvas changes state or the selected object changes, which
+# forces every widget to re-initialise from the current model object. (tb_selbox handled too.)
+_PROP_VALUE_KEYS: tuple[str, ...] = (
+    "tb_x", "tb_y", "tb_rot", "tb_sca", "tb_pnum", "tb_pteam", "tb_pname", "tb_pcap", "tb_pgk",
+    "tb_ptext", "tb_psize", "tb_px2", "tb_py2", "tb_pcurv", "tb_pw", "tb_ph", "tb_pop",
+)
+
+
+def _resync_properties() -> None:
+    """Drop the persistent Properties widget state so those widgets re-read the model."""
+    for k in ("tb_selbox", *_PROP_VALUE_KEYS):
+        st.session_state.pop(k, None)
 
 _LIBRARY = [
     ("Players", "players", [("Home player", "player", {"team": "home"}),
@@ -197,8 +215,9 @@ def _commit_canvas(result: dict, can_edit: bool) -> bool:
         st.session_state[TB_SEL] = sel
         changed = True
     if changed:
-        # let the Properties selectbox re-sync to the canvas-driven selection
-        st.session_state.pop("tb_selbox", None)
+        # the canvas changed the board/selection — force every Properties widget to re-read
+        # the model so a stale slider/field can't overwrite the drop on this same run
+        _resync_properties()
     return changed
 
 
@@ -393,6 +412,13 @@ class TacticalBoardPage(Page):
         obj = fr.object(sel)
         if obj is None:
             return
+        # if the shown object changed (dropdown pick, or a canvas select), drop the value
+        # widgets' persistent state so they re-read THIS object rather than write the
+        # previously-shown object's values back onto it
+        if st.session_state.get(TB_PROP_FOR) != obj.id:
+            for k in _PROP_VALUE_KEYS:
+                st.session_state.pop(k, None)
+            st.session_state[TB_PROP_FOR] = obj.id
         f = _frame_index()
 
         def upd(**kw):
