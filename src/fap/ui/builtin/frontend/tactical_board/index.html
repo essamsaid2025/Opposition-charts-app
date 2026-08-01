@@ -1,0 +1,296 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; --accent: #2f7bd6; --border: #232733;
+    --surface: #12151c; --text: #eef2f7; --muted: #8a93a2; --chip: #1b2029; }
+  html, body { margin: 0; padding: 0; background: transparent;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #wrap { display: flex; flex-direction: column; gap: 8px; }
+
+  /* palette rail -------------------------------------------------- */
+  #palette { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+    color: var(--text); font-size: 12px; font-weight: 600; cursor: grab;
+    user-select: none; touch-action: none; transition: border-color .12s, box-shadow .12s;
+  }
+  .chip:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  .chip .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+  .chip.disabled { opacity: .45; cursor: not-allowed; }
+
+  /* board --------------------------------------------------------- */
+  #stage { position: relative; border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--border); background: var(--surface);
+    box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  #stage svg.tb-board-svg { display: block; width: 100%; height: auto; }
+  #stage [data-oid] { cursor: grab; }
+  #stage [data-oid].locked { cursor: not-allowed; }
+  #stage [data-oid].dragging { cursor: grabbing; }
+  .tb-handle { cursor: grab; }
+  #hint { font-size: 11px; color: var(--muted); padding: 0 2px; }
+
+  /* drag ghost following the cursor when adding from the palette --- */
+  #ghost { position: fixed; pointer-events: none; z-index: 9; width: 30px; height: 30px;
+    border-radius: 50%; border: 2px solid #fff; transform: translate(-50%, -50%);
+    display: none; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="palette"></div>
+  <div id="stage"></div>
+  <div id="hint">Drag pieces to move them. Drag a chip onto the pitch to add. Click to select · Delete removes.</div>
+</div>
+<div id="ghost"></div>
+<script>
+(function () {
+  // ---- Streamlit static-component bridge (same protocol as studio/sortable) ----
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
+  function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 2 }); }
+  function emit(payload) {
+    // payload carries INTENT ONLY: commands + selection. Python owns the state.
+    send("streamlit:setComponentValue", { dataType: "json", value: payload });
+  }
+
+  // board is authored in a fixed 1050 x 680 plane (10px per pitch unit) — mirrors render.py
+  var PLANE_W = 1050, PLANE_H = 680;
+
+  var stage = document.getElementById("stage");
+  var paletteEl = document.getElementById("palette");
+  var ghost = document.getElementById("ghost");
+
+  var svg = null, plane = null;          // <svg> and the element whose local space == pitch plane
+  var objects = [];                       // [{id,type,x,y,x2,y2,locked}] — metadata only, for handles
+  var cfg = { editable: true, snap: 0, selectedId: null, colors: {}, palette: [] };
+  var seq = 0;                            // monotonic; disambiguates fresh values on Streamlit reruns
+
+  var VECTOR = { arrow: 1, curved_arrow: 1, dashed_arrow: 1, line: 1 };
+
+  function applyColors(colors) {
+    var root = document.documentElement.style;
+    var map = ["accent", "border", "surface", "text", "muted", "chip"];
+    map.forEach(function (k) { if (colors[k]) root.setProperty("--" + k, colors[k]); });
+  }
+
+  // ---- coordinate mapping: client px -> pitch 0..100 (orientation-agnostic) -----
+  // `plane` is the direct parent of the object groups. In BOTH orientations its local
+  // coordinate space is the 1050x680 pitch plane (the vertical board only rotates that
+  // whole plane via an ancestor <g>), so getScreenCTM() handles orientation for free.
+  function toPlane(clientX, clientY, ref) {
+    var m = (ref || plane).getScreenCTM();
+    if (!m) return null;
+    var pt = svg.createSVGPoint(); pt.x = clientX; pt.y = clientY;
+    var p = pt.matrixTransform(m.inverse());
+    return { x: p.x, y: p.y };
+  }
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function toPitch(local) {
+    var x = clamp(local.x / PLANE_W * 100, 0, 100);
+    var y = clamp(local.y / PLANE_H * 100, 0, 100);
+    if (cfg.snap && cfg.snap > 0) {
+      x = Math.round(x / cfg.snap) * cfg.snap;
+      y = Math.round(y / cfg.snap) * cfg.snap;
+    }
+    return { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 };
+  }
+  function pitchToLocal(px, py) { return { x: px / 100 * PLANE_W, y: py / 100 * PLANE_H }; }
+
+  function metaOf(id) { for (var i = 0; i < objects.length; i++) if (objects[i].id === id) return objects[i]; return null; }
+
+  // ---- selection (UI-only intent; never a board mutation) -----------------------
+  function select(id) {
+    cfg.selectedId = id;
+    seq += 1;
+    emit({ ts: seq, select: id === undefined ? null : id, commands: [] });
+  }
+
+  // ---- object dragging ----------------------------------------------------------
+  function beginObjectDrag(group, id, kind, e) {
+    if (!cfg.editable) { select(id); return; }
+    var meta = metaOf(id);
+    if (meta && meta.locked) { select(id); return; }
+    e.preventDefault();
+    var start = toPlane(e.clientX, e.clientY);
+    if (!start) return;
+    var origin = pitchToLocal(meta ? meta.x : 50, meta ? meta.y : 50); // object anchor in plane
+    var grab = { dx: start.x - origin.x, dy: start.y - origin.y };     // preserve grab offset
+    var orig = group.getAttribute("transform") || "";
+    group.classList.add("dragging");
+    try { group.setPointerCapture(e.pointerId); } catch (x) {}
+
+    function move(ev) {
+      var now = toPlane(ev.clientX, ev.clientY);
+      if (!now) return;
+      var dx = (now.x - grab.dx) - origin.x;
+      var dy = (now.y - grab.dy) - origin.y;
+      group.setAttribute("transform", "translate(" + dx + " " + dy + ") " + orig);
+    }
+    function up(ev) {
+      group.removeEventListener("pointermove", move);
+      group.removeEventListener("pointerup", up);
+      group.classList.remove("dragging");
+      var now = toPlane(ev.clientX, ev.clientY);
+      group.setAttribute("transform", orig);          // authoritative re-render will reposition
+      if (!now) { select(id); return; }
+      var pit = toPitch({ x: now.x - grab.dx, y: now.y - grab.dy });
+      seq += 1;
+      emit({ ts: seq, select: id, commands: [{ op: "update_object", id: id, x: pit.x, y: pit.y }] });
+    }
+    group.addEventListener("pointermove", move);
+    group.addEventListener("pointerup", up);
+  }
+
+  // ---- arrow / line endpoint dragging -------------------------------------------
+  function beginHandleDrag(circle, id, which, e) {
+    if (!cfg.editable) return;
+    e.preventDefault(); e.stopPropagation();
+    try { circle.setPointerCapture(e.pointerId); } catch (x) {}
+    function move(ev) {
+      var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
+      circle.setAttribute("cx", loc.x); circle.setAttribute("cy", loc.y);
+    }
+    function up(ev) {
+      circle.removeEventListener("pointermove", move);
+      circle.removeEventListener("pointerup", up);
+      var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
+      var pit = toPitch(loc);
+      seq += 1;
+      var cmd = which === "start"
+        ? { op: "update_object", id: id, x: pit.x, y: pit.y }
+        : { op: "update_object", id: id, props: { x2: pit.x, y2: pit.y } };
+      emit({ ts: seq, select: id, commands: [cmd] });
+    }
+    circle.addEventListener("pointermove", move);
+    circle.addEventListener("pointerup", up);
+  }
+
+  // ---- palette drag-to-add ------------------------------------------------------
+  function beginPaletteDrag(chip, item, e) {
+    if (!cfg.editable) return;
+    e.preventDefault();
+    ghost.style.background = item.color || "var(--accent)";
+    ghost.style.display = "block";
+    ghost.style.left = e.clientX + "px"; ghost.style.top = e.clientY + "px";
+    try { chip.setPointerCapture(e.pointerId); } catch (x) {}
+    function move(ev) { ghost.style.left = ev.clientX + "px"; ghost.style.top = ev.clientY + "px"; }
+    function up(ev) {
+      chip.removeEventListener("pointermove", move);
+      chip.removeEventListener("pointerup", up);
+      ghost.style.display = "none";
+      var r = stage.getBoundingClientRect();
+      var inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+      if (!inside) return;                              // dropped off the pitch -> no-op
+      var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
+      var pit = toPitch(loc);
+      seq += 1;
+      emit({ ts: seq, commands: [{ op: "add_object", type: item.type, x: pit.x, y: pit.y,
+                                   props: item.props || {} }] });
+    }
+    chip.addEventListener("pointermove", move);
+    chip.addEventListener("pointerup", up);
+  }
+
+  function renderPalette() {
+    paletteEl.innerHTML = "";
+    (cfg.palette || []).forEach(function (item) {
+      var chip = document.createElement("div");
+      chip.className = "chip" + (cfg.editable ? "" : " disabled");
+      var dot = document.createElement("span"); dot.className = "dot";
+      dot.style.background = item.color || "var(--accent)";
+      var label = document.createElement("span"); label.textContent = item.label || item.type;
+      chip.appendChild(dot); chip.appendChild(label);
+      if (cfg.editable) {
+        chip.addEventListener("pointerdown", function (e) { beginPaletteDrag(chip, item, e); });
+      }
+      paletteEl.appendChild(chip);
+    });
+    paletteEl.style.display = (cfg.palette && cfg.palette.length) ? "flex" : "none";
+  }
+
+  // ---- overlay handles for the selected vector object ---------------------------
+  function addHandle(px, py, id, which) {
+    var NS = "http://www.w3.org/2000/svg";
+    var c = document.createElementNS(NS, "circle");
+    var loc = pitchToLocal(px, py);
+    c.setAttribute("cx", loc.x); c.setAttribute("cy", loc.y); c.setAttribute("r", 9);
+    c.setAttribute("fill", cfg.colors.surface || "#12151c");
+    c.setAttribute("stroke", cfg.colors.accent || "#2f7bd6");
+    c.setAttribute("stroke-width", 3);
+    c.setAttribute("class", "tb-handle");
+    c.addEventListener("pointerdown", function (e) { beginHandleDrag(c, id, which, e); });
+    plane.appendChild(c);
+  }
+
+  function wireObjects() {
+    var groups = svg.querySelectorAll("[data-oid]");
+    if (!groups.length) { plane = svg; return; }
+    plane = groups[0].parentNode;                       // shared pitch-plane coordinate space
+    groups.forEach(function (g) {
+      var id = g.getAttribute("data-oid");
+      var meta = metaOf(id);
+      var kind = meta ? meta.type : "";
+      if (meta && meta.locked) g.classList.add("locked");
+      g.style.touchAction = "none";
+      g.addEventListener("pointerdown", function (e) { beginObjectDrag(g, id, kind, e); });
+    });
+    // endpoint handles only for the currently-selected vector object (keeps it clean)
+    var sel = cfg.selectedId && metaOf(cfg.selectedId);
+    if (sel && VECTOR[sel.type]) {
+      addHandle(sel.x, sel.y, sel.id, "start");
+      addHandle(sel.x2 != null ? sel.x2 : sel.x + 12, sel.y2 != null ? sel.y2 : sel.y, sel.id, "end");
+    }
+  }
+
+  function render() {
+    applyColors(cfg.colors || {});
+    stage.innerHTML = cfg.svg || "";
+    svg = stage.querySelector("svg");
+    if (!svg) { setHeight(); return; }
+    wireObjects();
+    // click on empty pitch clears the selection
+    svg.addEventListener("pointerdown", function (e) {
+      if (e.target === svg || (e.target.tagName === "rect" && !e.target.closest("[data-oid]"))) {
+        if (cfg.selectedId != null) select(null);
+      }
+    });
+    renderPalette();
+    setHeight();
+  }
+
+  // Delete / Backspace removes the current selection (edit only)
+  window.addEventListener("keydown", function (e) {
+    if ((e.key === "Delete" || e.key === "Backspace") && cfg.editable && cfg.selectedId) {
+      e.preventDefault();
+      var id = cfg.selectedId; cfg.selectedId = null; seq += 1;
+      emit({ ts: seq, select: null, commands: [{ op: "delete_object", id: id }] });
+    }
+  });
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.type !== "streamlit:render") return;
+    var args = data.args || {};
+    cfg.svg = args.svg || "";
+    cfg.editable = args.editable !== false;
+    cfg.snap = Number(args.snap || 0);
+    cfg.selectedId = args.selected_id != null ? args.selected_id : null;
+    cfg.colors = args.colors || {};
+    cfg.palette = args.palette || [];
+    objects = args.objects || [];
+    render();
+  });
+
+  window.addEventListener("resize", setHeight);
+  if (window.ResizeObserver) { new ResizeObserver(setHeight).observe(document.body); }
+  ready();
+  window.addEventListener("load", setHeight);
+})();
+</script>
+</body>
+</html>
