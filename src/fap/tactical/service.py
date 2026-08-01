@@ -98,31 +98,47 @@ class TacticalService:
         except Exception:
             pass
 
-    # -- export (reuse the board's own SVG; PNG/PDF derived from it) ---
+    # -- export (SVG native; PNG/PDF via matplotlib, cairosvg as an alt) ---
     def export_formats(self) -> list[str]:
+        """SVG is always available. PNG/PDF are offered when a rasteriser is present —
+        matplotlib (shipped) or cairosvg — so a coach can download a real image/PDF."""
         fmts = ["svg"]
-        try:
-            import cairosvg  # noqa: F401
+        from fap.tactical import export_render
+        if export_render.available():
             fmts += ["png", "pdf"]
-        except Exception:
-            pass
+        else:
+            try:
+                import cairosvg  # noqa: F401
+                fmts += ["png", "pdf"]
+            except Exception:
+                pass
         return fmts
 
     def export(self, board: Board, frame_index: int = 0, *, fmt: str = "svg",
                colors: dict[str, str] | None = None) -> tuple[bytes, str, str]:
-        """Return (bytes, mime, filename). SVG is native; PNG/PDF via cairosvg if
-        present, else falls back to SVG."""
-        svg = board_svg(board, frame_index, colors=colors)
+        """Return (bytes, mime, filename). SVG is native; PNG/PDF are drawn from the same
+        board model via matplotlib (falling back to cairosvg, then to SVG)."""
         safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in board.name).strip() or "board"
         if fmt in ("png", "pdf"):
+            # preferred: matplotlib draws the model straight to PNG/PDF (no native cairo)
+            try:
+                from fap.tactical import export_render
+                if export_render.available():
+                    data = export_render.board_image(board, frame_index, fmt=fmt, colors=colors)
+                    mime = "image/png" if fmt == "png" else "application/pdf"
+                    return data, mime, f"{safe}.{fmt}"
+            except Exception:
+                pass
             try:
                 import cairosvg
+                svg = board_svg(board, frame_index, colors=colors)
                 data = (cairosvg.svg2png(bytestring=svg.encode("utf-8")) if fmt == "png"
                         else cairosvg.svg2pdf(bytestring=svg.encode("utf-8")))
                 mime = "image/png" if fmt == "png" else "application/pdf"
                 return data, mime, f"{safe}.{fmt}"
             except Exception:
                 pass
+        svg = board_svg(board, frame_index, colors=colors)
         return svg.encode("utf-8"), "image/svg+xml", f"{safe}.svg"
 
     # -- extension points (Phase 15+; declared, not implemented) ------

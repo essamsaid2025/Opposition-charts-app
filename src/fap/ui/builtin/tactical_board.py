@@ -21,7 +21,7 @@ from fap.tactical.ops import apply_command as _apply_command
 from fap.tactical.ops import default_props
 from fap.tactical.render import DEFAULT_COLORS
 from fap.theme import components as C
-from fap.ui.builtin.tactical_canvas import tactical_canvas
+from fap.ui.builtin.tactical_canvas import parse_result, tactical_canvas
 from fap.ui.nav import icon_css
 from fap.ui.page import Page, page_registry
 
@@ -166,12 +166,14 @@ def _canvas_objects(board: Board) -> list[dict]:
     return meta
 
 
-def _apply_canvas(result: dict, can_edit: bool) -> None:
-    """Process one intent batch from the JS canvas. ``result`` is already validated by
-    ``tactical_canvas.parse_result`` (the trust boundary)."""
+def _commit_canvas(result: dict, can_edit: bool) -> bool:
+    """Apply one validated canvas intent batch to the AUTHORITATIVE board. Returns True if
+    anything changed. Deduplicated by the browser's monotonic ``ts`` (so a value Streamlit
+    re-delivers on an unrelated rerun is ignored, and a non-idempotent add is never applied
+    twice). Does NOT rerun — the caller decides."""
     ts = result.get("ts")
     if ts is None or ts == st.session_state.get(TB_CANVAS_TS):
-        return                                   # stale value Streamlit re-delivered
+        return False
     st.session_state[TB_CANVAS_TS] = ts
     commands = result.get("commands") or []
     sel = result.get("select", "__keep__")
@@ -197,7 +199,22 @@ def _apply_canvas(result: dict, can_edit: bool) -> None:
     if changed:
         # let the Properties selectbox re-sync to the canvas-driven selection
         st.session_state.pop("tb_selbox", None)
-        st.rerun()
+    return changed
+
+
+def _consume_canvas_intent(can_edit: bool) -> None:
+    """Apply any pending canvas intent BEFORE the board is rendered this run.
+
+    This is the fix for drops "snapping back": the JS canvas stores its reported intent in
+    ``st.session_state["tb_canvas"]`` (the component key). Reading + committing it here, at
+    the very top of the page run, means the board SVG we later hand back to the canvas is
+    ALREADY at the dropped position — there is no stale render that repaints the piece at
+    its old spot. ``parse_result`` is the trust boundary. Runs before Properties too, so the
+    whole page reflects the drop in a single run (no extra ``st.rerun``)."""
+    raw = st.session_state.get("tb_canvas")
+    result = parse_result(raw) if raw is not None else None
+    if result is not None:
+        _commit_canvas(result, can_edit)
 
 
 @page_registry.register
@@ -214,6 +231,10 @@ class TacticalBoardPage(Page):
         board, hist = _state()
         svc = TacticalService(getattr(shell, "wm", None))
         can_edit = shell.user.role >= Role.PERFORMANCE_ANALYST
+
+        # commit any drag/drop/add the canvas reported last interaction BEFORE we render,
+        # so every panel (board + properties) reflects it in this same run
+        _consume_canvas_intent(can_edit)
 
         C.render_section_title(
             "Tactical Board", eyebrow="Analysis", icon_name="setpiece",
@@ -265,9 +286,13 @@ class TacticalBoardPage(Page):
                 data, mime, fname = svc.export(board, _frame_index(), fmt=fmt)
                 st.download_button("", data=data, file_name=fname, mime=mime, key="tb_export",
                                    help="Export", use_container_width=True)
-        icon_css([("tb_undo", "chevron-left"), ("tb_redo", "chevron-right"), ("tb_new", "plus"),
-                  ("tb_dup", "layers"), ("tb_snap", "grid"), ("tb_grid", "grid"),
-                  ("tb_lock", "shield"), ("tb_save", "check"), ("tb_export", "download")])
+        # inject the per-button icon masks (the return value MUST be rendered, and the
+        # tb_toolbar base ::before rule in _inject_css gives them size + currentColor)
+        st.markdown(icon_css([
+            ("tb_undo", "chevron-left"), ("tb_redo", "chevron-right"), ("tb_new", "plus"),
+            ("tb_dup", "layers"), ("tb_snap", "grid"), ("tb_grid", "grid"),
+            ("tb_lock", "shield"), ("tb_save", "check"), ("tb_export", "download")]),
+            unsafe_allow_html=True)
 
     def _save_cb(self, svc, shell) -> None:
         board = st.session_state[TB_BOARD]
@@ -341,9 +366,11 @@ class TacticalBoardPage(Page):
             st.caption("Drag-and-drop canvas unavailable — use the Library to add pieces "
                        "and the Precise positioning controls in Properties.")
         else:
-            # the interactive canvas is on screen; process any intent it reported
-            if result is not None:
-                _apply_canvas(result, can_edit)
+            # normal path: the drop was already committed at the top of render() from
+            # session_state, so the SVG above is current. This only fires in the rare run
+            # where the value wasn't in session_state yet — a graceful catch-up.
+            if result is not None and _commit_canvas(result, can_edit):
+                st.rerun()
             st.caption("Drag pieces to move · drag a chip onto the pitch to add · click to "
                        "select · Delete removes. Fine-tune anything in Properties.")
 
@@ -461,7 +488,18 @@ class TacticalBoardPage(Page):
 <style>
 .st-key-tb_toolbar { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 12px; padding: 6px 10px; margin-bottom: 12px; }
-.st-key-tb_toolbar .stButton > button { min-height: 38px; }
+.st-key-tb_toolbar .stButton > button, .st-key-tb_toolbar [data-testid="stDownloadButton"] > button {
+  min-height: 38px; color: var(--fap-text); display: flex; align-items: center; justify-content: center; }
+/* base icon glyph: the per-button mask-image comes from nav.icon_css; this gives it a
+   box + paints it with the button's currentColor so the icons are actually visible */
+.st-key-tb_toolbar .stButton > button::before,
+.st-key-tb_toolbar [data-testid="stDownloadButton"] > button::before {
+  content: ""; display: inline-block; width: 18px; height: 18px; background-color: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain; }
+.st-key-tb_toolbar .stButton > button:hover,
+.st-key-tb_toolbar [data-testid="stDownloadButton"] > button:hover { color: var(--fap-primary); }
 .tb-panel-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   color: var(--fap-text-subtle); margin: 2px 2px 8px; }
 .tb-board { background: var(--fap-surface); border: 1px solid var(--fap-border);

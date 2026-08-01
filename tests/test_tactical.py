@@ -172,6 +172,38 @@ def test_canvas_commands_round_trip_through_model():
     assert b.frames[0].object(oid) is None
 
 
+def test_matplotlib_export_png_pdf():
+    """PNG/PDF export draws the board model via matplotlib (no cairo needed)."""
+    from fap.tactical import export_render
+    if not export_render.available():
+        return                                   # environment without matplotlib: skip
+    b = builtin_template("4-3-3")
+    png = export_render.board_image(b, 0, fmt="png")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n" and len(png) > 1000
+    pdf = export_render.board_image(b, 0, fmt="pdf")
+    assert pdf[:5] == b"%PDF-" and len(pdf) > 500
+    # a vertical board still exports (rotated) without error
+    b.pitch.orientation = "vertical"
+    assert export_render.board_image(b, 0, fmt="png")[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_service_export_formats_and_png():
+    from fap.tactical import export_render
+    svc = TacticalService(None)
+    fmts = svc.export_formats()
+    assert "svg" in fmts
+    b = builtin_template("4-4-2")
+    if export_render.available():
+        assert "png" in fmts and "pdf" in fmts
+        data, mime, fname = svc.export(b, 0, fmt="png")
+        assert mime == "image/png" and data[:8] == b"\x89PNG\r\n\x1a\n" and fname.endswith(".png")
+        data, mime, fname = svc.export(b, 0, fmt="pdf")
+        assert mime == "application/pdf" and data[:5] == b"%PDF-" and fname.endswith(".pdf")
+    # svg always works and requesting an unavailable fmt degrades to svg
+    data, mime, fname = svc.export(b, 0, fmt="svg")
+    assert mime == "image/svg+xml" and data.startswith(b"<svg")
+
+
 def test_canvas_wrapper_never_raises():
     """``tactical_canvas`` always returns a (rendered, intent) tuple, even outside a
     live Streamlit run - so the page can always fall back gracefully."""
