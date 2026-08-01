@@ -325,7 +325,11 @@ class TacticalBoardPage(Page):
         # It reuses the Python SVG above and only reports intent (JSON commands); if it
         # cannot initialise it returns None and we fall back to the static SVG + sliders.
         snap = 5.0 if st.session_state.get(TB_SNAP, False) else 0.0
-        nonce = f"{board.updated_at}|{_frame_index()}|{sel}|{int(grid)}|{int(bool(snap))}"
+        # include the last processed action stamp so the nonce ALWAYS changes after a
+        # commit (updated_at only has 1s resolution) — guarantees the post-commit SVG is
+        # pushed to the canvas so a dropped piece settles at its committed position.
+        nonce = (f"{board.updated_at}|{_frame_index()}|{sel}|{int(grid)}|{int(bool(snap))}"
+                 f"|{st.session_state.get(TB_CANVAS_TS)}")
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
             palette=_canvas_palette() if can_edit else [], selected_id=sel,

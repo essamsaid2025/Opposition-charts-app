@@ -68,7 +68,12 @@
   var svg = null, plane = null;          // <svg> and the element whose local space == pitch plane
   var objects = [];                       // [{id,type,x,y,x2,y2,locked}] — metadata only, for handles
   var cfg = { editable: true, snap: 0, selectedId: null, colors: {}, palette: [] };
-  var seq = 0;                            // monotonic; disambiguates fresh values on Streamlit reruns
+  // strictly-increasing, session-unique action stamp. Date.now() only moves forward, so
+  // even if Streamlit remounts the iframe (resetting JS state) a later action never
+  // reuses an earlier stamp - this is what lets Python dedup re-delivered values without
+  // ever swallowing a real drop or double-applying a non-idempotent add.
+  var lastTs = 0;
+  function nextTs() { var t = Date.now(); if (t <= lastTs) t = lastTs + 1; lastTs = t; return t; }
 
   var VECTOR = { arrow: 1, curved_arrow: 1, dashed_arrow: 1, line: 1 };
 
@@ -106,8 +111,7 @@
   // ---- selection (UI-only intent; never a board mutation) -----------------------
   function select(id) {
     cfg.selectedId = id;
-    seq += 1;
-    emit({ ts: seq, select: id === undefined ? null : id, commands: [] });
+    emit({ ts: nextTs(), select: id === undefined ? null : id, commands: [] });
   }
 
   // ---- object dragging ----------------------------------------------------------
@@ -136,11 +140,14 @@
       group.removeEventListener("pointerup", up);
       group.classList.remove("dragging");
       var now = toPlane(ev.clientX, ev.clientY);
-      group.setAttribute("transform", orig);          // authoritative re-render will reposition
-      if (!now) { select(id); return; }
+      if (!now) { group.setAttribute("transform", orig); select(id); return; }
       var pit = toPitch({ x: now.x - grab.dx, y: now.y - grab.dy });
-      seq += 1;
-      emit({ ts: seq, select: id, commands: [{ op: "update_object", id: id, x: pit.x, y: pit.y }] });
+      // Do NOT snap the piece back to `orig`. Python remains authoritative: we send the
+      // committed x/y and the board re-renders this whole SVG at that position. Leaving
+      // the piece where it was dropped means it never visibly jumps back while the
+      // (asynchronous) Streamlit round-trip completes - the committed re-render simply
+      // replaces it in place. Resetting here was the snap-back bug.
+      emit({ ts: nextTs(), select: id, commands: [{ op: "update_object", id: id, x: pit.x, y: pit.y }] });
     }
     group.addEventListener("pointermove", move);
     group.addEventListener("pointerup", up);
@@ -160,11 +167,10 @@
       circle.removeEventListener("pointerup", up);
       var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
       var pit = toPitch(loc);
-      seq += 1;
       var cmd = which === "start"
         ? { op: "update_object", id: id, x: pit.x, y: pit.y }
         : { op: "update_object", id: id, props: { x2: pit.x, y2: pit.y } };
-      emit({ ts: seq, select: id, commands: [cmd] });
+      emit({ ts: nextTs(), select: id, commands: [cmd] });
     }
     circle.addEventListener("pointermove", move);
     circle.addEventListener("pointerup", up);
@@ -188,9 +194,8 @@
       if (!inside) return;                              // dropped off the pitch -> no-op
       var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
       var pit = toPitch(loc);
-      seq += 1;
-      emit({ ts: seq, commands: [{ op: "add_object", type: item.type, x: pit.x, y: pit.y,
-                                   props: item.props || {} }] });
+      emit({ ts: nextTs(), commands: [{ op: "add_object", type: item.type, x: pit.x, y: pit.y,
+                                        props: item.props || {} }] });
     }
     chip.addEventListener("pointermove", move);
     chip.addEventListener("pointerup", up);
@@ -267,8 +272,8 @@
   window.addEventListener("keydown", function (e) {
     if ((e.key === "Delete" || e.key === "Backspace") && cfg.editable && cfg.selectedId) {
       e.preventDefault();
-      var id = cfg.selectedId; cfg.selectedId = null; seq += 1;
-      emit({ ts: seq, select: null, commands: [{ op: "delete_object", id: id }] });
+      var id = cfg.selectedId; cfg.selectedId = null;
+      emit({ ts: nextTs(), select: null, commands: [{ op: "delete_object", id: id }] });
     }
   });
 
