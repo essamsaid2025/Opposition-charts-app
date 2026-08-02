@@ -82,6 +82,13 @@ from fap.openplay.config import (                              # noqa: E402
     REQUIRED_CANONICAL, OPTIONAL_CANONICAL, CANONICAL_LABELS,
     APP_TO_PLATFORM as _APP_TO_PLATFORM, PLATFORM_TO_APP as _PLATFORM_TO_APP,
 )
+# Phase 16.0: the Open Play engine's stable public interface. run_app is its FIRST
+# consumer (ctx + filters below); the Open Play Studio is the second (via get_engine).
+from fap.openplay.engine import (                              # noqa: E402
+    default_ctx as _default_ctx, apply_filters as _apply_open_play_filters,
+    register_engine as _register_engine, OpenPlayEngine as _OpenPlayEngine,
+    OPEN_PLAY_FILTERS as _OPEN_PLAY_FILTERS,
+)
 
 # -----------------------------
 # Page config
@@ -2343,23 +2350,13 @@ def run_app():
                 except Exception as ex:
                     st.error(f"Invalid template file: {ex}")
 
-    # Apply filters
-    f = df.copy()
-    if team_sel != "All":
-        f = f[f["team"] == team_sel]
-    if opp_sel != "All":
-        f = f[f["opponent"] == opp_sel]
-    if match_sel != "All":
-        f = f[f["match_id"].astype(str) == match_sel]
-    if event_sel:
-        f = f[f["event_type"].str.lower().isin(event_sel)]
-    if phase_sel:
-        f = f[f["phase"].str.lower().isin(phase_sel)]
-    if player_sel:
-        f = f[f["player"].isin(player_sel)]
-    f = f[(f["time_min"] >= minute_range[0]) & (f["time_min"] <= minute_range[1])]
-    if only_success:
-        f = f[f["outcome"].str.lower().isin(SUCCESS_WORDS)]
+    # Apply filters (Phase 16.0: one shared apply — identical logic, single source so the
+    # Studio filters the frame exactly as run_app does).
+    f = _apply_open_play_filters(df, {
+        "team": team_sel, "opponent": opp_sel, "match": match_sel,
+        "event_types": event_sel, "phases": phase_sel, "players": player_sel,
+        "minute_range": minute_range, "only_success": only_success,
+    })
 
     # Never let filters silently remove every event: tell the user what happened
     # and how to recover, instead of drawing a blank pitch with no explanation.
@@ -2404,37 +2401,40 @@ def run_app():
     with k5: kpi("Goals", safe_count(shots, "shot_result", "Goal"))
     with k6: kpi("Def Actions", len(defensive))
 
-    ctx = {
-        "vt": vt, "spec": spec,
-        "title": custom_title, "show_title": show_title,
-        "title_size": title_size, "label_size": label_size, "legend_size": legend_size,
-        "respect_filter": bool(event_sel),
-        "marker": {"shape": m_shape, "size": m_size, "edge_width": m_edge_w, "edge_color": m_edge_c,
-                   "alpha": m_alpha, "rotation": m_rot, "jitter": m_jitter, "zorder": m_zorder,
-                   "shadow": m_shadow, "glow": m_glow, "glow_color": m_glow_c},
-        "arrow": {"kind": a_kind, "width": a_width, "head": a_head, "curvature": a_curv,
-                  "alpha": a_alpha, "linecap": a_cap, "shadow": a_shadow, "glow": a_glow, "cmap": a_cmap},
-        "labels": {"show": l_show, "show_players": l_players, "smart": l_smart,
-                   "hide_overlapping": l_hide, "halo": l_halo, "halo_color": vt["pitch"],
-                   "box": l_box, "leader_lines": l_leader, "size": l_size, "offset": l_off,
-                   "rotation": l_rot, "max_labels": l_max},
-        "legend": {"show": lg_show, "position": lg_pos, "orientation": lg_orient, "frame": lg_frame,
-                   "title": lg_title, "renames": lg_renames, "hide": lg_hide, "order": lg_order},
-        "heat": {"type": h_type, "preset": h_preset, "cmap": h_cmap, "alpha": h_alpha,
-                 "bandwidth": h_bw, "levels": h_levels, "bins": h_bins, "gridsize": h_grid,
-                 "cell_size": h_cell, "interpolation": h_interp, "normalization": h_norm,
-                 "threshold": h_thr, "percentile_scale": h_pctl, "log_scale": h_log,
-                 "cell_labels": h_cell_labels},
-        "colors": {"arrow": arrow_color, "unsuccess": unsuccess_color, "start": start_color,
-                   "end": end_color, "shot": shot_color, "goal": goal_color, "zone": zone_color,
-                   "bar": bar_color, "line": line_color, "trend": trend_color,
-                   "carry": carry_color, "cross": cross_color},
-        "aux": {"df_all": df_all, "top_n": top_n, "zone_mode": zone_mode,
-                "start_end_event": start_end_event, "timeline_focus": timeline_focus,
-                "trend_metric": trend_metric, "sequence_mode": sequence_mode,
-                "sequence_id": sequence_id_sel, "show_sequence_numbers": show_sequence_numbers,
-                "line_width": line_width, "dashboard_layout": dashboard_layout},
-    }
+    # Phase 16.0: build the render context from the single shared source (default_ctx).
+    # run_app passes its widget values as overrides; every unset key keeps the shared
+    # default. Identical dict to the previous inline literal -> byte-identical output.
+    ctx = _default_ctx(
+        vt, spec,
+        title=custom_title, show_title=show_title,
+        title_size=title_size, label_size=label_size, legend_size=legend_size,
+        respect_filter=bool(event_sel),
+        marker={"shape": m_shape, "size": m_size, "edge_width": m_edge_w, "edge_color": m_edge_c,
+                "alpha": m_alpha, "rotation": m_rot, "jitter": m_jitter, "zorder": m_zorder,
+                "shadow": m_shadow, "glow": m_glow, "glow_color": m_glow_c},
+        arrow={"kind": a_kind, "width": a_width, "head": a_head, "curvature": a_curv,
+               "alpha": a_alpha, "linecap": a_cap, "shadow": a_shadow, "glow": a_glow, "cmap": a_cmap},
+        labels={"show": l_show, "show_players": l_players, "smart": l_smart,
+                "hide_overlapping": l_hide, "halo": l_halo, "halo_color": vt["pitch"],
+                "box": l_box, "leader_lines": l_leader, "size": l_size, "offset": l_off,
+                "rotation": l_rot, "max_labels": l_max},
+        legend={"show": lg_show, "position": lg_pos, "orientation": lg_orient, "frame": lg_frame,
+                "title": lg_title, "renames": lg_renames, "hide": lg_hide, "order": lg_order},
+        heat={"type": h_type, "preset": h_preset, "cmap": h_cmap, "alpha": h_alpha,
+              "bandwidth": h_bw, "levels": h_levels, "bins": h_bins, "gridsize": h_grid,
+              "cell_size": h_cell, "interpolation": h_interp, "normalization": h_norm,
+              "threshold": h_thr, "percentile_scale": h_pctl, "log_scale": h_log,
+              "cell_labels": h_cell_labels},
+        colors={"arrow": arrow_color, "unsuccess": unsuccess_color, "start": start_color,
+                "end": end_color, "shot": shot_color, "goal": goal_color, "zone": zone_color,
+                "bar": bar_color, "line": line_color, "trend": trend_color,
+                "carry": carry_color, "cross": cross_color},
+        aux={"df_all": df_all, "top_n": top_n, "zone_mode": zone_mode,
+             "start_end_event": start_end_event, "timeline_focus": timeline_focus,
+             "trend_metric": trend_metric, "sequence_mode": sequence_mode,
+             "sequence_id": sequence_id_sel, "show_sequence_numbers": show_sequence_numbers,
+             "line_width": line_width, "dashboard_layout": dashboard_layout},
+    )
 
     st.write("")
     left, right = st.columns([2.45, 1])
@@ -2490,6 +2490,33 @@ def main() -> None:
     render_shell(open_play_renderer=run_app,
                  platform_getter=platform, wm_getter=workspace_manager)
 
+
+def _register_open_play_engine() -> None:
+    """Phase 16.0: publish the running engine through the stable public interface so a
+    second UI (the Open Play Studio) can drive the EXACT same engine without importing
+    this module. References only — no analytics/render/export behavior changes."""
+    _register_engine(_OpenPlayEngine(
+        version="16.0",
+        viz_registry=VIZ_REGISTRY,
+        render=lambda name, frame, ctx: VIZ_REGISTRY[name]["render"](frame, ctx),
+        export=fig_to_bytes,
+        default_ctx=_default_ctx,
+        apply_filters=_apply_open_play_filters,
+        filters=_OPEN_PLAY_FILTERS,
+        pitch_spec_cls=PitchSpec,
+        apply_pitch_transforms=apply_pitch_transforms,
+        build_insights=build_insights,
+        metadata={
+            "themes": VIZ_THEMES, "club_custom_names": CLUB_CUSTOM_NAMES,
+            "marker_shapes": MARKER_SHAPES, "heat_types": HEAT_TYPES,
+            "heat_presets": list(HEAT_PRESETS.keys()), "heat_cmaps": HEAT_CMAPS,
+            "legend_positions": list(LEGEND_POSITIONS.keys()), "pitch_views": PITCH_VIEWS,
+            "success_words": SUCCESS_WORDS,
+        },
+    ))
+
+
+_register_open_play_engine()
 
 import os as _os
 if not _os.environ.get("FAP_TEST"):
