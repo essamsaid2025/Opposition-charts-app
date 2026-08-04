@@ -1,0 +1,300 @@
+event_type,x,y,x2,y2,team,opponent,match_id,phase,player,receiver,outcome,shot_result,body_part,minute,second,period,shirt_number,sequence_id
+pass,10.25,74.07,27.06,78.59,Zamalek,Rivals FC,M1,build-up,ZAM_5,ZAM_2,successful,,foot,1,14,1,5,M1-S1
+cross,70.13,41.95,83.1,30.86,Rivals FC,Zamalek,M1,progression,RIV_1,RIV_6,unsuccessful,,weak_foot,1,12,1,1,M1-S2
+pass,9.27,9.67,38.17,14.86,Zamalek,Rivals FC,M1,transition,ZAM_3,ZAM_2,unsuccessful,,weak_foot,3,48,1,3,M1-S2
+pass,61.85,86.17,79.94,96.4,Rivals FC,Zamalek,M1,progression,RIV_2,RIV_6,successful,,head,3,18,1,2,M1-S2
+carry,67.02,70.18,89.36,48.75,Rivals FC,Zamalek,M1,defensive,RIV_6,,successful,,weak_foot,7,23,1,6,M1-S2
+carry,55.69,68.46,84.4,82.26,Zamalek,Rivals FC,M1,build-up,ZAM_7,,successful,,head,9,59,1,7,M1-S2
+pass,21.26,49.92,51.65,57.06,Rivals FC,Zamalek,M1,progression,RIV_4,RIV_6,successful,,foot,9,56,1,4,M1-S2
+shot,94.93,31.92,100.0,50.0,Zamalek,Rivals FC,M1,build-up,ZAM_5,,successful,off_target,foot,11,37,1,5,M1-S2
+pressure,59.59,46.8,25.14,55.32,Rivals FC,Zamalek,M1,build-up,RIV_7,,unsuccessful,,weak_foot,11,4,1,7,M1-S2
+clearance,45.37,95.38,87.59,26.34,Rivals FC,Zamalek,M1,progression,RIV_6,,successful,,weak_foot,13,18,1,6,M1-S2
+tackle,53.94,77.86,53.04,0.06,Zamalek,Rivals FC,M1,build-up,ZAM_4,,successful,,foot,17,23,1,4,M1-S2
+pass,94.69,8.57,100,0,Rivals FC,Zamalek,M1,progression,RIV_4,RIV_1,unsuccessful,,foot,19,15,1,4,M1-S2
+shot,83.48,61.5,100.0,50.0,Zamalek,Rivals FC,M1,final-third,ZAM_3,,successful,saved,head,21,33,1,3,M1-S2
+pass,55.39,58.84,50.68,69.23,Zamalek,Rivals FC,M1,build-up,ZAM_4,ZAM_1,successful,,foot,23,21,1,4,M1-S2
+pass,13.23,93.55,31.07,92.18,Zamalek,Rivals FC,M1,transition,ZAM_5,ZAM_7,unsuccessful,,foot,25,31,1,5,M1-S3
+tackle,86.38,5.42,65.35,64.62,Rivals FC,Zamalek,M1,final-third,RIV_7,,successful,,foot,25,27,1,7,M1-S4
+pass,46.26,87.45,44.28,100,Zamalek,Rivals FC,M1,build-up,ZAM_8,ZAM_2,unsuccessful,,foot,27,27,1,8,M1-S4
+shot,82.03,68.23,100.0,50.0,Rivals FC,Zamalek,M1,build-up,RIV_1,,unsuccessful,saved,head,27,59,1,1,M1-S5
+carry,99.54,55.58,100,38.32,Zamalek,Rivals FC,M1,build-up,ZAM_5,,successful,,weak_foot,29,44,1,5,M1-S5
+pass,50.29,85.27,51.59,100,Rivals FC,Zamalek,M1,progression,RIV_6,RIV_1,successful,,foot,29,3,1,6,M1-S5
+pressure,56.97,57.89,3.97,8.2,Zamalek,Rivals FC,M1,defensive,ZAM_4,,successful,,weak_foot,31,7,1,4,M1-S5
+pass,26.56,13.09,47.38,10.95,Rivals FC,Zamalek,M1,build-up,RIV_4,RIV_7,unsuccessful,,foot,31,45,1,4,M1-S5
+shot,92.02,68.96,100.0,50.0,Zamalek,Rivals FC,M1,defensive,ZAM_2,,successful,saved,weak_foot,33,34,1,2,M1-S5
+tackle,93.18,10.36,87.81,26.45,Rivals FC,Zamalek,M1,defensive,RIV_1,,unsuccessful,,foot,33,52,1,1,M1-S6
+cross,63.42,26.4,77.96,46.67,Zamalek,Rivals FC,M1,build-up,ZAM_4,ZAM_7,unsuccessful,,weak_foot,35,21,1,4,M1-S6
+pass,63.71,26.2,88.36,28.78,Rivals FC,Zamalek,M1,build-up,RIV_1,RIV_2,successful,,foot,35,21,1,1,M1-S7
+pressure,58.25,14.81,12.74,30.83,Zamalek,Rivals FC,M1,build-up,ZAM_3,,unsuccessful,,head,37,2,1,3,M1-S7
+pass,87.47,97.38,100,100,Rivals FC,Zamalek,M1,progression,RIV_2,RIV_4,successful,,foot,37,49,1,2,M1-S7
+interception,66.99,73.51,24.82,15.92,Rivals FC,Zamalek,M1,transition,RIV_6,,successful,,foot,39,59,1,6,M1-S7
+carry,22.76,2.37,25.49,0,Rivals FC,Zamalek,M1,final-third,RIV_6,,unsuccessful,,head,41,52,1,6,M1-S7
+pass,26.12,58.06,60.46,34.97,Zamalek,Rivals FC,M1,final-third,ZAM_6,ZAM_1,successful,,weak_foot,43,7,1,6,M1-S7
+carry,25.47,70.88,20.54,92.16,Rivals FC,Zamalek,M1,progression,RIV_2,,successful,,head,43,57,1,2,M1-S7
+pressure,12.46,90.0,50.71,66.69,Zamalek,Rivals FC,M1,final-third,ZAM_6,,successful,,weak_foot,45,20,1,6,M1-S7
+pass,61.55,30.09,78.47,5.11,Rivals FC,Zamalek,M1,transition,RIV_7,RIV_6,successful,,weak_foot,45,47,1,7,M1-S7
+pass,51.12,79.37,84.51,91.17,Zamalek,Rivals FC,M1,final-third,ZAM_8,ZAM_4,successful,,weak_foot,47,28,2,8,M1-S7
+tackle,23.49,31.04,80.66,14.74,Rivals FC,Zamalek,M1,transition,RIV_6,,successful,,weak_foot,47,52,2,6,M1-S7
+pass,19.44,69.64,34.22,56.84,Zamalek,Rivals FC,M1,build-up,ZAM_8,ZAM_4,successful,,foot,49,56,2,8,M1-S7
+pass,5.02,24.92,33.95,22.74,Rivals FC,Zamalek,M1,defensive,RIV_3,RIV_8,unsuccessful,,weak_foot,49,44,2,3,M1-S7
+clearance,50.48,83.06,54.79,89.72,Zamalek,Rivals FC,M1,transition,ZAM_8,,successful,,head,51,52,2,8,M1-S7
+pass,62.67,27.46,60.77,16.75,Rivals FC,Zamalek,M1,final-third,RIV_5,RIV_8,successful,,weak_foot,51,49,2,5,M1-S7
+pass,21.4,41.49,29.64,39.79,Zamalek,Rivals FC,M1,transition,ZAM_4,ZAM_5,successful,,head,53,44,2,4,M1-S7
+pressure,38.04,0.59,35.18,75.35,Zamalek,Rivals FC,M1,transition,ZAM_1,,unsuccessful,,weak_foot,55,56,2,1,M1-S8
+shot,86.72,64.91,100.0,50.0,Rivals FC,Zamalek,M1,progression,RIV_4,,successful,off_target,weak_foot,55,14,2,4,M1-S8
+pass,86.69,18.17,92.1,9.54,Zamalek,Rivals FC,M1,final-third,ZAM_1,ZAM_2,successful,,head,57,41,2,1,M1-S9
+pass,74.9,5.21,100,0,Rivals FC,Zamalek,M1,build-up,RIV_5,RIV_8,successful,,foot,57,5,2,5,M1-S9
+pass,11.44,94.78,25.04,82.59,Rivals FC,Zamalek,M1,defensive,RIV_3,RIV_2,successful,,weak_foot,59,8,2,3,M1-S9
+clearance,92.89,57.58,90.8,37.53,Rivals FC,Zamalek,M1,progression,RIV_3,,unsuccessful,,foot,61,6,2,3,M1-S9
+tackle,85.03,60.04,12.11,98.38,Zamalek,Rivals FC,M1,final-third,ZAM_4,,unsuccessful,,weak_foot,63,44,2,4,M1-S9
+pass,84.96,82.23,84.18,100,Rivals FC,Zamalek,M1,transition,RIV_2,RIV_6,successful,,weak_foot,63,41,2,2,M1-S9
+pass,77.46,46.49,100,51.11,Zamalek,Rivals FC,M1,progression,ZAM_5,ZAM_6,successful,,foot,65,51,2,5,M1-S9
+carry,66.82,33.64,81.59,24.89,Rivals FC,Zamalek,M1,final-third,RIV_4,,successful,,head,65,29,2,4,M1-S9
+cross,19.11,24.14,30.37,26.9,Zamalek,Rivals FC,M1,transition,ZAM_5,ZAM_6,successful,,weak_foot,67,0,2,5,M1-S9
+carry,69.18,30.62,87.44,29.28,Rivals FC,Zamalek,M1,transition,RIV_1,,successful,,weak_foot,67,18,2,1,M1-S9
+pass,12.07,19.26,11.85,21.05,Zamalek,Rivals FC,M1,progression,ZAM_8,ZAM_3,unsuccessful,,foot,69,19,2,8,M1-S10
+carry,52.46,28.3,51.48,13.01,Rivals FC,Zamalek,M1,progression,RIV_5,,successful,,head,69,37,2,5,M1-S11
+shot,73.16,68.42,100.0,50.0,Zamalek,Rivals FC,M1,defensive,ZAM_3,,successful,blocked,head,71,2,2,3,M1-S11
+carry,86.17,11.41,83.78,11.0,Rivals FC,Zamalek,M1,build-up,RIV_6,,successful,,foot,71,3,2,6,M1-S11
+shot,89.77,36.28,100.0,50.0,Zamalek,Rivals FC,M1,transition,ZAM_5,,successful,saved,head,73,15,2,5,M1-S12
+tackle,76.27,62.55,26.46,8.12,Rivals FC,Zamalek,M1,defensive,RIV_1,,successful,,foot,75,47,2,1,M1-S13
+pass,3.26,28.81,9.57,46.79,Zamalek,Rivals FC,M1,progression,ZAM_8,ZAM_6,successful,,head,77,38,2,8,M1-S14
+tackle,64.76,90.84,82.66,7.14,Rivals FC,Zamalek,M1,final-third,RIV_4,,successful,,weak_foot,77,7,2,4,M1-S14
+shot,76.81,52.0,100.0,50.0,Zamalek,Rivals FC,M1,transition,ZAM_5,,successful,off_target,weak_foot,79,7,2,5,M1-S14
+pass,83.6,57.52,100,82.5,Rivals FC,Zamalek,M1,final-third,RIV_1,RIV_2,successful,,weak_foot,79,14,2,1,M1-S14
+clearance,91.61,18.15,58.53,63.48,Zamalek,Rivals FC,M1,build-up,ZAM_3,,successful,,head,81,33,2,3,M1-S14
+pass,32.98,69.37,39.51,91.63,Rivals FC,Zamalek,M1,defensive,RIV_6,RIV_7,unsuccessful,,foot,81,6,2,6,M1-S14
+pass,40.42,51.46,74.94,59.34,Zamalek,Rivals FC,M1,transition,ZAM_5,ZAM_3,successful,,foot,83,7,2,5,M1-S14
+pass,20.36,54.92,52.47,51.83,Rivals FC,Zamalek,M1,build-up,RIV_8,RIV_6,successful,,foot,83,28,2,8,M1-S14
+pass,40.8,22.47,69.46,3.14,Rivals FC,Zamalek,M1,progression,RIV_3,RIV_4,unsuccessful,,head,85,35,2,3,M1-S14
+pressure,47.22,45.68,14.46,19.06,Rivals FC,Zamalek,M1,progression,RIV_5,,successful,,foot,87,53,2,5,M1-S15
+pass,0.26,72.61,28.76,76.61,Zamalek,Rivals FC,M1,progression,ZAM_6,ZAM_8,successful,,head,89,32,2,6,M1-S15
+pass,45.53,32.18,48.08,42.05,Rivals FC,Zamalek,M1,progression,RIV_6,RIV_5,successful,,head,89,48,2,6,M1-S16
+clearance,38.61,66.37,82.07,98.08,Al Ahly,Pyramids,M2,build-up,AL _8,,successful,,foot,1,58,1,8,M2-S1
+cross,44.03,52.6,57.31,63.72,Pyramids,Al Ahly,M2,progression,PYR_6,PYR_8,successful,,foot,1,6,1,6,M2-S1
+pass,8.03,32.86,30.0,34.54,Al Ahly,Pyramids,M2,transition,AL _6,AL _5,unsuccessful,,weak_foot,3,44,1,6,M2-S1
+pass,99.74,74.68,100,54.6,Pyramids,Al Ahly,M2,build-up,PYR_4,PYR_7,successful,,head,3,43,1,4,M2-S1
+pass,29.34,37.48,30.16,39.04,Al Ahly,Pyramids,M2,progression,AL _1,AL _2,successful,,foot,5,20,1,1,M2-S1
+cross,91.28,14.31,100,2.01,Pyramids,Al Ahly,M2,build-up,PYR_7,PYR_5,successful,,head,5,43,1,7,M2-S1
+pass,29.92,96.2,52.53,94.04,Pyramids,Al Ahly,M2,transition,PYR_2,PYR_5,successful,,head,7,22,1,2,M2-S2
+pass,29.52,97.79,50.85,86.51,Al Ahly,Pyramids,M2,build-up,AL _6,AL _5,successful,,weak_foot,9,18,1,6,M2-S2
+pass,63.66,62.09,85.77,73.14,Pyramids,Al Ahly,M2,progression,PYR_4,PYR_6,successful,,weak_foot,9,51,1,4,M2-S2
+tackle,57.96,73.24,9.01,29.51,Al Ahly,Pyramids,M2,progression,AL _1,,successful,,foot,11,50,1,1,M2-S2
+shot,90.62,49.09,100.0,50.0,Pyramids,Al Ahly,M2,final-third,PYR_6,,unsuccessful,off_target,foot,11,32,1,6,M2-S2
+pass,72.42,97.99,100,100,Al Ahly,Pyramids,M2,transition,AL _3,AL _8,successful,,foot,13,14,1,3,M2-S2
+pass,26.22,38.1,46.76,31.67,Pyramids,Al Ahly,M2,transition,PYR_8,PYR_3,successful,,foot,13,43,1,8,M2-S2
+shot,87.53,57.46,100.0,50.0,Al Ahly,Pyramids,M2,build-up,AL _6,,successful,goal,head,15,14,1,6,M2-S2
+pass,94.94,69.65,100,74.02,Al Ahly,Pyramids,M2,transition,AL _3,AL _5,successful,,weak_foot,17,29,1,3,M2-S2
+carry,21.73,44.47,26.17,37.6,Pyramids,Al Ahly,M2,final-third,PYR_7,,unsuccessful,,weak_foot,17,2,1,7,M2-S2
+pass,94.9,82.42,93.57,68.03,Pyramids,Al Ahly,M2,build-up,PYR_7,PYR_3,successful,,foot,19,12,1,7,M2-S2
+pass,82.98,55.42,100,71.07,Al Ahly,Pyramids,M2,progression,AL _3,AL _8,successful,,weak_foot,21,36,1,3,M2-S2
+pass,10.99,86.64,11.26,79.55,Pyramids,Al Ahly,M2,defensive,PYR_3,PYR_6,unsuccessful,,head,21,16,1,3,M2-S3
+pass,11.36,6.36,24.29,0,Al Ahly,Pyramids,M2,transition,AL _1,AL _3,successful,,weak_foot,23,47,1,1,M2-S3
+cross,65.89,30.16,86.62,6.72,Pyramids,Al Ahly,M2,transition,PYR_1,PYR_7,unsuccessful,,head,23,50,1,1,M2-S3
+carry,60.83,6.57,66.83,13.22,Al Ahly,Pyramids,M2,final-third,AL _8,,successful,,head,25,57,1,8,M2-S3
+carry,85.28,65.09,100,76.13,Al Ahly,Pyramids,M2,transition,AL _7,,successful,,foot,27,50,1,7,M2-S4
+carry,42.68,66.51,52.65,49.14,Pyramids,Al Ahly,M2,build-up,PYR_7,,unsuccessful,,foot,27,46,1,7,M2-S4
+pass,81.18,55.64,99.64,58.72,Al Ahly,Pyramids,M2,build-up,AL _7,AL _1,successful,,head,29,47,1,7,M2-S5
+pressure,96.84,60.04,35.16,57.79,Pyramids,Al Ahly,M2,transition,PYR_7,,successful,,foot,29,58,1,7,M2-S5
+pass,22.62,42.91,40.06,56.28,Al Ahly,Pyramids,M2,defensive,AL _6,AL _1,successful,,foot,31,48,1,6,M2-S5
+tackle,76.24,92.15,35.1,18.14,Pyramids,Al Ahly,M2,transition,PYR_5,,successful,,foot,31,11,1,5,M2-S6
+tackle,37.62,45.36,15.74,31.16,Al Ahly,Pyramids,M2,defensive,AL _1,,successful,,weak_foot,33,47,1,1,M2-S7
+pass,67.4,27.21,88.88,26.49,Pyramids,Al Ahly,M2,final-third,PYR_3,PYR_2,successful,,foot,33,48,1,3,M2-S7
+pass,67.85,48.66,89.54,25.93,Al Ahly,Pyramids,M2,defensive,AL _6,AL _4,successful,,foot,35,7,1,6,M2-S7
+pass,28.94,12.0,43.84,8.53,Pyramids,Al Ahly,M2,defensive,PYR_4,PYR_8,successful,,weak_foot,35,8,1,4,M2-S8
+shot,93.03,68.11,100.0,50.0,Al Ahly,Pyramids,M2,transition,AL _6,,successful,off_target,head,37,25,1,6,M2-S8
+pass,46.01,68.96,55.48,65.8,Pyramids,Al Ahly,M2,transition,PYR_6,PYR_2,successful,,weak_foot,37,51,1,6,M2-S8
+pass,22.16,77.91,20.22,84.57,Al Ahly,Pyramids,M2,progression,AL _7,AL _8,successful,,head,39,19,1,7,M2-S8
+tackle,19.73,60.24,76.02,65.55,Pyramids,Al Ahly,M2,transition,PYR_3,,successful,,head,39,6,1,3,M2-S8
+clearance,64.3,98.65,32.32,97.1,Al Ahly,Pyramids,M2,transition,AL _8,,successful,,foot,41,59,1,8,M2-S9
+tackle,35.19,7.42,46.17,3.76,Pyramids,Al Ahly,M2,final-third,PYR_5,,successful,,foot,41,17,1,5,M2-S9
+pass,79.18,89.59,92.17,100,Al Ahly,Pyramids,M2,final-third,AL _7,AL _4,successful,,weak_foot,43,37,1,7,M2-S9
+pass,83.74,98.24,82.11,100,Pyramids,Al Ahly,M2,transition,PYR_1,PYR_5,successful,,head,43,6,1,1,M2-S9
+cross,38.74,77.45,60.9,55.07,Al Ahly,Pyramids,M2,final-third,AL _3,AL _4,successful,,foot,45,23,1,3,M2-S9
+shot,91.83,41.67,100.0,50.0,Pyramids,Al Ahly,M2,final-third,PYR_7,,successful,goal,head,45,16,1,7,M2-S9
+pass,30.96,37.67,57.63,53.33,Pyramids,Al Ahly,M2,defensive,PYR_3,PYR_6,successful,,foot,47,45,2,3,M2-S9
+pass,95.12,34.17,100,18.77,Al Ahly,Pyramids,M2,progression,AL _6,AL _1,unsuccessful,,foot,49,23,2,6,M2-S9
+pass,61.8,59.72,62.97,43.76,Pyramids,Al Ahly,M2,defensive,PYR_1,PYR_7,successful,,foot,49,21,2,1,M2-S9
+pass,96.96,61.06,100,75.25,Al Ahly,Pyramids,M2,progression,AL _7,AL _3,successful,,head,51,43,2,7,M2-S9
+pass,46.17,28.18,56.44,29.55,Al Ahly,Pyramids,M2,progression,AL _6,AL _7,unsuccessful,,weak_foot,53,36,2,6,M2-S9
+pass,55.45,10.26,84.29,27.82,Pyramids,Al Ahly,M2,progression,PYR_1,PYR_7,successful,,head,53,30,2,1,M2-S9
+carry,91.05,81.67,100,100,Al Ahly,Pyramids,M2,transition,AL _3,,successful,,weak_foot,55,27,2,3,M2-S9
+pass,93.08,83.92,100,98.49,Pyramids,Al Ahly,M2,final-third,PYR_2,PYR_4,successful,,head,55,14,2,2,M2-S10
+pass,7.92,25.59,36.32,28.03,Al Ahly,Pyramids,M2,defensive,AL _8,AL _4,successful,,head,57,39,2,8,M2-S11
+pass,41.98,79.39,55.26,59.93,Pyramids,Al Ahly,M2,defensive,PYR_4,PYR_3,unsuccessful,,weak_foot,57,7,2,4,M2-S12
+carry,0.16,35.28,17.99,19.65,Al Ahly,Pyramids,M2,defensive,AL _4,,successful,,head,59,9,2,4,M2-S13
+shot,76.34,25.81,100.0,50.0,Pyramids,Al Ahly,M2,build-up,PYR_1,,unsuccessful,saved,weak_foot,59,55,2,1,M2-S14
+pass,81.35,17.51,100,15.74,Al Ahly,Pyramids,M2,progression,AL _3,AL _1,successful,,foot,61,22,2,3,M2-S14
+clearance,79.11,88.58,31.56,31.01,Pyramids,Al Ahly,M2,defensive,PYR_8,,successful,,head,61,18,2,8,M2-S14
+clearance,4.78,65.57,27.32,79.93,Al Ahly,Pyramids,M2,transition,AL _4,,successful,,weak_foot,63,22,2,4,M2-S15
+pass,36.73,79.73,42.4,58.86,Pyramids,Al Ahly,M2,transition,PYR_6,PYR_2,successful,,weak_foot,63,31,2,6,M2-S15
+pass,29.56,44.59,53.27,27.92,Pyramids,Al Ahly,M2,transition,PYR_6,PYR_1,successful,,foot,65,5,2,6,M2-S15
+pass,94.79,7.5,100,0.67,Al Ahly,Pyramids,M2,progression,AL _7,AL _3,unsuccessful,,foot,67,40,2,7,M2-S15
+cross,77.85,36.63,88.16,39.99,Pyramids,Al Ahly,M2,transition,PYR_8,PYR_1,successful,,head,67,8,2,8,M2-S15
+clearance,39.8,64.96,24.96,11.34,Al Ahly,Pyramids,M2,transition,AL _2,,successful,,weak_foot,69,8,2,2,M2-S16
+shot,77.14,70.82,100.0,50.0,Pyramids,Al Ahly,M2,build-up,PYR_2,,successful,goal,head,69,49,2,2,M2-S16
+interception,84.55,31.96,34.74,6.49,Al Ahly,Pyramids,M2,final-third,AL _8,,successful,,foot,71,51,2,8,M2-S17
+pressure,12.14,20.1,13.89,79.04,Pyramids,Al Ahly,M2,defensive,PYR_3,,successful,,weak_foot,71,23,2,3,M2-S17
+shot,87.97,51.28,100.0,50.0,Al Ahly,Pyramids,M2,build-up,AL _3,,unsuccessful,off_target,foot,73,56,2,3,M2-S17
+carry,87.8,78.03,100,62.13,Al Ahly,Pyramids,M2,transition,AL _8,,unsuccessful,,weak_foot,75,33,2,8,M2-S18
+pass,93.47,22.55,100,23.49,Al Ahly,Pyramids,M2,build-up,AL _3,AL _4,successful,,head,77,10,2,3,M2-S18
+shot,74.22,72.08,100.0,50.0,Pyramids,Al Ahly,M2,defensive,PYR_5,,successful,off_target,head,77,40,2,5,M2-S19
+shot,84.42,57.56,100.0,50.0,Al Ahly,Pyramids,M2,build-up,AL _1,,unsuccessful,saved,head,79,55,2,1,M2-S19
+tackle,68.5,29.74,7.3,5.99,Al Ahly,Pyramids,M2,transition,AL _5,,successful,,head,81,15,2,5,M2-S20
+cross,73.42,86.08,100,67.62,Pyramids,Al Ahly,M2,defensive,PYR_3,PYR_4,successful,,foot,81,55,2,3,M2-S20
+carry,9.68,29.02,20.05,34.79,Al Ahly,Pyramids,M2,progression,AL _2,,successful,,head,83,28,2,2,M2-S20
+pass,87.91,49.74,86.51,44.4,Al Ahly,Pyramids,M2,progression,AL _3,AL _5,successful,,foot,85,32,2,3,M2-S21
+pass,84.28,67.25,90.71,42.66,Pyramids,Al Ahly,M2,progression,PYR_1,PYR_4,successful,,head,85,31,2,1,M2-S21
+clearance,57.03,19.47,55.32,7.35,Al Ahly,Pyramids,M2,defensive,AL _7,,successful,,head,87,2,2,7,M2-S21
+tackle,79.49,33.91,93.89,75.5,Pyramids,Al Ahly,M2,defensive,PYR_2,,successful,,head,87,6,2,2,M2-S21
+pass,47.37,45.7,66.62,46.48,Al Ahly,Pyramids,M2,defensive,AL _1,AL _3,successful,,head,89,45,2,1,M2-S21
+cross,50.97,48.98,68.49,47.72,Pyramids,Al Ahly,M2,final-third,PYR_5,PYR_6,successful,,weak_foot,89,21,2,5,M2-S21
+pass,68.8,2.66,82.78,26.01,Zamalek,Al Ahly,M3,defensive,ZAM_5,ZAM_8,unsuccessful,,weak_foot,1,57,1,5,M3-S1
+pass,61.97,84.12,62.88,93.16,Al Ahly,Zamalek,M3,build-up,AL _8,AL _2,successful,,foot,1,33,1,8,M3-S1
+pass,41.04,77.5,72.86,96.14,Zamalek,Al Ahly,M3,build-up,ZAM_7,ZAM_2,successful,,weak_foot,3,26,1,7,M3-S1
+pass,31.38,17.32,62.86,9.44,Al Ahly,Zamalek,M3,final-third,AL _6,AL _7,successful,,weak_foot,3,30,1,6,M3-S1
+pass,97.29,29.76,100,15.12,Zamalek,Al Ahly,M3,final-third,ZAM_5,ZAM_6,successful,,head,5,19,1,5,M3-S1
+interception,54.32,89.58,39.45,34.51,Al Ahly,Zamalek,M3,progression,AL _5,,unsuccessful,,head,5,7,1,5,M3-S2
+interception,25.64,47.91,20.21,53.86,Zamalek,Al Ahly,M3,final-third,ZAM_2,,unsuccessful,,foot,7,59,1,2,M3-S2
+interception,53.1,63.79,5.25,41.33,Al Ahly,Zamalek,M3,build-up,AL _4,,successful,,weak_foot,7,3,1,4,M3-S2
+pass,87.84,47.74,90.82,70.94,Zamalek,Al Ahly,M3,build-up,ZAM_3,ZAM_5,successful,,foot,9,41,1,3,M3-S2
+pass,17.58,91.96,52.47,86.81,Al Ahly,Zamalek,M3,final-third,AL _1,AL _3,successful,,foot,9,26,1,1,M3-S2
+shot,92.23,31.71,100.0,50.0,Zamalek,Al Ahly,M3,build-up,ZAM_2,,successful,saved,head,11,18,1,2,M3-S2
+carry,33.71,29.5,55.69,14.16,Al Ahly,Zamalek,M3,transition,AL _5,,successful,,head,11,11,1,5,M3-S2
+pass,14.06,32.36,18.98,20.4,Zamalek,Al Ahly,M3,final-third,ZAM_7,ZAM_6,successful,,head,13,6,1,7,M3-S3
+interception,23.63,66.78,46.54,15.97,Al Ahly,Zamalek,M3,final-third,AL _1,,successful,,weak_foot,13,41,1,1,M3-S4
+pass,13.36,15.32,38.27,20.61,Zamalek,Al Ahly,M3,defensive,ZAM_6,ZAM_5,successful,,head,15,14,1,6,M3-S4
+pressure,59.58,78.74,52.55,52.82,Al Ahly,Zamalek,M3,defensive,AL _4,,successful,,foot,15,15,1,4,M3-S5
+shot,72.91,35.27,100.0,50.0,Zamalek,Al Ahly,M3,defensive,ZAM_4,,successful,goal,head,17,34,1,4,M3-S5
+carry,5.77,46.24,33.05,57.4,Al Ahly,Zamalek,M3,build-up,AL _3,,successful,,weak_foot,17,26,1,3,M3-S6
+pass,54.12,6.03,84.89,30.34,Zamalek,Al Ahly,M3,final-third,ZAM_1,ZAM_5,successful,,head,19,22,1,1,M3-S6
+pass,86.96,90.68,96.99,99.82,Al Ahly,Zamalek,M3,defensive,AL _7,AL _3,successful,,foot,19,57,1,7,M3-S6
+pass,12.73,97.87,41.12,100,Zamalek,Al Ahly,M3,transition,ZAM_2,ZAM_3,unsuccessful,,weak_foot,21,34,1,2,M3-S6
+pass,34.62,27.56,67.12,38.81,Al Ahly,Zamalek,M3,transition,AL _7,AL _8,successful,,weak_foot,21,14,1,7,M3-S6
+pass,3.36,59.78,26.49,37.21,Zamalek,Al Ahly,M3,transition,ZAM_4,ZAM_2,successful,,head,23,4,1,4,M3-S7
+pass,23.42,91.64,41.46,95.51,Al Ahly,Zamalek,M3,final-third,AL _1,AL _3,unsuccessful,,foot,23,32,1,1,M3-S8
+pass,55.67,59.17,80.08,42.93,Zamalek,Al Ahly,M3,defensive,ZAM_4,ZAM_5,successful,,head,25,19,1,4,M3-S8
+pass,41.63,14.92,51.69,27.64,Al Ahly,Zamalek,M3,progression,AL _7,AL _8,successful,,head,25,33,1,7,M3-S9
+carry,55.73,13.41,60.44,0,Al Ahly,Zamalek,M3,transition,AL _1,,successful,,head,27,26,1,1,M3-S9
+interception,60.5,3.95,7.28,80.47,Zamalek,Al Ahly,M3,defensive,ZAM_4,,successful,,foot,29,17,1,4,M3-S9
+pass,96.21,11.73,100,10.68,Al Ahly,Zamalek,M3,defensive,AL _5,AL _1,successful,,weak_foot,29,13,1,5,M3-S9
+pass,53.37,35.93,58.83,36.57,Zamalek,Al Ahly,M3,build-up,ZAM_6,ZAM_8,successful,,weak_foot,31,18,1,6,M3-S9
+pass,56.25,22.13,57.09,10.17,Al Ahly,Zamalek,M3,defensive,AL _4,AL _3,unsuccessful,,weak_foot,31,20,1,4,M3-S9
+pass,83.34,49.93,100,59.17,Zamalek,Al Ahly,M3,transition,ZAM_4,ZAM_3,successful,,weak_foot,33,14,1,4,M3-S9
+carry,16.93,72.03,31.46,92.87,Al Ahly,Zamalek,M3,build-up,AL _8,,successful,,weak_foot,33,46,1,8,M3-S9
+pass,84.25,23.14,100,0,Zamalek,Al Ahly,M3,final-third,ZAM_1,ZAM_8,successful,,foot,35,0,1,1,M3-S9
+pressure,53.22,41.13,1.67,72.22,Al Ahly,Zamalek,M3,final-third,AL _8,,successful,,foot,35,31,1,8,M3-S9
+pressure,91.8,52.44,24.1,61.98,Zamalek,Al Ahly,M3,final-third,ZAM_7,,successful,,head,37,58,1,7,M3-S10
+pass,99.02,22.59,100,39.98,Al Ahly,Zamalek,M3,build-up,AL _6,AL _4,successful,,foot,37,29,1,6,M3-S11
+pass,17.14,49.99,29.5,64.21,Zamalek,Al Ahly,M3,build-up,ZAM_8,ZAM_1,successful,,weak_foot,39,40,1,8,M3-S11
+pressure,68.44,28.04,54.3,65.81,Zamalek,Al Ahly,M3,final-third,ZAM_8,,successful,,foot,41,2,1,8,M3-S12
+clearance,24.05,83.47,38.92,89.65,Zamalek,Al Ahly,M3,progression,ZAM_7,,successful,,weak_foot,43,19,1,7,M3-S12
+carry,83.87,34.06,100,56.8,Al Ahly,Zamalek,M3,final-third,AL _6,,successful,,foot,43,6,1,6,M3-S13
+carry,37.54,18.57,55.98,12.57,Zamalek,Al Ahly,M3,final-third,ZAM_8,,unsuccessful,,foot,45,22,1,8,M3-S13
+pass,63.39,73.97,71.06,54.3,Al Ahly,Zamalek,M3,final-third,AL _5,AL _2,successful,,head,45,24,1,5,M3-S13
+pass,44.88,55.47,56.2,31.78,Zamalek,Al Ahly,M3,build-up,ZAM_2,ZAM_3,successful,,weak_foot,47,5,2,2,M3-S13
+pass,77.92,72.48,95.3,97.12,Al Ahly,Zamalek,M3,defensive,AL _7,AL _1,successful,,foot,47,18,2,7,M3-S14
+pass,14.59,16.72,20.63,6.71,Zamalek,Al Ahly,M3,final-third,ZAM_3,ZAM_4,unsuccessful,,head,49,19,2,3,M3-S14
+carry,0.68,39.57,29.34,33.56,Zamalek,Al Ahly,M3,transition,ZAM_4,,unsuccessful,,head,51,6,2,4,M3-S15
+tackle,69.53,47.9,17.76,39.82,Al Ahly,Zamalek,M3,transition,AL _3,,successful,,weak_foot,51,20,2,3,M3-S16
+pass,36.5,93.21,39.49,100,Zamalek,Al Ahly,M3,defensive,ZAM_7,ZAM_3,successful,,foot,53,52,2,7,M3-S16
+pressure,69.28,81.9,79.57,40.91,Zamalek,Al Ahly,M3,final-third,ZAM_4,,successful,,foot,55,51,2,4,M3-S16
+pass,99.07,47.92,100,48.25,Al Ahly,Zamalek,M3,transition,AL _7,AL _8,unsuccessful,,weak_foot,55,24,2,7,M3-S17
+pass,66.47,16.63,85.98,19.79,Zamalek,Al Ahly,M3,transition,ZAM_2,ZAM_1,successful,,head,57,49,2,2,M3-S18
+pass,51.88,58.05,69.89,55.34,Zamalek,Al Ahly,M3,defensive,ZAM_2,ZAM_4,successful,,weak_foot,59,14,2,2,M3-S19
+pass,92.05,8.59,100,20.1,Al Ahly,Zamalek,M3,final-third,AL _1,AL _5,successful,,head,59,6,2,1,M3-S19
+carry,72.2,45.24,69.89,22.47,Zamalek,Al Ahly,M3,build-up,ZAM_8,,successful,,head,61,30,2,8,M3-S20
+pressure,55.19,33.1,42.64,46.21,Al Ahly,Zamalek,M3,progression,AL _3,,unsuccessful,,foot,61,15,2,3,M3-S21
+carry,19.73,59.22,30.28,69.46,Zamalek,Al Ahly,M3,build-up,ZAM_7,,successful,,weak_foot,63,47,2,7,M3-S21
+shot,82.24,73.3,100.0,50.0,Al Ahly,Zamalek,M3,transition,AL _3,,successful,saved,weak_foot,63,20,2,3,M3-S21
+pass,70.6,29.74,90.18,8.98,Zamalek,Al Ahly,M3,build-up,ZAM_8,ZAM_5,successful,,foot,65,11,2,8,M3-S22
+pass,41.82,13.79,52.17,0,Al Ahly,Zamalek,M3,progression,AL _6,AL _7,successful,,weak_foot,65,9,2,6,M3-S22
+pass,61.94,86.55,95.01,85.78,Zamalek,Al Ahly,M3,transition,ZAM_3,ZAM_2,successful,,weak_foot,67,20,2,3,M3-S22
+carry,83.99,48.87,82.3,25.41,Al Ahly,Zamalek,M3,final-third,AL _7,,unsuccessful,,foot,67,31,2,7,M3-S22
+shot,83.74,30.66,100.0,50.0,Zamalek,Al Ahly,M3,final-third,ZAM_5,,successful,off_target,weak_foot,69,49,2,5,M3-S22
+pass,10.24,83.01,35.29,72.9,Al Ahly,Zamalek,M3,transition,AL _8,AL _5,unsuccessful,,head,69,13,2,8,M3-S22
+pass,23.69,81.07,42.21,73.6,Zamalek,Al Ahly,M3,transition,ZAM_8,ZAM_7,successful,,foot,71,7,2,8,M3-S22
+pass,53.23,59.69,54.97,83.64,Al Ahly,Zamalek,M3,defensive,AL _4,AL _8,successful,,head,71,3,2,4,M3-S22
+pressure,91.88,99.25,86.7,12.69,Al Ahly,Zamalek,M3,progression,AL _2,,unsuccessful,,foot,73,48,2,2,M3-S22
+pass,26.87,41.42,39.95,48.1,Zamalek,Al Ahly,M3,build-up,ZAM_7,ZAM_4,unsuccessful,,head,75,9,2,7,M3-S22
+pass,0.25,77.41,24.56,88.96,Al Ahly,Zamalek,M3,final-third,AL _6,AL _4,successful,,foot,75,31,2,6,M3-S22
+pass,26.85,82.83,35.36,86.73,Zamalek,Al Ahly,M3,transition,ZAM_4,ZAM_5,successful,,head,77,52,2,4,M3-S22
+pass,1.63,92.94,2.95,90.77,Zamalek,Al Ahly,M3,transition,ZAM_2,ZAM_7,unsuccessful,,foot,79,50,2,2,M3-S23
+pass,37.18,90.38,38.8,85.2,Zamalek,Al Ahly,M3,progression,ZAM_2,ZAM_7,successful,,head,83,23,2,2,M3-S23
+pressure,13.27,22.62,68.0,0.93,Al Ahly,Zamalek,M3,build-up,AL _2,,successful,,head,83,13,2,2,M3-S24
+carry,80.6,10.32,90.3,0.28,Zamalek,Al Ahly,M3,progression,ZAM_2,,successful,,weak_foot,85,24,2,2,M3-S24
+shot,88.71,70.99,100.0,50.0,Zamalek,Al Ahly,M3,progression,ZAM_1,,successful,saved,foot,87,41,2,1,M3-S25
+pass,13.98,27.7,12.35,30.37,Zamalek,Al Ahly,M3,defensive,ZAM_7,ZAM_3,successful,,head,89,27,2,7,M3-S26
+pressure,30.16,51.77,50.95,74.78,Al Ahly,Zamalek,M3,build-up,AL _1,,successful,,foot,89,54,2,1,M3-S26
+pass,52.83,97.77,87.31,100,Rivals FC,Pyramids,M4,defensive,RIV_4,RIV_5,successful,,head,1,40,1,4,M4-S1
+pressure,77.04,1.67,6.75,26.22,Pyramids,Rivals FC,M4,build-up,PYR_3,,successful,,head,1,30,1,3,M4-S1
+tackle,64.05,53.77,15.27,8.36,Rivals FC,Pyramids,M4,progression,RIV_7,,successful,,foot,3,44,1,7,M4-S1
+pass,95.34,23.86,100,45.09,Pyramids,Rivals FC,M4,defensive,PYR_2,PYR_4,successful,,weak_foot,3,44,1,2,M4-S1
+pressure,70.15,16.38,95.3,52.3,Rivals FC,Pyramids,M4,final-third,RIV_3,,unsuccessful,,foot,5,0,1,3,M4-S1
+clearance,89.99,33.5,42.93,52.39,Pyramids,Rivals FC,M4,defensive,PYR_5,,successful,,weak_foot,5,56,1,5,M4-S1
+carry,16.69,15.73,42.62,35.44,Rivals FC,Pyramids,M4,build-up,RIV_6,,successful,,foot,7,31,1,6,M4-S2
+pass,4.6,36.4,36.41,20.35,Pyramids,Rivals FC,M4,build-up,PYR_1,PYR_8,unsuccessful,,weak_foot,7,55,1,1,M4-S2
+interception,91.59,31.99,82.6,57.15,Rivals FC,Pyramids,M4,build-up,RIV_7,,successful,,foot,9,20,1,7,M4-S3
+carry,86.6,77.35,94.03,56.67,Pyramids,Rivals FC,M4,final-third,PYR_1,,successful,,foot,9,4,1,1,M4-S4
+pass,49.34,77.26,52.16,97.28,Rivals FC,Pyramids,M4,progression,RIV_4,RIV_5,unsuccessful,,foot,11,23,1,4,M4-S4
+pass,83.96,87.72,100,62.79,Pyramids,Rivals FC,M4,final-third,PYR_1,PYR_3,successful,,foot,11,34,1,1,M4-S4
+pass,14.24,27.98,11.0,14.55,Rivals FC,Pyramids,M4,transition,RIV_7,RIV_4,unsuccessful,,weak_foot,13,3,1,7,M4-S4
+clearance,63.72,39.44,59.19,6.23,Rivals FC,Pyramids,M4,progression,RIV_2,,successful,,foot,15,6,1,2,M4-S4
+pass,31.81,27.2,29.8,12.34,Pyramids,Rivals FC,M4,defensive,PYR_7,PYR_6,unsuccessful,,foot,15,53,1,7,M4-S4
+pass,53.59,96.46,56.9,86.88,Rivals FC,Pyramids,M4,build-up,RIV_8,RIV_4,successful,,foot,17,20,1,8,M4-S4
+pressure,4.03,83.59,32.78,9.12,Pyramids,Rivals FC,M4,final-third,PYR_5,,successful,,head,17,45,1,5,M4-S4
+pressure,3.11,40.44,45.22,74.81,Rivals FC,Pyramids,M4,transition,RIV_5,,successful,,foot,19,52,1,5,M4-S4
+pass,98.26,13.07,100,6.68,Pyramids,Rivals FC,M4,build-up,PYR_2,PYR_1,successful,,weak_foot,19,3,1,2,M4-S4
+pass,44.34,12.88,75.54,29.35,Rivals FC,Pyramids,M4,build-up,RIV_1,RIV_2,successful,,head,21,12,1,1,M4-S4
+cross,2.95,68.32,4.86,54.06,Pyramids,Rivals FC,M4,final-third,PYR_7,PYR_8,successful,,head,21,46,1,7,M4-S4
+tackle,88.28,47.9,8.77,38.3,Pyramids,Rivals FC,M4,defensive,PYR_4,,successful,,foot,23,18,1,4,M4-S4
+shot,78.6,53.28,100.0,50.0,Rivals FC,Pyramids,M4,build-up,RIV_1,,successful,saved,head,25,50,1,1,M4-S4
+pass,52.94,76.68,87.92,100,Pyramids,Rivals FC,M4,progression,PYR_5,PYR_1,successful,,head,25,51,1,5,M4-S4
+interception,98.27,38.84,93.52,99.15,Rivals FC,Pyramids,M4,progression,RIV_1,,successful,,weak_foot,27,14,1,1,M4-S4
+interception,35.17,56.77,14.21,94.84,Pyramids,Rivals FC,M4,transition,PYR_6,,unsuccessful,,weak_foot,27,1,1,6,M4-S4
+carry,21.88,52.64,16.91,73.53,Rivals FC,Pyramids,M4,progression,RIV_1,,successful,,head,29,3,1,1,M4-S4
+pass,91.72,77.44,100,95.47,Pyramids,Rivals FC,M4,final-third,PYR_1,PYR_2,unsuccessful,,weak_foot,29,9,1,1,M4-S5
+pass,15.75,94.87,42.42,100,Pyramids,Rivals FC,M4,progression,PYR_6,PYR_3,successful,,weak_foot,31,20,1,6,M4-S5
+cross,17.54,30.68,40.08,12.05,Pyramids,Rivals FC,M4,defensive,PYR_6,PYR_2,successful,,head,33,42,1,6,M4-S6
+shot,85.99,30.21,100.0,50.0,Pyramids,Rivals FC,M4,build-up,PYR_1,,successful,saved,foot,35,38,1,1,M4-S6
+pass,82.17,67.0,100,58.79,Rivals FC,Pyramids,M4,progression,RIV_3,RIV_7,successful,,foot,37,56,1,3,M4-S6
+pass,4.81,43.82,16.6,27.14,Pyramids,Rivals FC,M4,transition,PYR_5,PYR_8,successful,,head,37,6,1,5,M4-S6
+pass,75.82,22.56,88.87,37.52,Rivals FC,Pyramids,M4,build-up,RIV_8,RIV_7,successful,,head,39,55,1,8,M4-S6
+pass,16.09,7.5,48.76,31.4,Pyramids,Rivals FC,M4,defensive,PYR_2,PYR_4,successful,,head,39,10,1,2,M4-S6
+carry,5.36,33.11,39.34,28.57,Rivals FC,Pyramids,M4,defensive,RIV_3,,successful,,head,41,56,1,3,M4-S6
+pass,54.97,49.09,52.15,24.28,Pyramids,Rivals FC,M4,defensive,PYR_4,PYR_1,successful,,head,41,3,1,4,M4-S6
+pass,8.19,84.38,15.52,79.25,Rivals FC,Pyramids,M4,final-third,RIV_4,RIV_2,successful,,foot,43,40,1,4,M4-S6
+pass,18.66,4.46,31.25,0,Pyramids,Rivals FC,M4,defensive,PYR_3,PYR_4,unsuccessful,,foot,43,56,1,3,M4-S7
+pressure,54.14,97.07,58.97,55.36,Rivals FC,Pyramids,M4,defensive,RIV_2,,unsuccessful,,head,45,42,1,2,M4-S7
+carry,90.28,71.43,100,91.45,Rivals FC,Pyramids,M4,defensive,RIV_4,,unsuccessful,,foot,47,19,2,4,M4-S7
+clearance,80.85,12.62,42.34,98.83,Pyramids,Rivals FC,M4,progression,PYR_8,,successful,,weak_foot,47,10,2,8,M4-S8
+interception,55.21,85.66,51.97,91.72,Rivals FC,Pyramids,M4,defensive,RIV_2,,successful,,weak_foot,49,24,2,2,M4-S8
+pass,58.79,75.84,91.38,97.09,Pyramids,Rivals FC,M4,build-up,PYR_2,PYR_5,successful,,head,49,9,2,2,M4-S8
+tackle,17.22,40.3,61.82,68.08,Pyramids,Rivals FC,M4,transition,PYR_8,,successful,,head,53,38,2,8,M4-S9
+pass,33.79,79.37,41.23,96.51,Rivals FC,Pyramids,M4,build-up,RIV_8,RIV_3,unsuccessful,,foot,55,57,2,8,M4-S9
+clearance,72.88,60.5,8.93,44.17,Pyramids,Rivals FC,M4,transition,PYR_8,,unsuccessful,,weak_foot,55,52,2,8,M4-S9
+carry,15.9,31.11,31.17,12.89,Rivals FC,Pyramids,M4,defensive,RIV_6,,unsuccessful,,foot,57,3,2,6,M4-S9
+pass,91.8,70.46,97.76,86.64,Pyramids,Rivals FC,M4,build-up,PYR_1,PYR_3,successful,,weak_foot,57,2,2,1,M4-S9
+pass,87.05,58.69,96.04,41.87,Rivals FC,Pyramids,M4,build-up,RIV_8,RIV_5,unsuccessful,,head,59,28,2,8,M4-S9
+pass,21.43,22.14,25.43,7.48,Pyramids,Rivals FC,M4,defensive,PYR_3,PYR_8,successful,,foot,59,36,2,3,M4-S10
+carry,0.85,25.24,28.05,15.51,Rivals FC,Pyramids,M4,final-third,RIV_3,,unsuccessful,,head,63,11,2,3,M4-S10
+pass,62.36,58.45,57.65,83.42,Pyramids,Rivals FC,M4,final-third,PYR_8,PYR_3,unsuccessful,,weak_foot,65,43,2,8,M4-S10
+cross,6.38,98.84,27.0,100,Rivals FC,Pyramids,M4,final-third,RIV_5,RIV_3,successful,,foot,67,43,2,5,M4-S10
+clearance,81.0,40.41,31.96,13.99,Pyramids,Rivals FC,M4,transition,PYR_4,,successful,,head,67,51,2,4,M4-S11
+pass,70.81,57.2,73.41,68.53,Rivals FC,Pyramids,M4,defensive,RIV_7,RIV_4,successful,,weak_foot,69,47,2,7,M4-S11
+pressure,84.06,87.65,18.11,9.76,Pyramids,Rivals FC,M4,final-third,PYR_6,,successful,,weak_foot,69,19,2,6,M4-S12
+clearance,8.93,35.53,74.42,30.71,Rivals FC,Pyramids,M4,final-third,RIV_3,,unsuccessful,,head,71,57,2,3,M4-S12
+pass,86.64,58.36,100,36.92,Pyramids,Rivals FC,M4,defensive,PYR_8,PYR_7,unsuccessful,,foot,71,7,2,8,M4-S12
+pass,13.74,20.03,25.11,23.5,Pyramids,Rivals FC,M4,transition,PYR_7,PYR_1,unsuccessful,,foot,73,55,2,7,M4-S12
+interception,63.1,17.68,63.45,0.47,Rivals FC,Pyramids,M4,progression,RIV_3,,successful,,weak_foot,75,5,2,3,M4-S12
+carry,42.94,42.9,57.04,18.13,Pyramids,Rivals FC,M4,final-third,PYR_2,,successful,,foot,75,39,2,2,M4-S12
+shot,91.92,40.6,100.0,50.0,Pyramids,Rivals FC,M4,final-third,PYR_4,,successful,saved,foot,77,43,2,4,M4-S12
+pass,59.64,33.78,90.16,58.55,Rivals FC,Pyramids,M4,transition,RIV_5,RIV_3,successful,,head,79,29,2,5,M4-S13
+pass,98.49,21.12,94.37,21.35,Pyramids,Rivals FC,M4,build-up,PYR_7,PYR_1,successful,,head,79,14,2,7,M4-S13
+shot,87.24,45.84,100.0,50.0,Pyramids,Rivals FC,M4,transition,PYR_1,,successful,saved,weak_foot,81,3,2,1,M4-S14
+pressure,66.25,27.0,60.56,13.72,Rivals FC,Pyramids,M4,build-up,RIV_1,,unsuccessful,,weak_foot,83,26,2,1,M4-S14
+pass,19.86,19.97,25.38,21.13,Pyramids,Rivals FC,M4,transition,PYR_5,PYR_1,successful,,head,83,50,2,5,M4-S14
+shot,86.79,70.34,100.0,50.0,Rivals FC,Pyramids,M4,progression,RIV_8,,unsuccessful,off_target,foot,85,44,2,8,M4-S15
+pass,98.87,29.6,100,9.59,Pyramids,Rivals FC,M4,build-up,PYR_2,PYR_4,successful,,head,85,41,2,2,M4-S15
+pressure,85.12,89.03,0.97,13.84,Rivals FC,Pyramids,M4,final-third,RIV_6,,successful,,head,87,47,2,6,M4-S16
+interception,11.38,40.03,45.65,83.57,Pyramids,Rivals FC,M4,transition,PYR_2,,successful,,head,89,52,2,2,M4-S17

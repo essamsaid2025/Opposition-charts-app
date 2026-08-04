@@ -1,0 +1,24 @@
+event_type,x,y,x2,y2,team,opponent,match_id,phase,player,receiver,outcome,shot_result,body_part,minute,second,period,shirt_number,sequence_id
+pass,98.16,84.43,97.31,100,Zamalek,Rivals FC,M1,defensive,Dieng,Salah,successful,,weak_foot,60,44,2,1,M1-S1
+cross,68.45,83.85,100,65.38,Rivals FC,Zamalek,M1,build-up,Afsha,Kahraba,unsuccessful,,head,60,39,2,1,M1-S1
+pass,67.79,76.75,85.86,80.0,Zamalek,Rivals FC,M1,final-third,Salah,Dieng,unsuccessful,,weak_foot,61,0,2,1,M1-S2
+pressure,48.19,66.37,64.14,14.87,Rivals FC,Zamalek,M1,defensive,Kahraba,,unsuccessful,,foot,61,42,2,1,M1-S2
+pass,75.14,32.06,83.38,20.97,Zamalek,Rivals FC,M1,defensive,Salah,Dieng,successful,,weak_foot,62,55,2,1,M1-S2
+pass,44.81,85.66,57.69,66.6,Rivals FC,Zamalek,M1,build-up,Kahraba,Afsha,successful,,foot,62,28,2,1,M1-S3
+pass,61.91,30.46,77.24,15.8,Zamalek,Rivals FC,M1,final-third,Dieng,Salah,successful,,head,63,50,2,1,M1-S3
+clearance,9.74,65.89,0.22,35.51,Zamalek,Rivals FC,M1,final-third,Salah,,successful,,weak_foot,65,45,2,1,M1-S3
+pressure,14.04,71.69,72.16,10.7,Rivals FC,Zamalek,M1,progression,Kahraba,,successful,,foot,65,57,2,1,M1-S3
+carry,4.65,63.32,26.54,44.48,Rivals FC,Zamalek,M1,transition,Kahraba,,unsuccessful,,weak_foot,66,6,2,1,M1-S4
+carry,4.86,93.53,33.41,92.68,Zamalek,Rivals FC,M1,progression,Dieng,,successful,,weak_foot,67,0,2,1,M1-S4
+interception,60.62,32.18,88.14,41.87,Rivals FC,Zamalek,M1,progression,Kahraba,,successful,,head,67,24,2,1,M1-S4
+pass,41.27,70.0,66.21,59.95,Zamalek,Rivals FC,M1,final-third,Salah,Dieng,successful,,weak_foot,68,51,2,1,M1-S4
+pass,68.66,92.12,68.97,100,Zamalek,Rivals FC,M1,progression,Dieng,Salah,unsuccessful,,weak_foot,69,39,2,1,M1-S5
+tackle,48.04,57.06,66.72,41.75,Rivals FC,Zamalek,M1,defensive,Afsha,,successful,,head,69,48,2,1,M1-S5
+pass,67.03,19.99,92.04,3.04,Rivals FC,Zamalek,M1,final-third,Kahraba,Afsha,successful,,foot,70,24,2,1,M1-S6
+pass,10.25,86.8,34.83,100,Rivals FC,Zamalek,M1,defensive,Kahraba,Afsha,successful,,head,71,22,2,1,M1-S7
+pressure,41.66,78.81,68.51,96.58,Zamalek,Rivals FC,M1,final-third,Salah,,successful,,foot,72,59,2,1,M1-S7
+clearance,70.95,36.77,58.84,73.85,Rivals FC,Zamalek,M1,progression,Afsha,,successful,,head,72,58,2,1,M1-S8
+pressure,11.94,4.06,27.91,26.42,Zamalek,Rivals FC,M1,final-third,Dieng,,successful,,foot,73,11,2,1,M1-S8
+pressure,59.69,77.37,62.54,84.31,Rivals FC,Zamalek,M1,defensive,Kahraba,,successful,,weak_foot,73,9,2,1,M1-S8
+pressure,78.63,15.94,54.31,40.34,Zamalek,Rivals FC,M1,progression,Salah,,successful,,weak_foot,74,11,2,1,M1-S8
+pass,47.49,56.13,72.58,63.6,Rivals FC,Zamalek,M1,final-third,Afsha,Kahraba,successful,,head,74,48,2,1,M1-S8
