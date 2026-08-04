@@ -228,6 +228,28 @@ def test_studio_registers_and_never_imports_app_at_module_level():
     assert "import app" not in src and "sys.modules" not in src
 
 
+def test_dashboard_helpers():
+    """Home Dashboard describes data via metadata only (no analytics)."""
+    import fap.ui.builtin.openplay_studio as studio
+    df = _frame()
+    assert studio._uniq(df, "match_id") == df["match_id"].astype(str).nunique()
+    assert studio._uniq(df, "nonexistent") == 0
+    pct = studio._pct_valid(df, ["x", "y"])
+    assert pct == 100.0                                   # synthetic frame has full coords
+    assert studio._pct_valid(df, ["nope"]) is None
+
+
+def test_suggested_charts_match_registry():
+    import fap.ui.builtin.openplay_studio as studio
+    eng = get_engine()
+    w = studio.Studio(shell=None, engine=eng, can_edit=True, frame=_frame())
+    sugg = studio._suggested_charts(w)
+    assert sugg and all(name in eng.viz_registry for name in sugg)     # only real registry vizs
+    # pass + shot events are present -> a pass and a shot viz should be suggested
+    low = " ".join(s.lower() for s in sugg)
+    assert "pass" in low and "shot" in low
+
+
 def test_studio_panels_are_modular():
     import fap.ui.builtin.openplay_studio as studio
     for region in ("left", "center", "right", "bottom"):

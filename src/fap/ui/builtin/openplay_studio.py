@@ -52,6 +52,23 @@ VIEW = K + "active_view"     # active saved-view id (for status)
 
 VIEW_KIND = "openplay_view"      # WorkspaceManager preset kind (metadata only)
 FAV_SCOPE = "openplay_favorites"  # WorkspaceManager autosave scope
+RECENT_SCOPE = "openplay_recent_views"
+MODE = K + "mode"                # "home" | "workspace"
+
+
+def _recent_view_ids(shell) -> list[str]:
+    try:
+        return [str(x) for x in (shell.wm.load_autosave(shell.user, scope=RECENT_SCOPE).get("ids") or [])]
+    except Exception:
+        return []
+
+
+def _push_recent_view(shell, view_id: str) -> None:
+    ids = [view_id] + [x for x in _recent_view_ids(shell) if x != view_id]
+    try:
+        shell.wm.autosave(shell.user, {"ids": ids[:8]}, scope=RECENT_SCOPE)
+    except Exception:
+        pass
 
 _RATIOS = {"Balanced": (2.4, 6.0, 2.6), "Wide stage": (1.8, 7.4, 1.8), "Focus": (1.4, 8.2, 1.4)}
 
@@ -236,6 +253,9 @@ def _toolbar(w: Studio) -> None:
         ]
         for col, (key, ic, tip, cb, disabled) in zip(cols, specs):
             col.button("", key=key, help=tip, on_click=cb, disabled=disabled, use_container_width=True)
+        with cols[8]:
+            st.button("", key="ops_home", help="Home dashboard",
+                      on_click=lambda: st.session_state.update({MODE: "home"}), use_container_width=True)
         with cols[9]:
             st.session_state[RATIO] = st.selectbox(
                 "layout", list(_RATIOS), index=list(_RATIOS).index(st.session_state.get(RATIO, "Balanced")),
@@ -250,7 +270,8 @@ def _toolbar(w: Studio) -> None:
     st.markdown(icon_css([("ops_undo", "chevron-left"), ("ops_redo", "chevron-right"),
                           ("ops_refresh", "refresh"), ("ops_savews", "check"), ("ops_saveview", "plus"),
                           ("ops_fav", "star"), ("ops_compare", "layers"), ("ops_full", "grid"),
-                          ("ops_tgl_left", "sliders"), ("ops_tgl_right", "sliders")]),
+                          ("ops_home", "dashboard"), ("ops_tgl_left", "sliders"),
+                          ("ops_tgl_right", "sliders")]),
                 unsafe_allow_html=True)
 
 
@@ -303,8 +324,15 @@ def _panel_filters(w: Studio) -> None:
             cur = sel.get(fid, "All")
             sel[fid] = st.selectbox(label, options, index=options.index(cur) if cur in options else 0, key=key)
         elif kind == "multiselect":
-            source = col if col != "event_type" else "event_type"
-            options = sorted({str(v).lower() for v in frame[source].astype(str)}) if source in frame.columns else []
+            # apply_filters matches event_type/phase case-insensitively (str.lower().isin)
+            # but players EXACTLY (isin). Mirror run_app: lowercase the former's options,
+            # keep players in their real casing — else a lowercased pick never matches.
+            lower = fid in ("event_types", "phases")
+            if col in frame.columns:
+                vals = frame[col].astype(str)
+                options = sorted({(str(v).lower() if lower else str(v)) for v in vals})
+            else:
+                options = []
             options = [o for o in options if o.strip()]
             sel[fid] = st.multiselect(label, options,
                                       default=[o for o in sel.get(fid, []) if o in options], key=key)
@@ -359,6 +387,7 @@ def _panel_saved_views(w: Studio) -> None:
         if cols[0].button(f"{star}{pr.name}", key=f"ops_sv_open_{pr.id}", use_container_width=True):
             _apply_view(pr.document)
             st.session_state[VIEW] = pr.id
+            _push_recent_view(w.shell, pr.id)
             st.rerun()
         if cols[1].button("☆", key=f"ops_sv_fav_{pr.id}", help="Favorite"):
             _toggle_favorite(w.shell, "view", pr.id); st.rerun()
@@ -997,6 +1026,234 @@ def _render_region(region: str, w: Studio, *, phase: str | None = None, as_tabs:
                 fn(w)
 
 
+# ================================================================ Home Dashboard (16A.2)
+# Presentation only — reads WorkspaceManager metadata + describes the active frame. No
+# analytics, no engine calls beyond the read-only registry/metadata already exposed.
+def _enter_workspace(*, viz: str | None = None) -> None:
+    """Leave the dashboard for the workspace, optionally opening a specific visualization."""
+    st.session_state[MODE] = "workspace"
+    if viz:
+        st.session_state[VIZ] = viz
+        st.session_state[CAT] = "All"
+    st.rerun()
+
+
+def _uniq(frame, col) -> int:
+    return int(frame[col].astype(str).replace("", None).dropna().nunique()) \
+        if (frame is not None and col in getattr(frame, "columns", [])) else 0
+
+
+def _pct_valid(frame, cols) -> float | None:
+    if frame is None or getattr(frame, "empty", True) or not all(c in frame.columns for c in cols):
+        return None
+    return round(frame[cols].dropna().shape[0] / max(1, len(frame)) * 100, 1)
+
+
+def _dash_card(container, icon_name: str, title: str, rows: list[tuple[str, Any]],
+               empty: str | None = None) -> None:
+    body = "".join(f'<div class="r"><span>{_html.escape(str(l))}</span>'
+                   f'<b>{_html.escape(str(v))}</b></div>' for l, v in rows)
+    if not rows and empty:
+        body = f'<div class="empty">{_html.escape(empty)}</div>'
+    container.markdown(
+        f'<div class="ops-dash-card"><div class="hd">{icon(icon_name, 15)} '
+        f'{_html.escape(title)}</div><div class="rows">{body}</div></div>', unsafe_allow_html=True)
+
+
+def _suggested_charts(w: Studio) -> list[str]:
+    """Suggest existing registry vizs that fit the event types present — pure name matching,
+    no analytics. Returns viz names that exist in the engine registry."""
+    reg = w.engine.viz_registry
+    present = set()
+    if w.frame is not None and "event_type" in w.frame.columns:
+        present = {str(v).lower() for v in w.frame["event_type"].astype(str)}
+    kw = ["overview", "heat", "touch"]                       # always-useful
+    if {"pass"} & present:
+        kw += ["pass"]
+    if {"shot"} & present:
+        kw += ["shot"]
+    if {"carry", "dribble"} & present:
+        kw += ["carry", "dribble"]
+    if {"cross"} & present:
+        kw += ["cross"]
+    if {"tackle", "interception", "recovery", "clearance", "block", "duel"} & present:
+        kw += ["defensive", "recovery", "press", "tackle"]
+    out: list[str] = []
+    for name in reg:
+        low = name.lower()
+        if any(k in low for k in kw) and name not in out:
+            out.append(name)
+        if len(out) >= 8:
+            break
+    return out or list(reg)[:6]
+
+
+def _home_dashboard(w: Studio) -> None:
+    shell, frame = w.shell, w.frame
+    # ---- header ----
+    hi, hbtn = st.columns([5, 2], vertical_alignment="center")
+    hi.markdown(
+        f'<div class="ops-dash-hero"><div class="t">Open Play Studio</div>'
+        f'<div class="s">{icon("datasets", 13)} '
+        f'{_html.escape(getattr(w.dataset, "name", "No active dataset"))}</div></div>',
+        unsafe_allow_html=True)
+    if hbtn.button("Open Workspace  ›", key="ops_home_open", type="primary",
+                   use_container_width=True, disabled=w.dataset is None):
+        st.session_state[MODE] = "workspace"
+        st.rerun()
+
+    if w.dataset is None:
+        go = C.render_empty_state(
+            "No active dataset", "Activate a dataset in the Data Hub — the Studio then opens on a "
+            "professional dashboard with match info, health and suggested charts.",
+            icon_name="datasets", action_label="Open Data Hub", key="ops_home_dh")
+        if go:
+            shell.goto("data_hub")
+
+    # ---- row 1: dataset summary · match info · statistics ----
+    r1 = st.columns(3, gap="small")
+    _dash_card(r1[0], "datasets", "Current Dataset", [
+        ("Events", f"{len(frame):,}" if frame is not None else "—"),
+        ("Columns", len(frame.columns) if frame is not None else "—"),
+        ("Matches", _uniq(frame, "match_id")),
+        ("Players", _uniq(frame, "player")),
+        ("Teams", _uniq(frame, "team")),
+    ] if frame is not None else [])
+    _dash_card(r1[1], "analysis", "Match Information", [
+        ("Matches", _uniq(frame, "match_id")),
+        ("Teams", _uniq(frame, "team")),
+        ("Opponents", _uniq(frame, "opponent")),
+        ("Competitions", _uniq(frame, "competition")),
+        ("Seasons", _uniq(frame, "season")),
+    ] if frame is not None else [], empty="No active dataset.")
+    ev_rows: list[tuple[str, Any]] = []
+    if frame is not None and "event_type" in frame.columns:
+        vc = frame["event_type"].astype(str).str.lower().value_counts().head(6)
+        ev_rows = [(k.title(), f"{int(v):,}") for k, v in vc.items()]
+    _dash_card(r1[2], "grid", "Dataset Statistics", ev_rows, empty="No events.")
+
+    # ---- row 2: dataset health · workspace statistics ----
+    r2 = st.columns([2, 1], gap="small")
+    with r2[0]:
+        _dataset_health(w)
+    with r2[1]:
+        try:
+            views = shell.wm.list_presets(shell.user, kind=VIEW_KIND)
+        except Exception:
+            views = []
+        fav = _favorites(shell)
+        _dash_card(r2[1], "layers", "Workspace Statistics", [
+            ("Saved workspaces", len(views)),
+            ("Favorite views", len(fav["view"])),
+            ("Favorite charts", len(fav["viz"])),
+            ("Renders this session", len(_ss(HIST, list))),
+            ("Cached charts", len(_ss(CACHE, dict))),
+        ])
+
+    # ---- row 3: quick actions · suggested charts ----
+    r3 = st.columns([1, 2], gap="small")
+    with r3[0]:
+        st.markdown('<div class="ops-h">Quick Actions</div>', unsafe_allow_html=True)
+        if st.button("＋  New workspace", key="ops_qa_new", use_container_width=True):
+            _new_workspace(); st.session_state[MODE] = "workspace"; st.rerun()
+        if st.button("▦  Open workspace", key="ops_qa_open", use_container_width=True,
+                     disabled=w.dataset is None):
+            st.session_state[MODE] = "workspace"; st.rerun()
+        if st.button("⭳  Import data", key="ops_qa_import", use_container_width=True):
+            shell.goto("data_hub")
+        if st.button("▤  Reports", key="ops_qa_reports", use_container_width=True):
+            shell.goto("reports")
+        if st.button("↻  Opponent Analysis (legacy)", key="ops_qa_legacy", use_container_width=True):
+            shell.goto("opponent_analysis")
+    with r3[1]:
+        st.markdown('<div class="ops-h">Suggested Charts</div>', unsafe_allow_html=True)
+        sugg = _suggested_charts(w) if w.dataset is not None else []
+        if not sugg:
+            C.render_empty_state("No suggestions yet", "Activate a dataset to see charts matched to "
+                                 "your event types.", icon_name="analysis")
+        else:
+            cols = st.columns(2)
+            for i, name in enumerate(sugg):
+                if cols[i % 2].button(name, key=f"ops_sugg_{i}", use_container_width=True):
+                    _enter_workspace(viz=name)
+
+    # ---- row 4: recent workspaces · favorite views ----
+    r4 = st.columns(2, gap="small")
+    with r4[0]:
+        st.markdown('<div class="ops-h">Recent Workspaces</div>', unsafe_allow_html=True)
+        _views_list(w, _recent_view_ids(shell), "recent",
+                    "No recent workspaces", "Open a saved workspace to see it here.")
+    with r4[1]:
+        st.markdown('<div class="ops-h">Favorite Views</div>', unsafe_allow_html=True)
+        _views_list(w, _favorites(shell)["view"], "fav",
+                    "No favorite views", "Star a saved view to pin it here.")
+
+
+def _views_list(w: Studio, ids: list[str], tag: str, empty_title: str, empty_sub: str) -> None:
+    try:
+        views = {p.id: p for p in w.shell.wm.list_presets(w.shell.user, kind=VIEW_KIND)}
+    except Exception:
+        views = {}
+    picks = [views[i] for i in ids if i in views][:6]
+    if not picks:
+        C.render_empty_state(empty_title, empty_sub, icon_name="star")
+        return
+    for pr in picks:
+        doc = getattr(pr, "document", {}) or {}
+        meta = f"{doc.get('viz', '')}"
+        if doc.get("theme"):
+            meta += f" · {doc['theme']}"
+        if st.button(f"{pr.name} {meta}", key=f"ops_{tag}_{pr.id}", use_container_width=True):
+            _apply_view(doc)
+            st.session_state[VIEW] = pr.id
+            _push_recent_view(w.shell, pr.id)
+            st.session_state[MODE] = "workspace"
+            st.rerun()
+
+
+def _dataset_health(w: Studio) -> None:
+    st.markdown('<div class="ops-h">Dataset Health</div>', unsafe_allow_html=True)
+    frame = w.frame
+    if frame is None or getattr(frame, "empty", True):
+        C.render_empty_state("No data to check", "Health checks appear once a dataset is active.",
+                             icon_name="shield")
+        return
+    checks: list[tuple[str, str, str]] = []
+
+    def band(pct):
+        return "good" if pct is not None and pct >= 90 else ("warn" if pct is not None and pct >= 60 else "bad")
+
+    xy = _pct_valid(frame, ["x", "y"])
+    if xy is not None:
+        checks.append(("Valid X/Y coordinates", f"{xy}%", band(xy)))
+    xy2 = _pct_valid(frame, ["x2", "y2"])
+    if xy2 is not None:
+        checks.append(("Valid end coordinates (X2/Y2)", f"{xy2}%", band(xy2)))
+    if "player" in frame.columns:
+        named = round(frame["player"].astype(str).str.strip().replace("nan", "").astype(bool).mean() * 100, 1)
+        checks.append(("Named players", f"{named}%", band(named)))
+    if "outcome" in frame.columns:
+        oc = round(frame["outcome"].astype(str).str.strip().replace("nan", "").astype(bool).mean() * 100, 1)
+        checks.append(("Events with outcome", f"{oc}%", band(oc)))
+    required = ["team", "player", "event_type", "x", "y"]
+    missing = [c for c in required if c not in frame.columns]
+    checks.append(("Required columns present", "all" if not missing else ", ".join(missing),
+                   "good" if not missing else "bad"))
+    rows = "".join(
+        f'<div class="hr"><span class="dot {b}"></span><span class="l">{_html.escape(l)}</span>'
+        f'<b>{_html.escape(str(v))}</b></div>' for l, v, b in checks)
+    st.markdown(f'<div class="ops-dash-card"><div class="rows">{rows}</div></div>', unsafe_allow_html=True)
+
+
+def _new_workspace() -> None:
+    st.session_state[SEL] = {}
+    st.session_state[CTRL] = {}
+    st.session_state[VIEW] = None
+    for k in list(st.session_state):
+        if k.startswith("ops_"):
+            st.session_state.pop(k, None)
+
+
 # ================================================================ page
 @page_registry.register
 class OpenPlayStudioPage(Page):
@@ -1028,12 +1285,21 @@ class OpenPlayStudioPage(Page):
 
         _restore_workspace(shell)
 
+        # frame + theme + spec are needed by both the dashboard (stats/health/suggestions)
+        # and the workspace input panels; prepare them once when a dataset is active
+        if w.dataset is not None:
+            _seed_defaults(w)
+            _prepare_pre(w)
+
+        # Home Dashboard is the landing view — a professional overview, one click from work
+        if st.session_state.get(MODE, "home") == "home":
+            _home_dashboard(w)
+            return
+
         if w.dataset is None:
             self._toolbar_and_empty(w)
             return
 
-        _seed_defaults(w)
-        _prepare_pre(w)          # frame + theme + spec BEFORE input panels (filters/inspector)
         _toolbar(w)
         collapse = _collapse()
         full = st.session_state.get(FULL, False)
@@ -1106,5 +1372,26 @@ class OpenPlayStudioPage(Page):
 .ops-sb-item b { color: var(--fap-text); font-weight: 700; margin-right: 4px; }
 .ops-msg { font-size: 12px; color: var(--fap-text-muted); padding: 3px 0;
   border-bottom: 1px dashed var(--fap-border); }
+/* ---- Home Dashboard ---- */
+.ops-dash-hero { display: flex; flex-direction: column; gap: 2px; }
+.ops-dash-hero .t { font-size: 1.5rem; font-weight: 850; letter-spacing: -.01em; }
+.ops-dash-hero .s { font-size: 12px; color: var(--fap-text-muted); display: flex; align-items: center; gap: 6px; }
+.ops-dash-card { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-radius: 14px; padding: 14px 16px; margin-bottom: 10px; box-shadow: var(--fap-shadow-sm); min-height: 120px; }
+.ops-dash-card .hd { display: flex; align-items: center; gap: 8px; font-weight: 750;
+  font-size: 0.92rem; margin-bottom: 10px; color: var(--fap-text); }
+.ops-dash-card .rows { display: flex; flex-direction: column; gap: 6px; }
+.ops-dash-card .r { display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 13px; color: var(--fap-text-muted); }
+.ops-dash-card .r b { color: var(--fap-text); font-weight: 700; font-variant-numeric: tabular-nums; }
+.ops-dash-card .empty { font-size: 12px; color: var(--fap-text-subtle); }
+.ops-dash-card .hr { display: flex; align-items: center; gap: 8px; font-size: 13px;
+  color: var(--fap-text-muted); padding: 3px 0; }
+.ops-dash-card .hr .l { flex: 1; }
+.ops-dash-card .hr b { color: var(--fap-text); font-weight: 700; }
+.ops-dash-card .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.ops-dash-card .dot.good { background: #2ecc71; }
+.ops-dash-card .dot.warn { background: #f1c40f; }
+.ops-dash-card .dot.bad { background: #e74c3c; }
 </style>
 """, unsafe_allow_html=True)
