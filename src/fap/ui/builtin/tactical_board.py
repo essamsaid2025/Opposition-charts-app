@@ -515,7 +515,8 @@ class TacticalBoardPage(Page):
 .st-key-tb_toolbar { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 12px; padding: 6px 10px; margin-bottom: 12px; }
 .st-key-tb_toolbar .stButton button, .st-key-tb_toolbar [data-testid="stDownloadButton"] button {
-  min-height: 38px; color: var(--fap-text); display: flex; align-items: center; justify-content: center; }
+  min-height: 38px; color: var(--fap-text); background: var(--fap-surface);
+  border: 1px solid var(--fap-border); display: flex; align-items: center; justify-content: center; }
 /* base icon glyph: the per-button mask-image comes from nav.icon_css; this gives it a
    box + paints it with the button's currentColor so the icons are actually visible.
    NOTE: descendant (not '>') so tooltip-wrapped buttons (help=) still match — Streamlit

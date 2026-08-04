@@ -1353,13 +1353,19 @@ class OpenPlayStudioPage(Page):
 /* descendant selector (not '>') is deliberate: toolbar buttons carry help= tooltips, so
    Streamlit nests the <button> under stTooltipIcon/stTooltipHoverTarget — a direct-child
    selector misses them and the icon glyph (::before) never renders. */
+/* Explicit app-themed background+color (not Streamlit's native button chrome): the icon
+   glyph paints with currentColor, so the button MUST carry a skin background it contrasts
+   with. Without this the button falls back to Streamlit's base theme — which can be light
+   while the app skin is dark, leaving a light glyph on a white button (invisible). */
 .st-key-ops_toolbar .stButton button, .st-key-ops_toolbar [data-testid="stDownloadButton"] button {
-  min-height: 34px; color: var(--fap-text); display:flex; align-items:center; justify-content:center; }
+  min-height: 34px; color: var(--fap-text); background: var(--fap-surface);
+  border: 1px solid var(--fap-border); display:flex; align-items:center; justify-content:center; }
 .st-key-ops_toolbar .stButton button::before {
   content:""; display:inline-block; width:16px; height:16px; background-color: currentColor;
   -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center;
   -webkit-mask-size:contain; mask-size:contain; }
-.st-key-ops_toolbar .stButton button:hover { color: var(--fap-primary); }
+.st-key-ops_toolbar .stButton button:hover { color: var(--fap-primary);
+  background: var(--fap-hover); border-color: var(--fap-primary); }
 .ops-h { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
   color: var(--fap-text-subtle); margin: 4px 2px 8px; }
 [class*="st-key-ops_panel_"] { background: var(--fap-surface); border: 1px solid var(--fap-border);
