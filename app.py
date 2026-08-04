@@ -2491,10 +2491,139 @@ def main() -> None:
                  platform_getter=platform, wm_getter=workspace_manager)
 
 
+# -----------------------------
+# Bridge: expose EVERY fap.visuals plugin (the newer ``visual_registry``) inside the
+# legacy Open Play ``VIZ_REGISTRY``, so the Open Play Studio lists them all and any
+# visualization dropped into src/fap/visuals/charts|maps in the future shows up
+# automatically — with zero extra registration. Each plugin's own
+# ``.render(RenderContext)`` does ALL the drawing/theming/legend/pitch work; the
+# adapter only translates the legacy ``(df, ctx-dict)`` call into a ``RenderContext``
+# and hands the resulting Figure straight back — no chart logic is reimplemented here.
+# -----------------------------
+def _legacy_vt_is_dark(bg: str) -> bool:
+    """Rough perceived-luminance test so the derived Theme's ``dark`` flag matches the
+    legacy theme's background (some framework code keys off it)."""
+    try:
+        h = str(bg).lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return (0.299 * r + 0.587 * g + 0.114 * b) < 128
+    except Exception:
+        return False
+
+
+def _theme_from_legacy_vt(vt: Dict) -> "object":
+    """Translate a legacy visualization-theme dict (``ctx['vt']`` produced by ``_vt`` /
+    the Studio's theme resolver) into the ``fap.themes.Theme`` the plugin render path
+    expects.
+
+    We build the Theme from the vt COLORS rather than looking one up by id/name on
+    purpose: the Studio's Club/Custom themes are constructed at runtime and have no
+    YAML file, and the named ``VIZ_THEMES`` ('Opta Analyst', …) do not map 1:1 to
+    ``assets/themes`` ids — so a faithful color translation preserves the exact
+    user-selected look in every case (named, Club, or Custom) instead of guessing a
+    nearest match. Key renames bridge the two vocabularies: vt ``line``→``lines`` and
+    ``accent2``→``accent_2``; ``bar`` falls back to the accent (legacy vt has no bar
+    role). ``line_w``/``title_weight`` ride along as style tokens."""
+    import hashlib
+    from fap.themes.theme import Theme
+    accent = vt.get("accent", "#6D28D9")
+    bg = vt.get("bg", "#ECECEC")
+    colors = {
+        "bg": bg, "panel": vt.get("panel", bg),
+        "pitch": vt.get("pitch", bg), "stripe": vt.get("stripe", vt.get("pitch", bg)),
+        "text": vt.get("text", "#201C2B"), "muted": vt.get("muted", "#7A7584"),
+        "lines": vt.get("line", "#9F9F9F"), "grid": vt.get("grid", "#C6C6C6"),
+        "accent": accent, "accent_2": vt.get("accent2", accent),
+        "danger": vt.get("danger", "#D64045"), "warning": vt.get("warning", "#E3B341"),
+        "success": vt.get("success", "#22A06B"), "grey": vt.get("grey", "#8F8F8F"),
+        "bar": vt.get("bar", accent),
+    }
+    fonts = {"font_family": vt.get("font", "DejaVu Sans")}
+    tokens = {"pitch_line_width": vt.get("line_w", 1.6),
+              "title_weight": vt.get("title_weight", "bold")}
+    # colors-derived id keeps distinct themes distinct (Renderer.render_png caches by
+    # theme.id) without inventing a display name that could clash with a real theme.
+    theme_id = "openplay_vt_" + hashlib.sha1(
+        repr(sorted(colors.items())).encode("utf-8")).hexdigest()[:8]
+    return Theme(id=theme_id, name="Open Play (bridged)", dark=_legacy_vt_is_dark(bg),
+                 colors=colors, fonts=fonts, tokens=tokens)
+
+
+def _controls_from_legacy_ctx(ctx: Dict) -> Dict:
+    """Map the legacy ctx dict onto the RenderContext ``controls`` the plugin honors.
+
+    Only the theme-neutral, framework-understood keys are forwarded (titles, sizes,
+    the legend on/off toggle). Everything else keeps the plugin/framework default — in
+    particular the color pickers are left unset so the derived Theme drives every
+    color (the whole point: theme-driven, nothing hardcoded)."""
+    legend = ctx.get("legend") or {}
+    return {
+        "title": ctx.get("title", "") or "",
+        "show_title": bool(ctx.get("show_title", True)),
+        "title_size": int(ctx.get("title_size", 20)),
+        "label_size": int(ctx.get("label_size", 11)),
+        "legend_size": int(ctx.get("legend_size", 10)),
+        "legend": bool(legend.get("show", True)),
+    }
+
+
+def _make_plugin_adapter(plugin_cls) -> Callable:
+    """Build a legacy-signature renderer ``(df, ctx) -> Figure`` for one plugin class.
+
+    It normalizes the frame through the canonical schema (so plugins reliably see
+    ``end_x``/``end_y`` etc. regardless of the legacy x2/y2 shape), builds a
+    RenderContext from the legacy ctx, and delegates to the plugin's own ``.render`` —
+    which already owns theming, layout, legend, pitch and export. On any failure it
+    surfaces a small themed placeholder figure rather than raising, so one bad plugin
+    can never break the Studio stage."""
+    def _adapter(df, ctx):
+        from fap.core.types import RenderContext
+        try:
+            from fap.pipeline.schema import coerce_schema
+            render_df = coerce_schema(df)
+        except Exception:
+            render_df = df
+        rctx = RenderContext(df=render_df,
+                             theme=_theme_from_legacy_vt(ctx.get("vt") or {}),
+                             controls=_controls_from_legacy_ctx(ctx), meta={})
+        return plugin_cls().render(rctx)
+    return _adapter
+
+
+def _bridge_plugin_registry_into(registry: Dict) -> List[str]:
+    """Register every ``fap.visuals`` plugin into the legacy ``registry`` via
+    ``register_viz``, so Open Play Studio lists them beside the native engine charts.
+    Returns the plugin display names actually added.
+
+    Collision policy — SKIP, preferring the existing legacy entry: if a plugin's
+    display name already exists in ``registry`` (both systems ship a 'Shot Map', a
+    'Pass Map', …), the legacy renderer is kept. That renderer is the byte-identical
+    Opponent-Analysis one the Studio is built around; silently shadowing it, or
+    minting confusing 'X (2)' duplicates that render differently, would both be worse
+    than omitting a redundant second copy. Uniquely-named plugins (e.g. the four
+    Comparison charts) always get added. Idempotent: a second call adds nothing."""
+    from fap.visuals.base import load_builtin_visuals, visual_registry
+    load_builtin_visuals()          # idempotent (registries dedupe by class identity)
+    added: List[str] = []
+    for viz_id in visual_registry.ids():
+        plugin_cls = visual_registry.get(viz_id)
+        info = plugin_cls.info
+        if info.name in registry:
+            continue                # keep the existing legacy entry (see docstring)
+        register_viz(info.name, info.category, _make_plugin_adapter(plugin_cls),
+                     uses_pitch=bool(getattr(plugin_cls, "pitch_based", True)))
+        added.append(info.name)
+    return added
+
+
 def _register_open_play_engine() -> None:
     """Phase 16.0: publish the running engine through the stable public interface so a
     second UI (the Open Play Studio) can drive the EXACT same engine without importing
-    this module. References only — no analytics/render/export behavior changes."""
+    this module. References only — no analytics/render/export behavior changes.
+
+    Before publishing, bridge the newer ``visual_registry`` plugins into VIZ_REGISTRY so
+    the Studio (which reads this same dict) also lists every chart/map plugin."""
+    _bridge_plugin_registry_into(VIZ_REGISTRY)
     _register_engine(_OpenPlayEngine(
         version="16.0",
         viz_registry=VIZ_REGISTRY,
