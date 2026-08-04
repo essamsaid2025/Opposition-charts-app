@@ -1350,13 +1350,16 @@ class OpenPlayStudioPage(Page):
   border-radius:8px; background: var(--fap-hover); color: var(--fap-primary); }
 .ops-tb-title .t { font-weight: 800; font-size: 0.98rem; line-height:1.1; }
 .ops-tb-title .s { font-size: 11px; color: var(--fap-text-muted); }
-.st-key-ops_toolbar .stButton > button, .st-key-ops_toolbar [data-testid="stDownloadButton"] > button {
+/* descendant selector (not '>') is deliberate: toolbar buttons carry help= tooltips, so
+   Streamlit nests the <button> under stTooltipIcon/stTooltipHoverTarget — a direct-child
+   selector misses them and the icon glyph (::before) never renders. */
+.st-key-ops_toolbar .stButton button, .st-key-ops_toolbar [data-testid="stDownloadButton"] button {
   min-height: 34px; color: var(--fap-text); display:flex; align-items:center; justify-content:center; }
-.st-key-ops_toolbar .stButton > button::before {
+.st-key-ops_toolbar .stButton button::before {
   content:""; display:inline-block; width:16px; height:16px; background-color: currentColor;
   -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center;
   -webkit-mask-size:contain; mask-size:contain; }
-.st-key-ops_toolbar .stButton > button:hover { color: var(--fap-primary); }
+.st-key-ops_toolbar .stButton button:hover { color: var(--fap-primary); }
 .ops-h { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
   color: var(--fap-text-subtle); margin: 4px 2px 8px; }
 [class*="st-key-ops_panel_"] { background: var(--fap-surface); border: 1px solid var(--fap-border);

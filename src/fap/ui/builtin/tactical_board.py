@@ -514,18 +514,20 @@ class TacticalBoardPage(Page):
 <style>
 .st-key-tb_toolbar { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 12px; padding: 6px 10px; margin-bottom: 12px; }
-.st-key-tb_toolbar .stButton > button, .st-key-tb_toolbar [data-testid="stDownloadButton"] > button {
+.st-key-tb_toolbar .stButton button, .st-key-tb_toolbar [data-testid="stDownloadButton"] button {
   min-height: 38px; color: var(--fap-text); display: flex; align-items: center; justify-content: center; }
 /* base icon glyph: the per-button mask-image comes from nav.icon_css; this gives it a
-   box + paints it with the button's currentColor so the icons are actually visible */
-.st-key-tb_toolbar .stButton > button::before,
-.st-key-tb_toolbar [data-testid="stDownloadButton"] > button::before {
+   box + paints it with the button's currentColor so the icons are actually visible.
+   NOTE: descendant (not '>') so tooltip-wrapped buttons (help=) still match — Streamlit
+   nests the <button> under stTooltipIcon/stTooltipHoverTarget when a tooltip is set. */
+.st-key-tb_toolbar .stButton button::before,
+.st-key-tb_toolbar [data-testid="stDownloadButton"] button::before {
   content: ""; display: inline-block; width: 18px; height: 18px; background-color: currentColor;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
   -webkit-mask-size: contain; mask-size: contain; }
-.st-key-tb_toolbar .stButton > button:hover,
-.st-key-tb_toolbar [data-testid="stDownloadButton"] > button:hover { color: var(--fap-primary); }
+.st-key-tb_toolbar .stButton button:hover,
+.st-key-tb_toolbar [data-testid="stDownloadButton"] button:hover { color: var(--fap-primary); }
 .tb-panel-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   color: var(--fap-text-subtle); margin: 2px 2px 8px; }
 .tb-board { background: var(--fap-surface); border: 1px solid var(--fap-border);
