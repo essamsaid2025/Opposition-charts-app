@@ -265,3 +265,156 @@ def test_generic_json_never_steals_vendor_json(importer):
 
 def test_generic_json_registered():
     assert "generic_json" in set(provider_registry.ids())
+
+
+# ================================================================ opta — deep vocabulary
+# A cross-from-corner, a through-ball assist, a headed shot on target, and a red
+# card - each exercising qualifier ids the old 1-qualifier parser ignored.
+OPTA_DEEP = b"""<Games><Game id="g2" competition_name="UCL" season_name="2025/26" game_date="2026-03-01">
+<Event id="1" type_id="1" period_id="1" min="5" sec="10" team_id="10" player_id="100" outcome="1" x="80" y="90">
+  <Q qualifier_id="2"/><Q qualifier_id="6"/><Q qualifier_id="140" value="95.0"/><Q qualifier_id="141" value="50.0"/>
+</Event>
+<Event id="2" type_id="1" period_id="1" min="6" sec="20" team_id="10" player_id="101" outcome="1" x="60" y="50">
+  <Q qualifier_id="4"/><Q qualifier_id="210"/>
+</Event>
+<Event id="3" type_id="15" period_id="1" min="7" sec="0" team_id="10" player_id="102" outcome="0" x="88" y="45">
+  <Q qualifier_id="15"/>
+</Event>
+<Event id="4" type_id="17" period_id="2" min="80" sec="0" team_id="10" player_id="103" outcome="0" x="0" y="0">
+  <Q qualifier_id="33"/>
+</Event>
+</Game></Games>"""
+
+
+def _opta_load(options=None):
+    return provider_registry.create("opta_f24").load(BytesIO(OPTA_DEEP), "opta_deep.xml",
+                                                     options=options)
+
+
+def test_opta_qualifiers_resolve_subtypes():
+    f = _opta_load().frame
+    # cross from a corner -> its own canonical event_type + set piece resolved
+    assert f.loc[0, "event_type"] == "cross"
+    assert f.loc[0, "set_piece"] == "Corner"
+    assert f.loc[0, "end_x"] == pytest.approx(95.0)
+    # through ball that is an assist -> sub-type + assist/key_pass flags
+    assert f.loc[1, "event_type"] == "pass" and f.loc[1, "sub_event"] == "through ball"
+    assert bool(f.loc[1, "assist"]) and bool(f.loc[1, "key_pass"])
+
+
+def test_opta_shot_bodypart_and_card():
+    f = _opta_load().frame
+    # attempt-saved header -> shot, on-target "Saved", head body part
+    assert f.loc[2, "event_type"] == "shot"
+    assert f.loc[2, "shot_result"] == "Saved" and f.loc[2, "body_part"] == "head"
+    # red-card qualifier -> card event with the colour resolved
+    assert f.loc[3, "event_type"] == "card" and f.loc[3, "sub_event"] == "red card"
+
+
+def test_opta_name_resolution_with_lineup():
+    lineup = {"teams": {"10": "Real Madrid"},
+              "players": {"100": "Vinicius", "101": "Bellingham",
+                          "102": "Mbappe", "103": "Ruediger"}}
+    ds = _opta_load(options={"lineup_data": lineup})
+    f = ds.frame
+    assert f.loc[0, "team"] == "Real Madrid" and f.loc[0, "player"] == "Vinicius"
+    assert f.loc[1, "player"] == "Bellingham"
+    assert ds.meta["name_resolution"] == "resolved" and ds.meta["unresolved_players"] == []
+
+
+def test_opta_name_resolution_nested_lineup_shape():
+    lineup = {"teams": [{"id": "10", "name": "Real Madrid",
+                         "players": [{"id": "100", "name": "Vinicius"}]}]}
+    f = _opta_load(options={"lineup_data": lineup}).frame
+    assert f.loc[0, "team"] == "Real Madrid" and f.loc[0, "player"] == "Vinicius"
+
+
+def test_opta_falls_back_to_ids_without_lineup():
+    ds = _opta_load()
+    f = ds.frame
+    assert f.loc[0, "team"] == "10" and f.loc[0, "player"] == "100"   # raw ids kept
+    assert ds.meta["name_resolution"] == "ids_only"
+    assert "100" in ds.meta["unresolved_players"]
+
+
+def test_opta_backwards_compatible_and_robust():
+    # original fixture still parses exactly as before
+    f = provider_registry.create("opta_f24").load(BytesIO(OPTA_XML), "opta_f24_game.xml").frame
+    assert f.loc[0, "event_type"] == "pass" and f.loc[1, "shot_result"] == "Goal"
+    # a malformed x value must not raise (row kept, x is NaN)
+    bad = b'<Games><Game id="g"><Event id="1" type_id="1" x="oops" y="5"/></Game></Games>'
+    f2 = provider_registry.create("opta_f24").load(BytesIO(bad), "opta.xml").frame
+    assert len(f2) == 1 and pd.isna(f2.loc[0, "x"])
+
+
+# ================================================================ wyscout — deep vocabulary
+WS_DEEP = {"events": [
+    {"eventName": "Pass", "subEventName": "Cross", "teamId": 675, "playerId": 10,
+     "matchPeriod": "1H", "eventSec": 30, "positions": [{"x": 80, "y": 90}, {"x": 95, "y": 50}],
+     "tags": [{"id": 301}, {"id": 402}, {"id": 1801}]},
+    {"eventName": "Shot", "subEventName": "Shot", "teamId": 675, "playerId": 11,
+     "matchPeriod": "2H", "eventSec": 600, "positions": [{"x": 88, "y": 45}],
+     "tags": [{"id": 403}, {"id": 101}]},
+    {"eventName": "Foul", "subEventName": "", "teamId": 675, "playerId": 12,
+     "matchPeriod": "2H", "eventSec": 700, "positions": [{"x": 50, "y": 50}],
+     "tags": [{"id": 1701}]},
+    {"eventName": "Pass", "subEventName": "High pass", "teamId": 675, "playerId": 13,
+     "matchPeriod": "1H", "eventSec": 40, "positions": [{"x": 40, "y": 30}, {"x": 70, "y": 60}],
+     "tags": [{"id": 901}, {"id": 1802}]},
+]}
+
+
+def _ws_load(payload, options=None):
+    return provider_registry.create("wyscout").load(
+        BytesIO(json.dumps(payload).encode()), "wyscout_deep.json", options=options)
+
+
+def test_wyscout_tags_resolve_subtypes():
+    f = _ws_load(WS_DEEP).frame
+    # cross sub-event lifted to its own type; assist tag sets assist + key_pass
+    assert f.loc[0, "event_type"] == "cross"
+    assert bool(f.loc[0, "assist"]) and bool(f.loc[0, "key_pass"])
+    assert f.loc[0, "body_part"] == "right foot" and f.loc[0, "outcome"] == "successful"
+    # through-ball tag recorded, inaccurate tag -> unsuccessful
+    assert "through ball" in f.loc[3, "notes"] and f.loc[3, "outcome"] == "unsuccessful"
+
+
+def test_wyscout_shot_and_card_tags():
+    f = _ws_load(WS_DEEP).frame
+    assert f.loc[1, "shot_result"] == "Goal" and f.loc[1, "body_part"] == "head"
+    # a foul carrying a red-card tag resolves the card
+    assert f.loc[2, "sub_event"] == "red card" and "red card" in f.loc[2, "notes"]
+
+
+def test_wyscout_name_resolution_with_lineup():
+    lineup = {"teams": {"675": "Zamalek"},
+              "players": {"10": "Shikabala", "11": "Zizo", "12": "Fatouh", "13": "Attia"}}
+    ds = _ws_load(WS_DEEP, options={"lineup_data": lineup})
+    f = ds.frame
+    assert f.loc[0, "team"] == "Zamalek" and f.loc[0, "player"] == "Shikabala"
+    assert ds.meta["name_resolution"] == "resolved"
+
+
+def test_wyscout_name_resolution_from_embedded_roster():
+    payload = dict(WS_DEEP,
+                   teams=[{"wyId": 675, "name": "Zamalek"}],
+                   players=[{"wyId": 10, "shortName": "Shikabala"}])
+    ds = _ws_load(payload)                       # no options -> embedded roster used
+    assert ds.frame.loc[0, "team"] == "Zamalek" and ds.frame.loc[0, "player"] == "Shikabala"
+    assert ds.meta["name_resolution"] == "resolved"
+
+
+def test_wyscout_falls_back_to_ids_without_lineup():
+    ds = _ws_load(WS_DEEP)
+    assert ds.frame.loc[0, "team"] == "675" and ds.frame.loc[0, "player"] == "10"
+    assert ds.meta["name_resolution"] == "ids_only" and "10" in ds.meta["unresolved_players"]
+
+
+def test_wyscout_backwards_compatible_and_robust():
+    f = provider_registry.create("wyscout").load(
+        BytesIO(json.dumps(WS_EVENTS).encode()), "wyscout_match.json").frame
+    assert f.loc[0, "event_type"] == "Pass" and f.loc[0, "outcome"] == "successful"
+    # a non-list payload raises a clean ProviderError, not a raw TypeError
+    from fap.core.exceptions import ProviderError
+    with pytest.raises(ProviderError):
+        provider_registry.create("wyscout").load(BytesIO(b'{"events": 5}'), "w.json")
