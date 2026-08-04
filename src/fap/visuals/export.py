@@ -11,7 +11,8 @@ from typing import Iterable
 
 from matplotlib.figure import Figure
 
-from fap.exports.base import ExportPayload, ExportResult, export_registry
+from fap.exports.base import (ExportPayload, ExportResult, export_registry,
+                              load_builtin_exporters)
 from fap.utils.text import slugify
 
 DPI_PRESETS = {"screen": 160, "standard": 240, "print": 300, "ultra": 600}
@@ -19,6 +20,15 @@ DPI_PRESETS = {"screen": 160, "standard": 240, "print": 300, "ultra": 600}
 
 class ExportEngine:
     def __init__(self, registry=export_registry) -> None:
+        # Defensive load, mirroring viz_workspace._registry() for visuals: the
+        # exporter plugin registry is only populated by load_builtin_exporters(),
+        # which init_app() runs but the Streamlit entrypoint (app.py -> only
+        # init_platform) does not - so a bare `ExportEngine().export(fig, fmt="png")`
+        # would otherwise raise PluginNotFoundError. This is idempotent (module
+        # re-import is cached, re-registration is a no-op), so calling it on every
+        # construction guarantees a populated registry however the process booted.
+        if registry is export_registry:
+            load_builtin_exporters()
         self._registry = registry
 
     def formats(self) -> list[str]:

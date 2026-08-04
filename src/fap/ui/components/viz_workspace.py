@@ -21,10 +21,13 @@ from __future__ import annotations
 import hashlib
 import html as _html
 import json
+import logging
 import uuid
 from typing import Any
 
 import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 from fap.theme import components as C
 from fap.theme import icon
@@ -611,6 +614,10 @@ def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name,
                 col.download_button(fmt.upper(), data=res.data, file_name=res.filename,
                                     mime=res.mime, key=f"{key}_exp_{fmt}", use_container_width=True)
             except Exception:
+                # Keep the UI graceful, but never swallow the cause silently - an
+                # empty exporter registry (the class of bug this guards) must be
+                # visible in the logs.
+                logger.exception("Export to %s failed for %r", fmt, viz_id or title)
                 col.caption(f"{fmt.upper()} unavailable")
 
         # assign the exact rendered chart to the player's report (Scouting/Players)
@@ -619,6 +626,8 @@ def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name,
                 try:
                     png_bytes = export.export(fig, title, fmt="png").data
                 except Exception:
+                    logger.exception("PNG export for report assignment failed for %r",
+                                     viz_id or title)
                     png_bytes = None
             if png_bytes and st.button("Assign to player report", key=f"{key}_assign",
                                        type="primary", use_container_width=True):

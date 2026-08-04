@@ -62,6 +62,48 @@ def test_clipboard_png():
     plt.close(fig)
 
 
+def test_export_engine_self_loads_builtins_after_init_platform_only():
+    """Regression for the Player Visualization Workspace export/assign bug.
+
+    app.py boots the running process via ``init_platform`` (never ``init_app``), and
+    ``init_platform`` registers no exporters - so the figure exporter registry starts
+    empty. A bare ``ExportEngine().export(fig, fmt="png")`` must therefore self-heal by
+    loading the builtin exporters, not raise ``PluginNotFoundError('png')`` (which the
+    workspace swallowed into a silent "PNG unavailable", also hiding the Assign button).
+
+    Faithfully reproduces a pristine process: the registry is emptied AND the builtin
+    exporter modules are evicted from ``sys.modules`` (registration only runs on first
+    import, so clearing the registry alone would not undo it). Against the pre-fix code
+    the export raises ``PluginNotFoundError``; the defensive load in ``ExportEngine``
+    imports the exporters on first construction and the export succeeds."""
+    import sys
+    from fap.bootstrap import init_platform
+    from fap.exports.base import export_registry, load_builtin_exporters
+
+    original = dict(export_registry._plugins)
+    builtin_mods = {name: mod for name, mod in list(sys.modules.items())
+                    if name == "fap.exports.builtin" or name.startswith("fap.exports.builtin.")}
+    try:
+        export_registry._plugins.clear()          # as if load_builtin_exporters never ran
+        for name in builtin_mods:                 # ...and the modules were never imported
+            del sys.modules[name]
+        init_platform()                           # app.py's boot path — registers NO exporters
+        assert export_registry.ids() == []        # root cause: platform init doesn't load them
+
+        fig = _fig()
+        # no explicit load_builtin_exporters() here: constructing ExportEngine must do it
+        result = ExportEngine().export(fig, "test", fmt="png")
+        assert result.data[:8] == b"\x89PNG\r\n\x1a\n" and result.mime == "image/png"
+        assert {"png", "svg", "pdf"} <= set(ExportEngine().formats())
+        plt.close(fig)
+    finally:                                       # restore the suite's registry + modules
+        sys.modules.update(builtin_mods)
+        export_registry._plugins.clear()
+        export_registry._plugins.update(original)
+        if not export_registry._plugins:
+            load_builtin_exporters()
+
+
 # ---------------------------------------------------------------- theme engine
 def test_all_professional_themes_load():
     required = {"opta_dark", "opta_light", "statsbomb", "hudl", "athletic",
