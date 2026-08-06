@@ -235,3 +235,64 @@ def test_session_expiry_rules():
     assert is_session_expired(now - 100 * 60, now, 60, remember=True) is False     # remembered
     assert is_session_expired(now - 100 * 60, now, 0, remember=False) is False      # timeout disabled
     assert is_session_expired(None, now, 60, remember=False) is False               # no login stamp
+
+
+# ---------------------------------------------------------------- AuthBackend: no silent swallow
+class _BoomSessions:
+    def is_revoked(self, sid): raise RuntimeError("db down")
+    def touch(self, sid): raise RuntimeError("db down")
+    def force_logout(self, sid): raise RuntimeError("db down")
+
+
+class _BoomAudit:
+    def record(self, *a, **k): raise RuntimeError("db down")
+
+
+class _BoomUsers:
+    def get(self, email): raise RuntimeError("db down")
+
+
+class _BoomAdmin:
+    sessions = _BoomSessions()
+    audit = _BoomAudit()
+    users = _BoomUsers()
+
+
+def _backend():
+    from fap.identity.enterprise import AuthBackend
+    return AuthBackend(_BoomAdmin(), permissions=None)
+
+
+def test_is_revoked_fails_closed_and_logs(caplog):
+    """SECURITY: a failing revocation check must deny (treat as revoked), not allow,
+    and must never be silent."""
+    import logging
+    be = _backend()
+    with caplog.at_level(logging.ERROR, logger="fap.identity.enterprise"):
+        assert be.is_revoked("sid-123") is True          # fail CLOSED, not False
+    assert any("failing closed" in r.getMessage() or "revocation check failed" in r.getMessage()
+               for r in caplog.records)
+    assert any(r.exc_info for r in caplog.records)         # logged WITH the traceback
+
+
+def test_directory_lookup_error_is_logged(caplog):
+    import logging
+    be = _backend()
+    with caplog.at_level(logging.ERROR, logger="fap.identity.enterprise"):
+        assert be.directory("who@club.com") is None        # contract kept
+    assert any("directory lookup failed" in r.getMessage() for r in caplog.records)
+
+
+def test_session_and_audit_failures_are_logged_but_non_fatal(caplog):
+    import logging
+    from fap.identity.models import User
+    be = _backend()
+    user = User(email="u@club.com", name="U", role=Role.READ_ONLY, provider_id="dev")
+    with caplog.at_level(logging.ERROR, logger="fap.identity.enterprise"):
+        be.heartbeat("sid")                                # must not raise
+        be.revoke(user, "sid")                             # must not raise
+        be.audit_failed_login("u@club.com", "bad", "dev")  # must not raise
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "heartbeat failed" in msgs
+    assert "revoke" in msgs
+    assert "failed-login audit" in msgs

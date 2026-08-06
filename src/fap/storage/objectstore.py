@@ -118,6 +118,10 @@ class S3ObjectStore(ObjectStore):
             obj = self._s3.get_object(Bucket=self._bucket, Key=key)
             return obj["Body"].read()
         except Exception:
+            # NoSuchKey and real infra errors (auth/network/permissions) both land
+            # here; the None contract can't tell them apart, so log the real cause -
+            # otherwise an outage looks identical to missing data. Contract unchanged.
+            logger.exception("S3 get failed for key %r in bucket %r", key, self._bucket)
             return None
 
     def _head(self, key: str) -> dict[str, Any] | None:

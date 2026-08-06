@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import sys
 from io import BytesIO
@@ -42,6 +43,8 @@ except Exception:
 # The platform package lives in src/ and is not pip-installed; make `fap`
 # importable exactly the way the test-suite bootstrap already does.
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+logger = logging.getLogger("fap.app")
 
 # A redeploy can re-run this script in a process that still holds the previous
 # deploy's fap modules; the imports below would then bind to superseded code.
@@ -283,7 +286,9 @@ def _audit_login(user) -> None:
         workspace_manager().audit.record(user, "login")
         st.session_state["_audited_login"] = user.email
     except Exception:
-        pass
+        # The login itself still proceeds, but a failing audit trail must never be
+        # invisible - a silent gap in the security log is itself worth recording.
+        logger.exception("login audit record failed for %s", getattr(user, "email", "?"))
 
 
 def _record_import(user, filename: str, result, frame=None) -> None:
@@ -309,8 +314,13 @@ def _record_import(user, filename: str, result, frame=None) -> None:
         wm.set_active_dataset(user, dataset.id,
                               frame=frame if frame is not None else result.frame)
         st.session_state["_recorded_import"] = result.provider_id + filename
-    except Exception:
-        pass
+    except Exception as exc:
+        # A failure here means the import LOOKED successful but the dataset never
+        # went active - the worst kind of silent failure. Surface it so the user
+        # knows to retry, and leave the dedupe flag unset so a retry is possible.
+        logger.exception("registering/activating imported dataset %r failed", filename)
+        st.error(f"The file was read but could not be saved as the active dataset: {exc}. "
+                 "Nothing was activated - please try importing again.")
 
 
 # ---------------------------------------------------------------- active dataset (Phase 12.1)
@@ -325,7 +335,12 @@ def _active_dataset_frame(user):
     try:
         frame = wm.active_frame(user)
         dataset = wm.active_dataset(user)
-    except Exception:
+    except Exception as exc:
+        # A fetch error is NOT the same as "nothing is active": log it, and tell the
+        # user this is a load failure so they don't read it as an empty workspace.
+        logger.exception("fetching active dataset failed")
+        st.error(f"Could not load the active dataset: {exc}. This is a load error, not "
+                 "an empty workspace - your data is still saved.")
         return None, None
     if frame is None or getattr(frame, "empty", True):
         return None, None
@@ -2450,6 +2465,7 @@ def run_app():
                 try:
                     fig = entry["render"](f, ctx)
                 except Exception as ex:
+                    logger.exception("Open Play Studio render failed for %r", chart_type)
                     st.error(f"Render error: {ex}")
         if fig is not None:
             st.pyplot(fig, use_container_width=True)

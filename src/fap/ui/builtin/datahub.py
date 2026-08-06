@@ -10,6 +10,7 @@ the active dataset all modules already read) - no duplicated import anywhere.
 from __future__ import annotations
 
 import html as _html
+import logging
 from typing import Any
 
 import streamlit as st
@@ -30,6 +31,8 @@ RAWNAME = "_dh_import_name"
 
 _HEALTH_KIND = {"green": "success", "yellow": "warning", "red": "danger"}
 _RATING_KIND = {"Excellent": "success", "Good": "success", "Fair": "warning", "Poor": "danger"}
+
+logger = logging.getLogger(__name__)
 
 
 @page_registry.register
@@ -224,8 +227,13 @@ class DataHubPage(Page):
         try:
             datasets = hub.list_datasets(workspace_id=shell.workspace_id,
                                          include_archived=show_archived)
-        except Exception:
-            datasets = []
+        except Exception as exc:
+            # Do NOT disguise a backend failure as an empty library: log it and show
+            # a distinct error, so the user knows their datasets may still exist.
+            logger.exception("list_datasets failed for workspace %r", shell.workspace_id)
+            C.render_alert(f"Could not load your datasets: {exc}. This is a load error, "
+                           "not an empty library - please retry.", "danger")
+            return
         if not datasets:
             C.render_empty_state("No datasets yet", "Import your first file in the Import tab - "
                                  "it becomes a reusable dataset every module can open.",

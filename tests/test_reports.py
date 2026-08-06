@@ -262,3 +262,35 @@ def test_engine_does_not_modify_visualization_or_analytics():
     import fap.reports.builtin.possession as p
     src = pathlib.Path(p.__file__).read_text(encoding="utf-8")
     assert "fap.visuals import analysis" in src           # reads selectors
+
+
+# ------------------------------------------------- silent-failure logging (safe helper)
+def test_safe_helper_logs_the_failing_callable(caplog):
+    """The report section safe() must not swallow computation errors silently -
+    ~22 call sites depend on this being logged with the failing callable name."""
+    import logging
+    from fap.reports.builtin._common import safe
+
+    def broken_metric():
+        raise ValueError("bad column")
+
+    with caplog.at_level(logging.ERROR, logger="fap.reports.builtin._common"):
+        assert safe(broken_metric, default="fallback") == "fallback"   # graceful default kept
+    assert any("broken_metric" in r.getMessage() for r in caplog.records)
+    assert any(r.exc_info for r in caplog.records)                      # traceback captured
+
+
+def test_pdf_image_decode_failure_is_logged(caplog):
+    """A chart/image that fails to decode must not vanish from the PDF silently."""
+    import logging
+    import matplotlib.pyplot as plt
+    from types import SimpleNamespace
+    from fap.reports._pdf import _draw_image
+
+    el = SimpleNamespace(content={"image_bytes": b"not-a-real-image"},
+                         fx=0.1, fy=0.1, fw=0.3, fh=0.3, kind="chart", opacity=1.0)
+    fig = plt.figure()
+    with caplog.at_level(logging.ERROR, logger="fap.reports._pdf"):
+        _draw_image(fig, el)          # must not raise
+    plt.close(fig)
+    assert any("could not decode image" in r.getMessage() for r in caplog.records)

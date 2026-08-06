@@ -142,7 +142,17 @@ def logout() -> None:
         try:
             st.logout()
         except Exception:
-            pass
+            # The app-level session is already cleared above, so the user IS signed
+            # out of the platform; this only tears down the identity-provider's native
+            # session. If it fails, log it and warn the user their IdP sign-out may be
+            # incomplete (e.g. a shared machine) rather than let it no-op silently.
+            logger.exception("st.logout() (identity-provider sign-out) failed")
+            try:
+                st.warning("You have been signed out of the app, but signing out of your "
+                           "identity provider may not have completed. Close your browser "
+                           "to be sure, especially on a shared device.")
+            except Exception:
+                pass
 
 
 def roles() -> list[Role]:

@@ -101,7 +101,9 @@ def _save(shell, scope: str, doc: dict) -> None:
     try:
         shell.wm.autosave(shell.user, doc, scope=scope)
     except Exception:
-        pass
+        # autosave of favorites/layout/filter presets - fails silently otherwise,
+        # so the user's saved state just never persists with no clue why.
+        logger.exception("workspace autosave failed for scope %r", scope)
 
 
 def _favorites(shell) -> dict[str, list[str]]:
@@ -281,6 +283,9 @@ def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
     try:
         active = shell.wm.active_dataset(shell.user) if shell.wm is not None else None
     except Exception:
+        # a lookup error would otherwise render as the legitimate "No active dataset"
+        # empty state below, hiding a real backend failure - log the real cause.
+        logger.exception("active dataset lookup failed in viz workspace")
         active = None
 
     # --- empty states (Data Hub aware) ---

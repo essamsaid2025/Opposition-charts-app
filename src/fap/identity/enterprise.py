@@ -49,6 +49,9 @@ class AuthBackend:
         try:
             return self._admin.users.get(email)
         except Exception:
+            # on the login/authorization path - a lookup error here silently reads
+            # as "not in the directory", so it must at least be logged.
+            logger.exception("directory lookup failed for %s", email)
             return None
 
     def accept_invitation(self, email: str, name: str, provider_id: str) -> PlatformUser | None:
@@ -95,20 +98,32 @@ class AuthBackend:
         try:
             return self._admin.sessions.is_revoked(session_id)
         except Exception:
-            return False
+            # SECURITY: fail CLOSED. This decides whether a possibly-revoked session
+            # may keep acting. If the check itself errors we cannot prove the session
+            # is still valid, so we treat it as revoked (deny) rather than let a
+            # revoked session survive a transient error. Deliberate UX tradeoff: a
+            # backend blip can log out a legitimate user - who simply re-authenticates
+            # - which is strictly preferable to a revoked session staying alive.
+            logger.exception("revocation check failed for session %s; failing closed "
+                             "(treating as revoked)", session_id)
+            return True
 
     def heartbeat(self, session_id: str) -> None:
         try:
             self._admin.sessions.touch(session_id)
         except Exception:
-            pass
+            # non-fatal (session stays active), but a persistently failing heartbeat
+            # would silently stop last-seen tracking - log it.
+            logger.exception("session heartbeat failed for %s", session_id)
 
     def revoke(self, user: User, session_id: str) -> None:
         try:
             self._admin.sessions.force_logout(session_id)
             self._admin.audit.record(user, "auth.logout", target_type="user", target_id=user.email)
         except Exception:
-            pass
+            # logout must still complete for the user; a failed force-logout or a
+            # missing logout audit entry is security-relevant and must be logged.
+            logger.exception("session revoke / logout-audit failed for session %s", session_id)
 
     # -- audit --------------------------------------------------------
     def audit_failed_login(self, email: str, reason: str, provider_id: str = "") -> None:
@@ -117,7 +132,8 @@ class AuthBackend:
                                      target_id=email, detail={"reason": reason,
                                                               "provider": provider_id})
         except Exception:
-            pass
+            # a failed-login that we then fail to audit is doubly worth a log line.
+            logger.exception("recording failed-login audit for %s failed", email)
 
 
 def backend() -> AuthBackend | None:

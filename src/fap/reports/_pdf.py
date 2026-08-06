@@ -8,9 +8,12 @@ package never pulls in matplotlib until a PDF is actually requested.
 from __future__ import annotations
 
 import io
+import logging
 from typing import Any
 
 from fap.reports.layout import RenderedDocument, RenderedElement, RenderedPage
+
+logger = logging.getLogger(__name__)
 
 # role -> font size in points (independent of medium; scaled by the figure DPI)
 _ROLE_PT = {"title": 30, "subtitle": 16, "h1": 17, "h2": 14,
@@ -38,7 +41,10 @@ def render_pdf(rendered: RenderedDocument, branding: Any = None) -> bytes:
                 try:
                     _draw_element(fig, el, ink, muted, primary)
                 except Exception:
-                    pass                                  # one bad element never fails the page
+                    # one bad element never fails the page - but a silently vanished
+                    # chart/table/KPI must leave a trace to be debuggable.
+                    logger.exception("PDF export: dropping element kind=%r on page %r",
+                                     getattr(el, "kind", "?"), getattr(page, "index", "?"))
             _draw_furniture(fig, page, muted, primary)
             pdf.savefig(fig, facecolor=fig.get_facecolor())
             plt.close(fig)
@@ -118,6 +124,9 @@ def _draw_image(fig, el: RenderedElement) -> None:
         from PIL import Image
         img = Image.open(io.BytesIO(data)).convert("RGBA")
     except Exception:
+        # a corrupt/undecodable image silently disappears from the PDF otherwise
+        logger.exception("PDF export: could not decode image for element kind=%r",
+                         getattr(el, "kind", "?"))
         return
     left, bottom, w, h = _rect((el.fx, el.fy, el.fw, el.fh))
     ax = fig.add_axes([left, bottom, w, h]); ax.set_axis_off()

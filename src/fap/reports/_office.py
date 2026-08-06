@@ -14,9 +14,12 @@ position (charts/images as pictures, text as editable text boxes).
 from __future__ import annotations
 
 import io
+import logging
 from typing import Any
 
 from fap.reports.layout import RenderedDocument, RenderedElement, RenderedPage
+
+logger = logging.getLogger(__name__)
 
 _ROLE_STYLE = {"title": "Title", "subtitle": "Subtitle", "h1": "Heading 1",
                "h2": "Heading 2", "meta": "Normal", "body": "Normal", "caption": "Caption"}
@@ -81,7 +84,9 @@ def _docx_element(doc, el: RenderedElement) -> None:
             try:
                 doc.add_picture(io.BytesIO(data), width=Inches(6 * el.fw))
             except Exception:
-                pass
+                # image embed failed - it silently drops from the Word doc otherwise
+                logger.exception("DOCX export: could not embed image for element kind=%r",
+                                 getattr(el, "kind", "?"))
         if c.get("caption"):
             doc.add_paragraph(c["caption"], style="Caption")
         return

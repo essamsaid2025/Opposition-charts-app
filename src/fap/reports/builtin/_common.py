@@ -3,17 +3,25 @@ platform (fap.metrics, fap.analytics, fap.visuals.analysis) - nothing here
 recomputes what the platform already computes."""
 from __future__ import annotations
 
+import logging
 from typing import Callable
 
 import pandas as pd
 
 from fap.reports.models import Insight, KPI, Table
 
+logger = logging.getLogger(__name__)
+
 
 def safe(fn: Callable, default=None):
     try:
         return fn()
     except Exception:
+        # Every report section computation routes through here; without this a
+        # failing metric/insight/table just becomes a silently-missing value in the
+        # exported report. Log which callable failed (~22 call sites) then fall back.
+        logger.exception("report section helper %s failed; using default",
+                         getattr(fn, "__name__", repr(fn)))
         return default
 
 
