@@ -135,19 +135,42 @@ def xt_gain(df: pd.DataFrame) -> pd.Series:
     return pd.Series(gain, index=d.index)
 
 # ------------------------------------------------------------------ networks
+def infer_receivers(df: pd.DataFrame) -> pd.Series:
+    """Best-effort receiver for each row when the feed has no recipient column:
+    the next event's player, in time order, if it's a different player on the same
+    team. A common heuristic for building pass combinations from bare event feeds."""
+    d = df.sort_values(["minute", "second"], kind="stable")
+    nxt_player = d["player"].shift(-1).astype(str).str.strip()
+    nxt_team = d["team"].shift(-1).astype(str).str.strip()
+    cur_team = d["team"].astype(str).str.strip()
+    cur_player = d["player"].astype(str).str.strip()
+    ok = (nxt_team == cur_team) & nxt_player.ne("") & nxt_player.ne(cur_player)
+    return nxt_player.where(ok, "").reindex(df.index).fillna("")
+
+
 def pass_network(df: pd.DataFrame, *, min_links: int = 2
                  ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Nodes (player avg position + volume) and edges (pair counts) from
-    successful passes with a known receiver."""
+    """Nodes (player avg position + volume) and edges (pair counts) from successful
+    passes with a known receiver. When the feed carries no recipient column the
+    receiver is inferred from the next touch, so a bare events export still yields a
+    network instead of crashing."""
     d = successful(passes(df))
-    d = d[d["player"].str.strip().ne("") & d["receiver"].str.strip().ne("")]
+    if "receiver" not in d.columns:
+        d = d.assign(receiver="")
+    d = d[d["player"].str.strip().ne("")]
+    if not d.empty and not d["receiver"].str.strip().ne("").any():
+        d = d.assign(receiver=infer_receivers(df).reindex(d.index).fillna(""))
+    d = d[d["receiver"].str.strip().ne("")]
     nodes = d.groupby("player").agg(
         x=("x", "mean"), y=("y", "mean"), count=("x", "size"),
         jersey_number=("jersey_number", "first")).reset_index()
     pair = d.assign(pair=[tuple(sorted(t)) for t in zip(d["player"], d["receiver"])])
     edges = pair.groupby("pair").size().reset_index(name="count")
     edges = edges[edges["count"] >= min_links]
-    edges[["p1", "p2"]] = pd.DataFrame(edges["pair"].tolist(), index=edges.index)
+    # build p1/p2 element-wise so an EMPTY edge set can't raise "Columns must be
+    # same length as key" (the 0-column DataFrame-assignment trap).
+    edges["p1"] = edges["pair"].map(lambda t: t[0])
+    edges["p2"] = edges["pair"].map(lambda t: t[1])
     return nodes, edges.drop(columns=["pair"])
 
 # ------------------------------------------------------------------ sequences & transitions

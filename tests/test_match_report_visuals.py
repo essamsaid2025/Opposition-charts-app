@@ -140,3 +140,34 @@ def test_average_positions_two_teams_are_colour_coded_with_legend():
     ax = fig.axes[0]
     assert ax.get_legend() is not None
     plt.close(fig)
+
+
+def test_pass_network_without_receiver_column_does_not_crash():
+    """Regression: a bare events export with NO recipient column used to raise
+    'Columns must be same length as key'. Now the receiver is inferred from the next
+    touch, so a real network is produced instead of crashing."""
+    from fap.visuals import analysis as A
+    raw = pd.DataFrame({
+        "event_type": ["pass"] * 6, "team": ["A"] * 6,
+        "player": ["P1", "P2", "P1", "P3", "P2", "P1"],
+        "x": [10, 20, 30, 40, 50, 60], "y": [50] * 6,
+        "end_x": [20, 30, 40, 50, 60, 70], "end_y": [50] * 6,
+        "outcome": ["successful"] * 6,
+        "minute": [1, 1, 2, 2, 3, 3], "second": [1, 5, 1, 5, 1, 5]})
+    frame = schema.coerce_schema(raw)                 # adds empty receiver + NaN jersey
+    assert "receiver" in frame.columns
+    nodes, edges = A.pass_network(frame, min_links=1)
+    assert {"count", "p1", "p2"} <= set(edges.columns)
+    assert len(nodes) >= 1 and len(edges) >= 1        # receivers inferred -> real edges
+    fig = visual_registry.create("pass_network").render(
+        RenderContext(df=frame, theme=THEME, controls={"title": "n"}))
+    assert fig.axes
+    plt.close(fig)
+
+
+def test_pass_network_empty_returns_valid_empty_edges():
+    """No passes at all must not raise and must return well-formed empty edges."""
+    from fap.visuals import analysis as A
+    frame = schema.coerce_schema(pd.DataFrame({"event_type": ["shot"], "x": [80], "y": [50]}))
+    nodes, edges = A.pass_network(frame)
+    assert {"count", "p1", "p2"} <= set(edges.columns) and len(edges) == 0
