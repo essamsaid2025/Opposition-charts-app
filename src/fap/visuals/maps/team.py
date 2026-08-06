@@ -91,32 +91,78 @@ class SpaceOccupation(TeamVoronoi):
             list(super().layers(ctx))
 
 
+def _avg_positions_by_team(df: pd.DataFrame) -> pd.DataFrame:
+    """Average position per player, keeping their team (for team-coloured control)."""
+    d = df[df["player"].astype(str).str.strip().ne("")]
+    if "team" in d.columns:
+        d = d.assign(team=d["team"].astype(str).str.strip())
+    else:
+        d = d.assign(team="")
+    nodes = d.groupby("player").agg(
+        x=("x", "mean"), y=("y", "mean"), count=("x", "size"),
+        jersey_number=("jersey_number", "first"),
+        team=("team", "first")).reset_index()
+    return nodes.dropna(subset=["x", "y"])
+
+
+def _short_name(name: str) -> str:
+    parts = str(name).split()
+    return parts[-1] if parts else ""
+
+
 @visual_registry.register
 class PlayerVoronoi(PitchVisualization):
-    """Per-player space control: the same average-position Voronoi as
-    ``team_voronoi``, but every player's cell gets its OWN colour so each one's
-    dominant zone reads at a glance (a distinct qualitative palette, theme-agnostic)."""
+    """Space control from average positions, done properly for a full match.
+
+    With TWO teams present the pitch is tessellated once and every cell is tinted
+    by the team that controls it (home vs away), with team-coloured player dots and
+    jersey numbers - the classic pitch-control read. With a single team it falls
+    back to a distinct colour per player. Full-name labels are off by default
+    (they overlap badly on 20+ players); the Text panel's "Show labels" adds tidy
+    surnames on demand."""
     info = PluginInfo(id="player_voronoi", name="Player Voronoi (Space Control)",
                       category=_C,
-                      description="Each player's controlled space from their average "
-                                  "position, one colour per player.")
+                      description="Territory each team/player controls from average "
+                                  "positions - team-coloured for a full match.")
     control_groups = ("titles", "pitch", "markers", "colors", "legend",
                       "text", "images", "export", "layout")
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
         import matplotlib
         from matplotlib.colors import to_hex
-        nodes = _avg_positions(ctx.df)
+        nodes = _avg_positions_by_team(ctx.df)
         if len(nodes) < 4:                                # Voronoi needs >= 4 sites
             return []
-        cmap = matplotlib.colormaps.get_cmap("tab20")     # qualitative, up to 20 players
-        n = len(nodes)
-        colors = [to_hex(cmap((i % 20) / 19.0)) for i in range(n)]
-        return [
-            layer_registry.create("voronoi", df=nodes, colors=colors, fill_alpha=0.4),
-            layer_registry.create("player_markers", df=nodes,
-                                  color=_secondary(ctx), show_names=True),
-        ]
+        c = ctx.theme.colors
+        teams = [t for t in nodes["team"].value_counts().index.tolist() if t]
+        out: list[Layer] = []
+
+        if len(teams) >= 2:                               # --- two teams: colour by team
+            a, b = teams[0], teams[1]
+            col_a = ctx.controls.get("primary_color") or c["accent"]
+            col_b = ctx.controls.get("fail_color") or c["accent_2"]
+            nodes = nodes[nodes["team"].isin([a, b])].reset_index(drop=True)
+            if len(nodes) < 4:
+                return []
+            team_col = {a: col_a, b: col_b}
+            colors = [team_col[t] for t in nodes["team"]]
+            out.append(layer_registry.create("voronoi", df=nodes, colors=colors, fill_alpha=0.45))
+            for team in (a, b):                           # team-coloured dots + numbers
+                sub = nodes[nodes["team"] == team]
+                out.append(layer_registry.create("player_markers", df=sub, color=team_col[team]))
+            ctx.legend.add(str(a), kind="patch", color=col_a)
+            ctx.legend.add(str(b), kind="patch", color=col_b)
+        else:                                             # --- one team: colour per player
+            cmap = matplotlib.colormaps.get_cmap("tab20")
+            colors = [to_hex(cmap((i % 20) / 19.0)) for i in range(len(nodes))]
+            out.append(layer_registry.create("voronoi", df=nodes, colors=colors, fill_alpha=0.4))
+            out.append(layer_registry.create("player_markers", df=nodes, color=_secondary(ctx)))
+
+        if ctx.controls.get("show_labels"):               # opt-in tidy surnames
+            out.append(layer_registry.create(
+                "labels", df=nodes.assign(_short=nodes["player"].map(_short_name)),
+                column="_short"))
+        return out
 
 
 density_map("occupation_map", "Occupation Map", lambda df, ctx: df, category=_C)

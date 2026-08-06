@@ -75,3 +75,32 @@ def test_player_voronoi_is_distinct_from_team_voronoi():
     assert {"player_voronoi", "team_voronoi"} <= set(visual_registry.ids())
     assert visual_registry.get("player_voronoi").info.name != \
         visual_registry.get("team_voronoi").info.name
+
+
+def test_player_voronoi_colours_two_teams_distinctly():
+    """Two teams -> the pitch-control cells and dots must use two different team
+    colours (not one colour for everyone), and a team legend is offered."""
+    frame = _sample_frame()
+    assert frame["team"].astype(str).str.strip().replace("", pd.NA).dropna().nunique() >= 2
+    viz = visual_registry.create("player_voronoi")
+    fig = viz.render(RenderContext(df=frame, theme=THEME,
+                                   controls={"title": "PV", "legend": True}))
+    ax = fig.axes[0]
+    # voronoi cells are matplotlib Polygons; collect their face colours
+    from matplotlib.patches import Polygon as MplPolygon
+    fills = {tuple(round(v, 3) for v in p.get_facecolor())
+             for p in ax.patches if isinstance(p, MplPolygon)}
+    assert len(fills) >= 2, "two-team Voronoi should use more than one cell colour"
+    assert ax.get_legend() is not None                    # team legend rendered
+    plt.close(fig)
+
+
+def test_player_voronoi_single_team_and_labels_render():
+    frame = _sample_frame()
+    one_team = sorted(frame["team"].astype(str).str.strip().unique())[-1]
+    single = frame[frame["team"].astype(str).str.strip() == one_team]
+    viz = visual_registry.create("player_voronoi")
+    fig = viz.render(RenderContext(df=single, theme=THEME,
+                                   controls={"show_labels": True}))   # opt-in surnames
+    assert fig.axes
+    plt.close(fig)
