@@ -386,6 +386,20 @@ class ScoutingService:
         self.videos_repo.delete(video_id)
         self.audit.record(user, "scouting.video.delete", target_type="video", target_id=video_id)
 
+    def set_video_sync(self, user: User, video_id: str, match_id: str,
+                       sync_offset_seconds: float | None) -> PlayerVideo | None:
+        """Associate a video with a match and record its kickoff offset (the two
+        Tier-1 sync fields). Both are plain metadata - no match/event data is copied
+        or duplicated. Returns the updated record, or ``None`` if it doesn't exist."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        if self.videos_repo.get(video_id) is None:
+            return None
+        offset = None if sync_offset_seconds is None else float(sync_offset_seconds)
+        self.videos_repo.set_sync(video_id, str(match_id or ""), offset)
+        self.audit.record(user, "scouting.video.sync", target_type="video", target_id=video_id,
+                          detail={"match_id": match_id, "offset": offset})
+        return self.videos_repo.get(video_id)
+
     # ================================================================ attachments
     def add_attachment(self, user: User, player_id: str, data: bytes, filename: str,
                        mime: str = "", kind: str = "document") -> PlayerAttachment:

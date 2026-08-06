@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; padding: 0; background: transparent;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #wrap { display: flex; flex-direction: column; gap: 6px; }
+  #stage { position: relative; width: 100%; background: #000; border-radius: 10px;
+    overflow: hidden; }
+  #stage video, #stage iframe { display: block; width: 100%; height: 100%; border: 0; }
+  #bar { display: none; align-items: center; gap: 10px; }
+  #bar.on { display: flex; }
+  #mark {
+    appearance: none; cursor: pointer; border: 0; border-radius: 8px;
+    padding: 7px 14px; font-size: 13px; font-weight: 700; color: #fff;
+    background: var(--accent, #E07B2B);
+  }
+  #mark:hover { filter: brightness(1.06); }
+  #hint { font-size: 12px; color: var(--muted, #8A93A2); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage"></div>
+  <div id="bar"><button id="mark" type="button">Mark kickoff</button><span id="hint"></span></div>
+</div>
+<script>
+(function () {
+  var stage = document.getElementById("stage");
+  var bar = document.getElementById("bar");
+  var markBtn = document.getElementById("mark");
+  var hint = document.getElementById("hint");
+
+  var curMode = null, curSrc = null, lastSeekNonce = null, calibrate = false;
+  var html5 = null, ytPlayer = null, vimeoPlayer = null, blobUrl = null, ytReady = false;
+
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
+  function setHeight() {
+    var w = document.body.clientWidth || 640;
+    var vh = Math.round(w * 0.5625);                 // 16:9 stage
+    stage.style.height = vh + "px";
+    var h = vh + (calibrate ? 46 : 6);
+    send("streamlit:setFrameHeight", { height: h });
+  }
+  function report(time) {
+    send("streamlit:setComponentValue", {
+      dataType: "json",
+      value: { action: "mark", time: time, nonce: String(Date.now()) } });
+  }
+  function applyColors(colors) {
+    var root = document.documentElement.style;
+    ["accent", "muted"].forEach(function (k) { if (colors[k]) root.setProperty("--" + k, colors[k]); });
+  }
+
+  // ---- script loader (YouTube / Vimeo APIs, loaded lazily & guarded) ----
+  function loadScript(src, cb) {
+    var existing = document.querySelector('script[data-vs="' + src + '"]');
+    if (existing) { cb(); return; }
+    var s = document.createElement("script");
+    s.src = src; s.async = true; s.setAttribute("data-vs", src);
+    s.onload = cb; s.onerror = function () { /* seek unsupported; playback may still show */ };
+    document.head.appendChild(s);
+  }
+
+  // ---- teardown before (re)building a player ----
+  function teardown() {
+    try { if (ytPlayer && ytPlayer.destroy) ytPlayer.destroy(); } catch (e) {}
+    try { if (vimeoPlayer && vimeoPlayer.destroy) vimeoPlayer.destroy(); } catch (e) {}
+    if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (e) {} blobUrl = null; }
+    ytPlayer = null; vimeoPlayer = null; html5 = null; ytReady = false;
+    stage.innerHTML = "";
+  }
+
+  function dataUrlToBlobUrl(dataUrl) {
+    var comma = dataUrl.indexOf(",");
+    var meta = dataUrl.substring(0, comma);
+    var b64 = dataUrl.substring(comma + 1);
+    var mm = /data:([^;]+);base64/.exec(meta);
+    var mime = mm ? mm[1] : "video/mp4";
+    var bin = atob(b64), len = bin.length, arr = new Uint8Array(len);
+    for (var i = 0; i < len; i++) arr[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([arr], { type: mime }));
+  }
+
+  function buildUpload(src) {
+    var v = document.createElement("video");
+    v.setAttribute("controls", "");
+    v.setAttribute("playsinline", "");
+    try { blobUrl = (src.indexOf("data:") === 0) ? dataUrlToBlobUrl(src) : null; } catch (e) { blobUrl = null; }
+    v.src = blobUrl || src;
+    stage.appendChild(v);
+    html5 = v;
+  }
+
+  function buildYouTube(id) {
+    var holder = document.createElement("div");
+    stage.appendChild(holder);
+    function create() {
+      try {
+        ytPlayer = new YT.Player(holder, {
+          videoId: id, width: "100%", height: "100%",
+          playerVars: { rel: 0, modestbranding: 1, playsinline: 1 },
+          events: { onReady: function () { ytReady = true; } } });
+      } catch (e) {}
+    }
+    if (window.YT && window.YT.Player) { create(); }
+    else { window.onYouTubeIframeAPIReady = create; loadScript("https://www.youtube.com/iframe_api", function () {}); }
+  }
+
+  function buildVimeo(id) {
+    var holder = document.createElement("div");
+    stage.appendChild(holder);
+    function create() {
+      try { vimeoPlayer = new Vimeo.Player(holder, { id: id, responsive: true }); } catch (e) {}
+    }
+    if (window.Vimeo && window.Vimeo.Player) { create(); }
+    else { loadScript("https://player.vimeo.com/api/player.js", create); }
+  }
+
+  function rebuild(mode, src) {
+    teardown();
+    try {
+      if (mode === "upload") buildUpload(src);
+      else if (mode === "youtube") buildYouTube(src);
+      else if (mode === "vimeo") buildVimeo(src);
+    } catch (e) {}
+    setHeight();
+  }
+
+  function seek(t) {
+    if (t == null) return;
+    try {
+      if (html5) { html5.currentTime = t; if (html5.paused) { html5.play().catch(function () {}); } }
+      else if (ytPlayer && ytReady) { ytPlayer.seekTo(t, true); }
+      else if (vimeoPlayer) { vimeoPlayer.setCurrentTime(t).catch(function () {}); }
+    } catch (e) {}
+  }
+
+  function withCurrentTime(cb) {
+    try {
+      if (html5) { cb(html5.currentTime || 0); }
+      else if (ytPlayer && ytReady && ytPlayer.getCurrentTime) { cb(ytPlayer.getCurrentTime() || 0); }
+      else if (vimeoPlayer) { vimeoPlayer.getCurrentTime().then(cb).catch(function () { cb(0); }); }
+      else { cb(0); }
+    } catch (e) { cb(0); }
+  }
+
+  markBtn.addEventListener("click", function () {
+    withCurrentTime(function (t) {
+      hint.textContent = "Kickoff = " + t.toFixed(1) + "s";
+      report(t);
+    });
+  });
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.type !== "streamlit:render") return;
+    var a = data.args || {};
+    applyColors(a.colors || {});
+    calibrate = !!a.calibrate;
+    bar.className = calibrate ? "on" : "";
+
+    if (a.mode !== curMode || a.src !== curSrc) {
+      curMode = a.mode; curSrc = a.src;
+      rebuild(a.mode, a.src);
+    }
+    if (a.seek_nonce && a.seek_nonce !== lastSeekNonce) {
+      lastSeekNonce = a.seek_nonce;
+      seek(a.seek_to);
+    }
+    setHeight();
+  });
+
+  window.addEventListener("resize", setHeight);
+  window.addEventListener("load", setHeight);
+  ready();
+})();
+</script>
+</body>
+</html>

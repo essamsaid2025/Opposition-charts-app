@@ -767,7 +767,14 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX IF NOT EXISTS idx_pmatch_player ON player_match_links(player_id);
         CREATE INDEX IF NOT EXISTS idx_pmatch_dataset ON player_match_links(dataset_id);
     """),
-    # (12, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Scouting video ↔ match sync (Tier 1 click-to-seek). Additive & nullable so
+    # every existing player_videos row keeps loading unchanged (match_id defaults to
+    # '' , sync_offset_seconds stays NULL) - no manual DB wipe for existing users.
+    (12, """
+        ALTER TABLE player_videos ADD COLUMN match_id TEXT NOT NULL DEFAULT '';
+        ALTER TABLE player_videos ADD COLUMN sync_offset_seconds REAL;
+    """),
+    # (13, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

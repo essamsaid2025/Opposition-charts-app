@@ -87,6 +87,10 @@ class PlayerVideo:
     title: str = ""
     created_by: str = ""
     created_at: str = ""
+    # optional match ↔ video sync (Tier 1 click-to-seek). Both empty/None on every
+    # existing video, so those render exactly as before.
+    match_id: str = ""                       # which match this footage is of (plain association)
+    sync_offset_seconds: float | None = None  # video timestamp of kickoff -> event seek time
 
 
 @dataclass(slots=True)

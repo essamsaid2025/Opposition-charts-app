@@ -20,6 +20,10 @@ from fap.ui.page import Page, page_registry
 
 SEL = "_scout_player_id"
 OPEN_REPORT = "_open_report_id"        # the Report Studio's navigation key (reused)
+# Uploaded videos are streamed to the click-to-seek component as an inline base64
+# data URL. Above this size we skip the interactive player and fall back to plain
+# st.video (no seek) so a huge file never bloats the component payload.
+_MAX_INLINE_VIDEO_BYTES = 25 * 1024 * 1024
 
 
 @page_registry.register
@@ -321,19 +325,10 @@ class ScoutingPage(Page):
                 st.rerun()
 
     def _videos(self, shell, svc, p) -> None:
+        from fap.ui.builtin import video_sync as VS
         for v in svc.list_videos(p.id):
             with st.container(border=True):
-                if v.kind == "external":
-                    st.markdown(f"{icon('video', 14)} **{v.title}** · {v.provider}  \n{v.url}",
-                                unsafe_allow_html=True)
-                else:
-                    st.markdown(f"{icon('video', 14)} **{v.title}** · uploaded ({v.size_bytes // 1024} KB)",
-                                unsafe_allow_html=True)
-                    data = svc.video_bytes(v.id)
-                    if data and v.mime.startswith("video/"):
-                        st.video(data)
-                if self._can_edit and st.button("Delete", key=f"dv_{v.id}"):
-                    svc.delete_video(shell.user, v.id); st.rerun()
+                self._video_card(shell, svc, p, v, VS)
         if self._can_edit:
             st.markdown("**Add external video** (YouTube / Vimeo / Hudl / Wyscout / SkillCorner)")
             url = st.text_input("Video URL", key="vid_url")
@@ -343,6 +338,165 @@ class ScoutingPage(Page):
             if up is not None and st.button("Upload video", key="vid_btn"):
                 svc.add_uploaded_video(shell.user, p.id, up.getvalue(), up.name, up.type or "video/mp4")
                 st.rerun()
+
+    # ---- video click-to-seek (Tier 1). Un-synced videos render EXACTLY as before ----
+    def _video_card(self, shell, svc, p, v, VS) -> None:
+        mode = VS.component_mode(v)                    # upload|youtube|vimeo, or None
+        has_match = bool(v.match_id)
+        has_offset = v.sync_offset_seconds is not None
+        if mode is None:                               # source can't be seeked -> today's render
+            self._video_static_today(svc, v)
+            st.caption("Click-to-seek isn't available for this source — standard playback/link shown.")
+        elif not has_match:                            # seekable but not linked -> IDENTICAL to today
+            self._video_static_today(svc, v)
+            if self._can_edit:
+                self._match_linker(shell, svc, p, v)
+        elif not has_offset:                           # linked, not calibrated -> mark kickoff
+            self._video_calibrate(shell, svc, v, VS)
+        else:                                          # fully synced -> player + event list
+            self._video_seek(shell, svc, p, v, VS)
+        if self._can_edit and st.button("Delete", key=f"dv_{v.id}"):
+            svc.delete_video(shell.user, v.id); st.rerun()
+
+    @staticmethod
+    def _video_static_today(svc, v) -> None:
+        """Byte-for-byte the pre-existing rendering (the safe fallback everywhere)."""
+        if v.kind == "external":
+            st.markdown(f"{icon('video', 14)} **{v.title}** · {v.provider}  \n{v.url}",
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(f"{icon('video', 14)} **{v.title}** · uploaded ({v.size_bytes // 1024} KB)",
+                        unsafe_allow_html=True)
+            data = svc.video_bytes(v.id)
+            if data and v.mime.startswith("video/"):
+                st.video(data)
+
+    @staticmethod
+    def _video_header(v) -> None:
+        label = v.provider or ("uploaded" if v.kind == "upload" else "video")
+        st.markdown(f"{icon('video', 14)} **{v.title}** · {label}", unsafe_allow_html=True)
+
+    @staticmethod
+    def _vs_colors() -> dict:
+        return {"accent": "#E07B2B", "muted": "#8A93A2"}
+
+    def _component_src(self, svc, v, VS):
+        """(src, mime) for the component, or (None, '') when it can't be used."""
+        mode = VS.component_mode(v)
+        if mode == "upload":
+            data = svc.video_bytes(v.id)
+            if not data or len(data) > _MAX_INLINE_VIDEO_BYTES:
+                return None, ""
+            import base64
+            mime = v.mime or "video/mp4"
+            return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", mime
+        if mode == "youtube":
+            return VS.youtube_id(v.url), ""
+        if mode == "vimeo":
+            return VS.vimeo_id(v.url), ""
+        return None, ""
+
+    def _match_linker(self, shell, svc, p, v) -> None:
+        with st.expander("Link this footage to a match (enables click-to-seek)"):
+            frame = svc.player_event_frame(shell.user, p.id)
+            ids = []
+            if frame is not None and "match_id" in frame.columns:
+                ids = sorted({str(m).strip() for m in frame["match_id"] if str(m).strip()})
+            options = ["(choose)"] + ids
+            chosen = st.selectbox("Match from active dataset", options, key=f"vm_sel_{v.id}")
+            manual = st.text_input("…or type a match id", key=f"vm_txt_{v.id}")
+            target = manual.strip() or ("" if chosen == "(choose)" else chosen)
+            if st.button("Link match", key=f"vm_btn_{v.id}") and target:
+                svc.set_video_sync(shell.user, v.id, target, None)   # calibrate next
+                st.rerun()
+
+    def _video_calibrate(self, shell, svc, v, VS) -> None:
+        self._video_header(v)
+        src, mime = self._component_src(svc, v, VS)
+        if not src:
+            self._video_static_today(svc, v)
+            st.caption("This file is too large for the interactive player — calibration unavailable.")
+            self._unlink_button(shell, svc, v)
+            return
+        rendered, intent = VS.video_sync(mode=VS.component_mode(v), src=src, mime=mime,
+                                         calibrate=True, key=f"vs_{v.id}", colors=self._vs_colors())
+        if not rendered:
+            self._video_static_today(svc, v)
+            st.caption("Interactive player unavailable — standard playback shown.")
+            return
+        st.caption(f"Linked to match **{v.match_id}**. Scrub to kickoff, then click "
+                   f"**Mark kickoff** in the player.")
+        self._unlink_button(shell, svc, v)
+        if intent and self._can_edit and intent.get("nonce"):
+            if st.session_state.get(f"vs_mark_{v.id}") != intent["nonce"]:
+                st.session_state[f"vs_mark_{v.id}"] = intent["nonce"]
+                svc.set_video_sync(shell.user, v.id, v.match_id, float(intent["time"]))
+                st.toast(f"Kickoff marked at {intent['time']:.1f}s")
+                st.rerun()
+
+    def _video_seek(self, shell, svc, p, v, VS) -> None:
+        self._video_header(v)
+        src, mime = self._component_src(svc, v, VS)
+        if not src:
+            self._video_static_today(svc, v)
+            st.caption("This file is too large for the interactive player — standard playback shown.")
+            return
+        seek_key = f"vs_seek_{v.id}"
+        seek = st.session_state.get(seek_key) or {}
+        rendered, _ = VS.video_sync(mode=VS.component_mode(v), src=src, mime=mime,
+                                    seek_to=seek.get("time"), seek_nonce=seek.get("nonce", ""),
+                                    key=f"vs_{v.id}", colors=self._vs_colors())
+        if not rendered:
+            self._video_static_today(svc, v)
+            st.caption("Interactive player unavailable — standard playback shown.")
+            return
+        st.caption(f"Synced to match **{v.match_id}** (kickoff at "
+                   f"{float(v.sync_offset_seconds):.1f}s). Click an event to jump the video there.")
+        if self._can_edit:
+            c1, c2 = st.columns(2)
+            if c1.button("Recalibrate kickoff", key=f"vs_recal_{v.id}", use_container_width=True):
+                svc.set_video_sync(shell.user, v.id, v.match_id, None); st.rerun()
+            if c2.button("Unlink match", key=f"vs_unlink_{v.id}", use_container_width=True):
+                svc.set_video_sync(shell.user, v.id, "", None)
+                st.session_state.pop(seek_key, None); st.rerun()
+        self._event_seek_list(shell, svc, p, v, seek_key, VS)
+
+    def _unlink_button(self, shell, svc, v) -> None:
+        if self._can_edit and st.button("Unlink match", key=f"vs_ul_{v.id}"):
+            svc.set_video_sync(shell.user, v.id, "", None); st.rerun()
+
+    def _event_seek_list(self, shell, svc, p, v, seek_key, VS) -> None:
+        import uuid as _uuid
+        import pandas as pd
+        frame = svc.player_event_frame(shell.user, p.id)
+        if frame is None or "match_id" not in frame.columns:
+            C.render_alert("No active dataset events to sync to — activate this player's match "
+                           "dataset in the Data Hub.", "info")
+            return
+        ev = frame[frame["match_id"].astype(str).str.strip() == str(v.match_id)].copy()
+        if ev.empty:
+            C.render_alert(f"No events for match {v.match_id} for this player in the active "
+                           "dataset.", "info")
+            return
+        ev["_m"] = pd.to_numeric(ev.get("minute", 0), errors="coerce").fillna(0).astype(int)
+        ev["_s"] = pd.to_numeric(ev.get("second", 0), errors="coerce").fillna(0).astype(int)
+        ev = ev.sort_values(["_m", "_s"])
+        types = sorted({str(t) for t in ev.get("event_type", pd.Series(dtype=str)) if str(t).strip()})
+        pick = st.multiselect("Event types", types, default=types, key=f"vs_evt_{v.id}")
+        if pick:
+            ev = ev[ev["event_type"].astype(str).isin(pick)]
+        st.caption(f"{len(ev)} event(s) — click to seek:")
+        shown, ncol = ev.head(60), 3
+        cols = st.columns(ncol)
+        for i, (_, row) in enumerate(shown.iterrows()):
+            m, s = int(row["_m"]), int(row["_s"])
+            label = f"{m:02d}:{s:02d} · {str(row.get('event_type', 'event'))}"
+            if cols[i % ncol].button(label, key=f"vs_ev_{v.id}_{i}", use_container_width=True):
+                t = VS.event_video_time(v.sync_offset_seconds, m, s)
+                st.session_state[seek_key] = {"time": t, "nonce": _uuid.uuid4().hex}
+                st.rerun()
+        if len(ev) > 60:
+            st.caption(f"Showing the first 60 of {len(ev)} — narrow by event type above.")
 
     def _attachments(self, shell, svc, p) -> None:
         for a in svc.list_attachments(p.id):

@@ -179,15 +179,25 @@ class VideoRepository:
         rows = self._db.query("SELECT * FROM player_videos WHERE id = ?", (video_id,))
         return self._row(rows[0]) if rows else None
 
+    def set_sync(self, video_id: str, match_id: str, sync_offset_seconds: float | None) -> None:
+        """Update only the match association + kickoff offset (migration 12 columns)."""
+        self._db.execute(
+            "UPDATE player_videos SET match_id = ?, sync_offset_seconds = ? WHERE id = ?",
+            (match_id, sync_offset_seconds, video_id))
+
     def delete(self, video_id: str) -> None:
         self._db.execute("DELETE FROM player_videos WHERE id = ?", (video_id,))
 
     @staticmethod
     def _row(r: Any) -> PlayerVideo:
+        keys = r.keys()                                  # tolerate pre-migration rows defensively
         return PlayerVideo(id=r["id"], player_id=r["player_id"], kind=r["kind"],
                            provider=r["provider"], url=r["url"], file_id=r["file_id"],
                            filename=r["filename"], mime=r["mime"], size_bytes=r["size_bytes"],
-                           title=r["title"], created_by=r["created_by"], created_at=r["created_at"])
+                           title=r["title"], created_by=r["created_by"], created_at=r["created_at"],
+                           match_id=(r["match_id"] if "match_id" in keys else ""),
+                           sync_offset_seconds=(r["sync_offset_seconds"]
+                                                if "sync_offset_seconds" in keys else None))
 
 
 class MediaRepository:
