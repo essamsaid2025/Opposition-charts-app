@@ -104,3 +104,39 @@ def test_player_voronoi_single_team_and_labels_render():
                                    controls={"show_labels": True}))   # opt-in surnames
     assert fig.axes
     plt.close(fig)
+
+
+def _one_team(frame):
+    t = frame["team"].astype(str).str.strip().value_counts().index[0]
+    return frame[frame["team"].astype(str).str.strip() == t]
+
+
+def test_pass_network_scales_nodes_by_volume_and_edges_by_strength():
+    """The passing network must size nodes by pass count and vary edge thickness by
+    combination strength (the requested Athletic-style network), not draw them uniform."""
+    from matplotlib.collections import PathCollection
+    from matplotlib.lines import Line2D
+    single = _one_team(_sample_frame())
+    fig = visual_registry.create("pass_network").render(
+        RenderContext(df=single, theme=THEME, controls={"title": "net"}))
+    ax = fig.axes[0]
+    # node marker sizes come from the scatter PathCollection sizes -> must vary
+    node_sizes = set()
+    for coll in ax.collections:
+        if isinstance(coll, PathCollection):
+            node_sizes.update(round(float(s), 1) for s in coll.get_sizes())
+    assert len(node_sizes) >= 2, "node sizes should scale with pass volume"
+    # edge line widths -> must vary with combination count
+    widths = {round(ln.get_linewidth(), 2) for ln in ax.lines}
+    assert len(widths) >= 2, "edge widths should scale with combination strength"
+    plt.close(fig)
+
+
+def test_average_positions_two_teams_are_colour_coded_with_legend():
+    frame = _sample_frame()
+    assert frame["team"].astype(str).str.strip().replace("", pd.NA).dropna().nunique() >= 2
+    fig = visual_registry.create("average_positions").render(
+        RenderContext(df=frame, theme=THEME, controls={"title": "avg", "legend": True}))
+    ax = fig.axes[0]
+    assert ax.get_legend() is not None
+    plt.close(fig)
