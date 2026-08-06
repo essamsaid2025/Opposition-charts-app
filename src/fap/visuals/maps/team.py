@@ -91,6 +91,34 @@ class SpaceOccupation(TeamVoronoi):
             list(super().layers(ctx))
 
 
+@visual_registry.register
+class PlayerVoronoi(PitchVisualization):
+    """Per-player space control: the same average-position Voronoi as
+    ``team_voronoi``, but every player's cell gets its OWN colour so each one's
+    dominant zone reads at a glance (a distinct qualitative palette, theme-agnostic)."""
+    info = PluginInfo(id="player_voronoi", name="Player Voronoi (Space Control)",
+                      category=_C,
+                      description="Each player's controlled space from their average "
+                                  "position, one colour per player.")
+    control_groups = ("titles", "pitch", "markers", "colors", "legend",
+                      "text", "images", "export", "layout")
+
+    def layers(self, ctx: LayerContext) -> Sequence[Layer]:
+        import matplotlib
+        from matplotlib.colors import to_hex
+        nodes = _avg_positions(ctx.df)
+        if len(nodes) < 4:                                # Voronoi needs >= 4 sites
+            return []
+        cmap = matplotlib.colormaps.get_cmap("tab20")     # qualitative, up to 20 players
+        n = len(nodes)
+        colors = [to_hex(cmap((i % 20) / 19.0)) for i in range(n)]
+        return [
+            layer_registry.create("voronoi", df=nodes, colors=colors, fill_alpha=0.4),
+            layer_registry.create("player_markers", df=nodes,
+                                  color=_secondary(ctx), show_names=True),
+        ]
+
+
 density_map("occupation_map", "Occupation Map", lambda df, ctx: df, category=_C)
 density_map("territory_map", "Territory Map", lambda df, ctx: A.movement(df),
             category=_C, kind="hexbin")

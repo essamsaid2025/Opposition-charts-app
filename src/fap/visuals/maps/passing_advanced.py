@@ -255,3 +255,39 @@ class HalfSpaceEntries(PitchVisualization):
             layer_registry.create("arrows", df=d, color=_primary(ctx),
                                   label="Entries"),
         ]
+
+
+@visual_registry.register
+class PassEndZones(PitchVisualization):
+    """Grid of where passes END (their share of all completed passes) - the
+    labelled counterpart to the smooth ``pass_destination_zones`` density."""
+    info = PluginInfo(id="pass_end_zones", name="Pass End Zone", category=_C,
+                      description="Percentage of completed passes ending in each grid cell.")
+    control_groups = ("titles", "pitch", "colors", "grid", "legend",
+                      "text", "images", "export", "layout")
+    controls = (Control("zone_cols", "Zone columns", "int_slider",
+                        default=6, min_value=3, max_value=12),
+                Control("zone_rows", "Zone rows", "int_slider",
+                        default=3, min_value=2, max_value=8),)
+
+    def layers(self, ctx: LayerContext) -> Sequence[Layer]:
+        passes = A.passes(ctx.df)
+        d = A.successful(passes).dropna(subset=["end_x", "end_y"])
+        if d.empty:                                       # fall back to all passes with an end
+            d = passes.dropna(subset=["end_x", "end_y"])
+        if d.empty:
+            return []
+        cols = int(ctx.controls.get("zone_cols", 6))
+        rows = int(ctx.controls.get("zone_rows", 3))
+        total = max(len(d), 1)
+        spec = []
+        for i in range(cols):
+            for j in range(rows):
+                zone = (100 / cols * i, 100 / rows * j,
+                        100 / cols * (i + 1), 100 / rows * (j + 1))
+                n = int(A.in_zone(d["end_x"], d["end_y"], zone).sum())
+                if n:
+                    spec.append((*zone, "", f"{n / total * 100:.0f}%"))
+        return [layer_registry.create(
+            "zones", zones=spec, zone_alpha=0.16,
+            color=ctx.controls.get("primary_color") or ctx.theme.colors["accent"])]
