@@ -172,6 +172,78 @@ def test_canvas_commands_round_trip_through_model():
     assert b.frames[0].object(oid) is None
 
 
+# ---------------------------------------------------------- Phase 15b (curve handle + colour)
+def test_curve_control_point_roundtrips():
+    """The JS curve handle derives ``curvature`` from a dragged control point by inverting
+    the renderer's forward formula. A purely-perpendicular drag must round-trip EXACTLY so
+    the on-canvas handle and Python rendering stay in perfect sync."""
+    from fap.tactical import curve_control_point, curvature_from_control_point
+    cases = [(0, 0, 100, 0, 0.3), (10, 20, 90, 60, -0.45), (0, 0, 50, 50, 0.8),
+             (33, 77, 12, 4, 0.0), (200, 50, 50, 300, -1.0)]
+    for x1, y1, x2, y2, k in cases:
+        cx, cy = curve_control_point(x1, y1, x2, y2, k)
+        back = curvature_from_control_point(x1, y1, x2, y2, cx, cy)
+        assert abs(back - k) < 1e-9
+    # exact forward values for the renderer's default curvature (0.3), horizontal line
+    assert curve_control_point(0, 0, 100, 0, 0.3) == (50.0, -30.0)
+    # degenerate zero-length line -> 0 curvature, no division by zero
+    assert curvature_from_control_point(5, 5, 5, 5, 9, 9) == 0.0
+
+
+def test_render_curved_arrow_uses_shared_control_point():
+    """render.py must draw the quadratic through exactly ``curve_control_point`` (single
+    source of truth shared with the canvas handle)."""
+    from fap.tactical import curve_control_point
+    from fap.tactical.render import _px
+    b = new_board("t")
+    b.frames[0].objects.append(TacticalObject(
+        id="a", type="curved_arrow", x=10.0, y=20.0,
+        props={**default_props("curved_arrow"), "x2": 80.0, "y2": 60.0, "curvature": 0.4}))
+    svg = board_svg(b, 0)
+    x1, y1 = _px(10.0, 20.0); x2, y2 = _px(80.0, 60.0)
+    cx, cy = curve_control_point(x1, y1, x2, y2, 0.4)
+    assert f"Q {cx} {cy}" in svg
+
+
+def test_canvas_curvature_command_survives_parse():
+    """A curve-handle drag emits an ``update_object`` with a ``curvature`` prop; it must
+    pass the trust boundary and reach the model."""
+    from fap.ui.builtin.tactical_canvas import parse_result
+    r = parse_result({"ts": 5, "commands": [
+        {"op": "update_object", "id": "a", "props": {"curvature": 0.42}}]})
+    assert r is not None
+    assert r["commands"] == [{"op": "update_object", "id": "a", "props": {"curvature": 0.42}}]
+
+
+def test_colour_override_round_trips_through_commands():
+    """The per-object colour pickers (Part 3) are plain ``props["color"]`` overrides. They
+    must round-trip through add/update, and clearing back to '' must stick (so render.py's
+    ``p.get('color') or _c(...)`` falls back to the team/theme colour)."""
+    b = new_board("t")
+    pid = apply_command(b, {"op": "add_object", "type": "player", "x": 40, "y": 60,
+                            "props": {"team": "home", "color": "#ff8800"}})["id"]
+    assert b.frames[0].object(pid).props["color"] == "#ff8800"
+    apply_command(b, {"op": "update_object", "id": pid, "props": {"color": "#00aaff"}})
+    assert b.frames[0].object(pid).props["color"] == "#00aaff"
+    apply_command(b, {"op": "update_object", "id": pid, "props": {"color": ""}})
+    assert b.frames[0].object(pid).props["color"] == ""
+    zid = apply_command(b, {"op": "add_object", "type": "zone", "x": 30, "y": 30,
+                            "props": {"color": "#123456"}})["id"]
+    apply_command(b, {"op": "update_object", "id": zid, "props": {"color": "#654321"}})
+    assert b.frames[0].object(zid).props["color"] == "#654321"
+
+
+def test_colour_override_reflected_in_render():
+    """A set override paints that colour; clearing it falls back to the default team colour."""
+    from fap.tactical.render import DEFAULT_COLORS
+    b = new_board("t")
+    pid = apply_command(b, {"op": "add_object", "type": "player", "x": 50, "y": 50,
+                            "props": {"team": "home", "color": "#abcdef"}})["id"]
+    assert "#abcdef" in board_svg(b, 0)
+    apply_command(b, {"op": "update_object", "id": pid, "props": {"color": ""}})
+    assert DEFAULT_COLORS["home"] in board_svg(b, 0)
+
+
 def test_matplotlib_export_png_pdf():
     """PNG/PDF export draws the board model via matplotlib (no cairo needed)."""
     from fap.tactical import export_render

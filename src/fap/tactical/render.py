@@ -150,14 +150,43 @@ def _mannequin(o: TacticalObject, colors: dict[str, str]) -> str:
             f'<rect x="{x-s*0.4}" y="{y-s*0.5}" width="{s*0.8}" height="{s*1.6}" rx="3" fill="{m}"/>')
 
 
+def curve_control_point(x1: float, y1: float, x2: float, y2: float,
+                        curvature: float) -> tuple[float, float]:
+    """Quadratic-bezier control point for a curved arrow: a perpendicular offset from the
+    straight line's midpoint, scaled by ``curvature``. This is the SINGLE source of truth
+    for the curve shape - the renderer draws through this point and the JS canvas places the
+    draggable curve handle at exactly this point (kept in sync via
+    ``curvature_from_control_point``, its exact inverse). Coordinate-space agnostic: callers
+    pass whatever space they draw in (the renderer uses the 1050x680 pixel plane)."""
+    k = float(curvature)
+    cx = (x1 + x2) / 2 + (y2 - y1) * k
+    cy = (y1 + y2) / 2 - (x2 - x1) * k
+    return cx, cy
+
+
+def curvature_from_control_point(x1: float, y1: float, x2: float, y2: float,
+                                 cx: float, cy: float) -> float:
+    """Inverse of ``curve_control_point``: given a dragged control point ``(cx, cy)`` return
+    the ``curvature`` scalar. Projects the drag offset (from the line midpoint) onto the
+    line's perpendicular, so a purely-perpendicular drag round-trips EXACTLY and any other
+    drag maps to the nearest representable curve. Degenerate zero-length lines yield 0."""
+    dx = x2 - x1
+    dy = y2 - y1
+    denom = dx * dx + dy * dy
+    if denom == 0:
+        return 0.0
+    mx = (x1 + x2) / 2
+    my = (y1 + y2) / 2
+    return ((cx - mx) * dy - (cy - my) * dx) / denom
+
+
 def _vector(o: TacticalObject, colors: dict[str, str], marker: str) -> str:
     x1, y1 = _px(o.x, o.y); x2, y2 = _px(o.props.get("x2", o.x + 12), o.props.get("y2", o.y))
     col = o.props.get("color") or _c(colors, "line")
     dash = 'stroke-dasharray="10 8"' if o.type == "dashed_arrow" else ""
     head = f'marker-end="url(#{marker})"' if o.type != "line" else ""
     if o.type == "curved_arrow":
-        cx = (x1 + x2) / 2 + (y2 - y1) * float(o.props.get("curvature", 0.3))
-        cy = (y1 + y2) / 2 - (x2 - x1) * float(o.props.get("curvature", 0.3))
+        cx, cy = curve_control_point(x1, y1, x2, y2, float(o.props.get("curvature", 0.3)))
         return (f'<path d="M {x1} {y1} Q {cx} {cy} {x2} {y2}" fill="none" stroke="{col}" '
                 f'stroke-width="4" {dash} {head}/>')
     return (f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{col}" '

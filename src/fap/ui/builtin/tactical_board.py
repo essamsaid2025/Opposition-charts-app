@@ -44,6 +44,7 @@ TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are current
 _PROP_VALUE_KEYS: tuple[str, ...] = (
     "tb_x", "tb_y", "tb_rot", "tb_sca", "tb_pnum", "tb_pteam", "tb_pname", "tb_pcap", "tb_pgk",
     "tb_ptext", "tb_psize", "tb_px2", "tb_py2", "tb_pcurv", "tb_pw", "tb_ph", "tb_pop",
+    "tb_pcolor", "tb_zcolor",
 )
 
 
@@ -207,6 +208,10 @@ def _canvas_objects(board: Board) -> list[dict]:
         if o.type in ("arrow", "curved_arrow", "dashed_arrow", "line"):
             m["x2"] = float(o.props.get("x2", o.x + 12))
             m["y2"] = float(o.props.get("y2", o.y))
+        if o.type == "curved_arrow":
+            # lets the canvas place the draggable curve handle exactly on the current
+            # control point (same default as render.py's _vector)
+            m["curvature"] = float(o.props.get("curvature", 0.3))
         meta.append(m)
     return meta
 
@@ -293,7 +298,7 @@ class TacticalBoardPage(Page):
             self._library(can_edit)
             self._templates_and_saved(shell, svc, board, can_edit)
         with right:
-            self._properties(board, can_edit)
+            self._properties(shell, board, can_edit)
         with center:
             self._board_view(shell, board, can_edit)
         self._timeline(board, can_edit)
@@ -470,8 +475,9 @@ class TacticalBoardPage(Page):
                        "select · Delete removes. Fine-tune anything in Properties.")
 
     # ------------------------------------------------------------ properties
-    def _properties(self, board, can_edit) -> None:
+    def _properties(self, shell, board, can_edit) -> None:
         st.markdown('<div class="tb-panel-title">Properties</div>', unsafe_allow_html=True)
+        colors = _resolve_board_colors(shell, board)
         fr = board.frame(_frame_index())
         if not fr.objects:
             C.render_empty_state("Nothing on the board", "Add objects from the Library.",
@@ -507,7 +513,7 @@ class TacticalBoardPage(Page):
         if can_edit and (rot != int(obj.rotation) or sca != int(obj.scale * 100)):
             upd(rotation=float(rot), scale=sca / 100.0)
 
-        self._type_props(obj, upd, can_edit)
+        self._type_props(obj, upd, can_edit, colors)
 
         # Position is driven by dragging on the canvas; the X/Y sliders are an internal
         # fallback only (kept collapsed) for precise nudges or when the canvas is off.
@@ -524,9 +530,10 @@ class TacticalBoardPage(Page):
         b2.button("Delete", key="tb_p_del", use_container_width=True, disabled=not can_edit,
                   on_click=lambda: _apply({"op": "delete_object", "frame": f, "id": sel}))
 
-    def _type_props(self, obj, upd, can_edit) -> None:
+    def _type_props(self, obj, upd, can_edit, colors) -> None:
         p = obj.props
         if obj.type == "player":
+            prev_team = p.get("team", "home")
             c1, c2 = st.columns(2)
             num = c1.number_input("Number", 0, 99, int(p.get("number", 0) or 0), key="tb_pnum",
                                   disabled=not can_edit)
@@ -540,6 +547,10 @@ class TacticalBoardPage(Page):
             if can_edit:
                 upd(props={"number": int(num), "team": team, "name": name,
                            "captain": bool(cap), "goalkeeper": bool(gk)})
+            # per-player colour override (layered on top of the resolved team/theme colour)
+            self._color_override(obj, upd, can_edit, colors,
+                                 default_key=("away" if team == "away" else "home"),
+                                 pkey="tb_pcolor", reseed=(team != prev_team))
         elif obj.type in ("text", "number"):
             txt = st.text_input("Text", value=p.get("text", ""), key="tb_ptext", disabled=not can_edit)
             size = st.slider("Size", 8, 40, int(p.get("size", 14)), key="tb_psize", disabled=not can_edit)
@@ -563,6 +574,36 @@ class TacticalBoardPage(Page):
                            key="tb_pop", disabled=not can_edit) / 100.0
             if can_edit:
                 upd(props={"w": float(w), "h": float(h), "opacity": op})
+            # per-zone colour override (falls back to the resolved theme "zone" colour)
+            self._color_override(obj, upd, can_edit, colors, default_key="zone",
+                                 pkey="tb_zcolor")
+
+    def _color_override(self, obj, upd, can_edit, colors, *, default_key, pkey,
+                        reseed: bool = False) -> None:
+        """A per-object colour override layered ON TOP of the theme/team colour system.
+
+        The picker is seeded with the current override, or the resolved theme colour when
+        there is none. We only WRITE an override when the user actually changes the swatch
+        (so merely opening the panel never pins a colour and breaks theme-following), and a
+        Reset button clears it back to ``""`` -> ``render.py`` then falls back to the resolved
+        team/zone colour again. ``reseed`` re-reads the swatch next run when the underlying
+        default changed (e.g. the player's team was just switched)."""
+        default_col = colors.get(default_key) or DEFAULT_COLORS.get(default_key, "#888888")
+        override = str(obj.props.get("color") or "").strip()
+        resolved = override or default_col
+        if reseed:
+            st.session_state.pop(pkey, None)          # re-seed to the new default next run
+        ca, cb = st.columns([3, 2])
+        picked = ca.color_picker("Colour", value=resolved, key=pkey, disabled=not can_edit)
+        reset = cb.button("Reset to theme", key=pkey + "_reset", use_container_width=True,
+                          disabled=not can_edit or not override,
+                          help="Clear this override and follow the team/theme colour.")
+        if not can_edit or reseed:
+            return                                    # don't act on a stale swatch this run
+        if reset:
+            upd(props={"color": ""})
+        elif picked and picked.lower() != resolved.lower():
+            upd(props={"color": picked})
 
     # ------------------------------------------------------------ timeline / frames
     def _timeline(self, board, can_edit) -> None:

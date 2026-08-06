@@ -94,6 +94,19 @@
     var p = pt.matrixTransform(m.inverse());
     return { x: p.x, y: p.y };
   }
+  // Drag-time coordinate mapping: the plane's screen transform does NOT change mid-drag
+  // (no pan/zoom while dragging), so we snapshot the INVERSE CTM once at drag start and
+  // reuse it for every pointermove - avoiding a fresh getScreenCTM()+inverse() (an
+  // expensive matrix recompute) on each of the many pointermove events during a fast drag.
+  function planeInverseCTM(ref) {
+    var m = (ref || plane).getScreenCTM();
+    return m ? m.inverse() : null;
+  }
+  function toPlaneWith(inv, clientX, clientY) {
+    var pt = svg.createSVGPoint(); pt.x = clientX; pt.y = clientY;
+    var p = pt.matrixTransform(inv);
+    return { x: p.x, y: p.y };
+  }
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
   function toPitch(local) {
     var x = clamp(local.x / PLANE_W * 100, 0, 100);
@@ -105,6 +118,21 @@
     return { x: Math.round(x * 100) / 100, y: Math.round(y * 100) / 100 };
   }
   function pitchToLocal(px, py) { return { x: px / 100 * PLANE_W, y: py / 100 * PLANE_H }; }
+
+  // ---- curved-arrow control point (MIRRORS render.py curve_control_point / its inverse) --
+  // Both operate in the plane's local (1050x680) space, exactly like the Python renderer,
+  // so the on-canvas curve handle sits on the visible curve and a drag maps back to the same
+  // `curvature` scalar Python stores. Keep these in lock-step with render.py.
+  function curveControlPoint(s, e, k) {
+    return { x: (s.x + e.x) / 2 + (e.y - s.y) * k,
+             y: (s.y + e.y) / 2 - (e.x - s.x) * k };
+  }
+  function curvatureFromControlPoint(s, e, cx, cy) {
+    var dx = e.x - s.x, dy = e.y - s.y, denom = dx * dx + dy * dy;
+    if (denom === 0) return 0;
+    var mx = (s.x + e.x) / 2, my = (s.y + e.y) / 2;
+    return ((cx - mx) * dy - (cy - my) * dx) / denom;
+  }
 
   function metaOf(id) { for (var i = 0; i < objects.length; i++) if (objects[i].id === id) return objects[i]; return null; }
 
@@ -120,26 +148,36 @@
     var meta = metaOf(id);
     if (meta && meta.locked) { select(id); return; }
     e.preventDefault();
-    var start = toPlane(e.clientX, e.clientY);
-    if (!start) return;
+    var inv = planeInverseCTM();
+    if (!inv) return;
+    var start = toPlaneWith(inv, e.clientX, e.clientY);
     var origin = pitchToLocal(meta ? meta.x : 50, meta ? meta.y : 50); // object anchor in plane
     var grab = { dx: start.x - origin.x, dy: start.y - origin.y };     // preserve grab offset
     var orig = group.getAttribute("transform") || "";
     group.classList.add("dragging");
     try { group.setPointerCapture(e.pointerId); } catch (x) {}
 
-    function move(ev) {
-      var now = toPlane(ev.clientX, ev.clientY);
-      if (!now) return;
-      var dx = (now.x - grab.dx) - origin.x;
-      var dy = (now.y - grab.dy) - origin.y;
+    // Coalesce rapid pointermove events into at most one DOM write per animation frame:
+    // we stash the latest pointer position on every move but only touch the SVG inside a
+    // requestAnimationFrame callback (guarded so we schedule at most one per frame).
+    var pending = null, raf = 0;
+    function paint() {
+      raf = 0;
+      if (!pending) return;
+      var dx = (pending.x - grab.dx) - origin.x;
+      var dy = (pending.y - grab.dy) - origin.y;
       group.setAttribute("transform", "translate(" + dx + " " + dy + ") " + orig);
+    }
+    function move(ev) {
+      pending = toPlaneWith(inv, ev.clientX, ev.clientY);
+      if (!raf) raf = requestAnimationFrame(paint);
     }
     function up(ev) {
       group.removeEventListener("pointermove", move);
       group.removeEventListener("pointerup", up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       group.classList.remove("dragging");
-      var now = toPlane(ev.clientX, ev.clientY);
+      var now = toPlaneWith(inv, ev.clientX, ev.clientY);
       if (!now) { group.setAttribute("transform", orig); select(id); return; }
       var pit = toPitch({ x: now.x - grab.dx, y: now.y - grab.dy });
       // Do NOT snap the piece back to `orig`. Python remains authoritative: we send the
@@ -153,23 +191,48 @@
     group.addEventListener("pointerup", up);
   }
 
-  // ---- arrow / line endpoint dragging -------------------------------------------
+  // ---- arrow / line endpoint + curve-control dragging ---------------------------
+  // `which` is "start" | "end" | "control". Start/end drag the arrow endpoints; control
+  // drags the quadratic curve handle of a curved_arrow and re-derives the `curvature`
+  // scalar (inverse of render.py's control-point formula) so Python stays authoritative.
   function beginHandleDrag(circle, id, which, e) {
     if (!cfg.editable) return;
     e.preventDefault(); e.stopPropagation();
+    var inv = planeInverseCTM();
+    if (!inv) return;
     try { circle.setPointerCapture(e.pointerId); } catch (x) {}
+    // fixed endpoints (local space) - only needed to invert the curve handle position
+    var meta = metaOf(id);
+    var lineS = meta ? pitchToLocal(meta.x, meta.y) : null;
+    var lineE = meta ? pitchToLocal(meta.x2 != null ? meta.x2 : meta.x + 12,
+                                    meta.y2 != null ? meta.y2 : meta.y) : null;
+    // RAF-throttle the visual handle update: stash latest pointer, write cx/cy once a frame
+    var pending = null, raf = 0;
+    function paint() {
+      raf = 0;
+      if (!pending) return;
+      circle.setAttribute("cx", pending.x); circle.setAttribute("cy", pending.y);
+    }
     function move(ev) {
-      var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
-      circle.setAttribute("cx", loc.x); circle.setAttribute("cy", loc.y);
+      pending = toPlaneWith(inv, ev.clientX, ev.clientY);
+      if (!raf) raf = requestAnimationFrame(paint);
     }
     function up(ev) {
       circle.removeEventListener("pointermove", move);
       circle.removeEventListener("pointerup", up);
-      var loc = toPlane(ev.clientX, ev.clientY); if (!loc) return;
-      var pit = toPitch(loc);
-      var cmd = which === "start"
-        ? { op: "update_object", id: id, x: pit.x, y: pit.y }
-        : { op: "update_object", id: id, props: { x2: pit.x, y2: pit.y } };
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      var loc = toPlaneWith(inv, ev.clientX, ev.clientY);
+      var cmd;
+      if (which === "control" && lineS && lineE) {
+        var k = curvatureFromControlPoint(lineS, lineE, loc.x, loc.y);
+        k = Math.max(-1, Math.min(1, Math.round(k * 100) / 100));  // match the -100..100 slider
+        cmd = { op: "update_object", id: id, props: { curvature: k } };
+      } else {
+        var pit = toPitch(loc);
+        cmd = which === "start"
+          ? { op: "update_object", id: id, x: pit.x, y: pit.y }
+          : { op: "update_object", id: id, props: { x2: pit.x, y2: pit.y } };
+      }
       emit({ ts: nextTs(), select: id, commands: [cmd] });
     }
     circle.addEventListener("pointermove", move);
@@ -184,10 +247,22 @@
     ghost.style.display = "block";
     ghost.style.left = e.clientX + "px"; ghost.style.top = e.clientY + "px";
     try { chip.setPointerCapture(e.pointerId); } catch (x) {}
-    function move(ev) { ghost.style.left = ev.clientX + "px"; ghost.style.top = ev.clientY + "px"; }
+    // ghost-follow uses clientX/clientY directly (no CTM), but still RAF-throttle the DOM
+    // writes so a rapid drag coalesces to one style update per frame.
+    var pending = null, raf = 0;
+    function paint() {
+      raf = 0;
+      if (!pending) return;
+      ghost.style.left = pending.x + "px"; ghost.style.top = pending.y + "px";
+    }
+    function move(ev) {
+      pending = { x: ev.clientX, y: ev.clientY };
+      if (!raf) raf = requestAnimationFrame(paint);
+    }
     function up(ev) {
       chip.removeEventListener("pointermove", move);
       chip.removeEventListener("pointerup", up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
       ghost.style.display = "none";
       var r = stage.getBoundingClientRect();
       var inside = ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
@@ -219,17 +294,23 @@
   }
 
   // ---- overlay handles for the selected vector object ---------------------------
-  function addHandle(px, py, id, which) {
+  // control=true renders the curve handle inverted (filled accent) so it reads as a
+  // distinct grab point from the hollow endpoint handles.
+  function makeHandle(lx, ly, id, which, control) {
     var NS = "http://www.w3.org/2000/svg";
+    var surf = cfg.colors.surface || "#12151c", acc = cfg.colors.accent || "#2f7bd6";
     var c = document.createElementNS(NS, "circle");
-    var loc = pitchToLocal(px, py);
-    c.setAttribute("cx", loc.x); c.setAttribute("cy", loc.y); c.setAttribute("r", 9);
-    c.setAttribute("fill", cfg.colors.surface || "#12151c");
-    c.setAttribute("stroke", cfg.colors.accent || "#2f7bd6");
+    c.setAttribute("cx", lx); c.setAttribute("cy", ly); c.setAttribute("r", control ? 8 : 9);
+    c.setAttribute("fill", control ? acc : surf);
+    c.setAttribute("stroke", control ? surf : acc);
     c.setAttribute("stroke-width", 3);
     c.setAttribute("class", "tb-handle");
     c.addEventListener("pointerdown", function (e) { beginHandleDrag(c, id, which, e); });
     plane.appendChild(c);
+  }
+  function addHandle(px, py, id, which) {
+    var loc = pitchToLocal(px, py);
+    makeHandle(loc.x, loc.y, id, which, false);
   }
 
   function wireObjects() {
@@ -249,6 +330,15 @@
     if (sel && VECTOR[sel.type]) {
       addHandle(sel.x, sel.y, sel.id, "start");
       addHandle(sel.x2 != null ? sel.x2 : sel.x + 12, sel.y2 != null ? sel.y2 : sel.y, sel.id, "end");
+      // curved arrows also get a draggable control-point handle sitting on the current curve
+      if (sel.type === "curved_arrow") {
+        var s = pitchToLocal(sel.x, sel.y);
+        var en = pitchToLocal(sel.x2 != null ? sel.x2 : sel.x + 12,
+                              sel.y2 != null ? sel.y2 : sel.y);
+        var k = sel.curvature != null ? sel.curvature : 0.3;
+        var cp = curveControlPoint(s, en, k);
+        makeHandle(cp.x, cp.y, sel.id, "control", true);
+      }
     }
   }
 
