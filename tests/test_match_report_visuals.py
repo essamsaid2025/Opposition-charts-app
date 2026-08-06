@@ -33,6 +33,9 @@ NEW_VISUALS = {
     "momentum_xt": "Team",
     "shot_profile": "Attacking",
     "pass_end_zones": "Passing",
+    "chance_creating_zones": "Attacking",
+    "progressive_pass_lanes": "Passing",
+    "match_stats_table": "Team",
 }
 
 

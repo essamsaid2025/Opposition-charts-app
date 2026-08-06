@@ -106,6 +106,48 @@ scatter_map("shot_body_part", "Shot Body Part",
 
 
 @visual_registry.register
+class ChanceCreatingZones(PitchVisualization):
+    """Where chances come from: a grid over the origins of chance-creating passes
+    (key passes, falling back to assists), each cell labelled with its count, with
+    the key-pass arrows overlaid."""
+    info = PluginInfo(id="chance_creating_zones", name="Chance Creating Zone",
+                      category=_C,
+                      description="Grid of key-pass / assist origins - where chances are created from.")
+    control_groups = ("titles", "pitch", "colors", "grid", "legend",
+                      "text", "images", "export", "layout")
+    controls = (Control("zone_cols", "Zone columns", "int_slider",
+                        default=6, min_value=3, max_value=12),
+                Control("zone_rows", "Zone rows", "int_slider",
+                        default=3, min_value=2, max_value=8),)
+
+    def layers(self, ctx: LayerContext) -> Sequence[Layer]:
+        passes = A.passes(ctx.df)
+        chances = A.key_passes(passes)
+        if chances.empty:                                 # provider didn't flag key passes
+            chances = A.assists(passes)
+        d = chances.dropna(subset=["x", "y"])
+        if d.empty:
+            return []
+        cols = int(ctx.controls.get("zone_cols", 6))
+        rows = int(ctx.controls.get("zone_rows", 3))
+        spec = []
+        for i in range(cols):
+            for j in range(rows):
+                zone = (100 / cols * i, 100 / rows * j,
+                        100 / cols * (i + 1), 100 / rows * (j + 1))
+                n = int(A.in_zone(d["x"], d["y"], zone).sum())
+                if n:
+                    spec.append((*zone, "", str(n)))
+        out: list[Layer] = [layer_registry.create(
+            "zones", zones=spec, zone_alpha=0.16,
+            color=ctx.controls.get("primary_color") or ctx.theme.colors["accent"])]
+        if d[["end_x", "end_y"]].notna().any().any():
+            out.append(layer_registry.create("arrows", df=d.dropna(subset=["end_x", "end_y"]),
+                                             color=_secondary(ctx), label="Chance created"))
+        return out
+
+
+@visual_registry.register
 class GoalProbabilityMap(PitchVisualization):
     info = PluginInfo(id="goal_probability", name="Goal Probability", category=_C,
                       description="Shots colored on an xG color scale.")

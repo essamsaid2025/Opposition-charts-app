@@ -112,3 +112,92 @@ chart("shot_profile", "Shot Profile",
       lambda ctx, ax: _shot_profile(ax, ctx), category="Attacking",
       description="Shots broken down by body part, outcome and situation (team-split "
                   "when both teams are present).")
+
+
+# ------------------------------------------------------------------ match stats table
+def _team_metrics(d: pd.DataFrame) -> dict[str, float]:
+    passes = A.passes(d)
+    shots = A.shots(d)
+    on_target = int(shots["shot_result"].astype(str).str.lower().isin(_ON_TARGET).sum())
+    xg = float(pd.to_numeric(shots.get("shot_xg", pd.Series(dtype=float)),
+                             errors="coerce").fillna(0).sum())
+    return {
+        "Passes": float(len(passes)),
+        "Pass Acc %": round(len(A.successful(passes)) / max(len(passes), 1) * 100),
+        "Prog Passes": float(len(A.progressive(passes))),
+        "Final 3rd Entries": float(len(A.entries_into(d, A.FINAL_THIRD))),
+        "Crosses": float(len(A.crosses(d))),
+        "Shots": float(len(shots)),
+        "On Target": float(on_target),
+        "xG": round(xg, 2),
+        "Tackles": float(len(A.defensive(d, ("tackle",)))),
+        "Interceptions": float(len(A.defensive(d, ("interception",)))),
+    }
+
+
+def _fmt(v: float) -> str:
+    return f"{v:g}"
+
+
+def _match_stats(ax, ctx) -> None:
+    """Two-team head-to-head stat table with proportional mirrored bars (falls back to
+    a single-team list when only one team is present)."""
+    d = ctx.df
+    teams = d["team"].astype(str).str.strip()
+    present = [t for t in teams.value_counts().index.tolist() if t]
+    if not present:
+        return
+    c = ctx.theme.colors
+    ax.set_axis_off()
+
+    if len(present) < 2:                                  # single team: plain list
+        m = {"Possession %": 100.0, **_team_metrics(d)}
+        rows = list(m.items())
+        ax.set_xlim(0, 1)
+        ax.set_ylim(-1, len(rows))
+        ax.text(0.5, len(rows) - 0.2, str(present[0]), ha="center", va="bottom",
+                color=c["accent"], fontweight="bold", fontsize=ctx.style("label_size") + 2)
+        for i, (name, val) in enumerate(rows):
+            y = len(rows) - 1 - i
+            ax.text(0.05, y, name, ha="left", va="center", color=c["muted"],
+                    fontsize=ctx.style("label_size"))
+            ax.text(0.95, y, _fmt(val), ha="right", va="center", color=c["text"],
+                    fontsize=ctx.style("label_size"), fontweight="bold")
+        return
+
+    a, b = present[0], present[1]
+    ma, mb = _team_metrics(d[teams.eq(a)]), _team_metrics(d[teams.eq(b)])
+    pa, pb = len(A.passes(d[teams.eq(a)])), len(A.passes(d[teams.eq(b)]))
+    tot = max(pa + pb, 1)
+    metrics = ["Possession %", *ma.keys()]
+    va = [round(pa / tot * 100), *ma.values()]
+    vb = [round(pb / tot * 100), *mb.values()]
+    n = len(metrics)
+
+    ax.set_xlim(-1.15, 1.15)
+    ax.set_ylim(-0.8, n + 0.2)
+    ax.text(-1.1, n - 0.2, str(a), ha="left", va="bottom", color=c["accent"],
+            fontweight="bold", fontsize=ctx.style("label_size") + 2)
+    ax.text(1.1, n - 0.2, str(b), ha="right", va="bottom",
+            color=ctx.controls.get("fail_color") or c["danger"],
+            fontweight="bold", fontsize=ctx.style("label_size") + 2)
+    col_a = ctx.controls.get("primary_color") or c["accent"]
+    col_b = ctx.controls.get("fail_color") or c["danger"]
+    for i, name in enumerate(metrics):
+        y = n - 1 - i
+        denom = (va[i] + vb[i]) or 1
+        ax.barh(y, -va[i] / denom, height=0.55, color=col_a, alpha=0.35, zorder=1)
+        ax.barh(y, vb[i] / denom, height=0.55, color=col_b, alpha=0.35, zorder=1)
+        ax.text(-1.1, y, _fmt(va[i]), ha="left", va="center", color=c["text"],
+                fontsize=ctx.style("label_size"), fontweight="bold", zorder=3)
+        ax.text(1.1, y, _fmt(vb[i]), ha="right", va="center", color=c["text"],
+                fontsize=ctx.style("label_size"), fontweight="bold", zorder=3)
+        ax.text(0, y, name, ha="center", va="center", color=c["text"],
+                fontsize=max(ctx.style("label_size") - 1, 7), zorder=3,
+                bbox=dict(boxstyle="round,pad=0.25", fc=c["panel"], ec="none", alpha=0.9))
+
+
+chart("match_stats_table", "Match Stats (Comparison)",
+      lambda ctx, ax: _match_stats(ax, ctx), category="Team",
+      description="Head-to-head team stats with proportional bars - possession, passing, "
+                  "shots, xG, defending.")

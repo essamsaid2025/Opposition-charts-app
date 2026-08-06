@@ -291,3 +291,33 @@ class PassEndZones(PitchVisualization):
         return [layer_registry.create(
             "zones", zones=spec, zone_alpha=0.16,
             color=ctx.controls.get("primary_color") or ctx.theme.colors["accent"])]
+
+
+@visual_registry.register
+class ProgressivePassesByLane(PitchVisualization):
+    """Progressive passes split into the three vertical lanes (left / central /
+    right, by start position), each labelled with its count and share - plus the
+    progressive-pass arrows."""
+    info = PluginInfo(id="progressive_pass_lanes", name="Progressive Passes by Lane",
+                      category=_C,
+                      description="Progressive passes per vertical lane, with each lane's share.")
+    control_groups = ("titles", "pitch", "arrows", "colors", "legend",
+                      "text", "images", "export", "layout")
+    controls = (MAX_EVENTS_CONTROL,)
+
+    def layers(self, ctx: LayerContext) -> Sequence[Layer]:
+        prog = A.progressive(A.passes(ctx.df)).dropna(subset=["x", "y"])
+        if prog.empty:
+            return []
+        total = max(len(prog), 1)
+        lanes = (("Left", 0.0, 33.34), ("Central", 33.34, 66.67), ("Right", 66.67, 100.0))
+        zones = []
+        for name, y0, y1 in lanes:
+            n = int(prog["y"].between(y0, y1).sum())
+            zones.append((0.0, y0, 100.0, y1, f"{name}: {n} ({n / total * 100:.0f}%)", None))
+        return [
+            layer_registry.create("zones", zones=zones, zone_alpha=0.10,
+                                  color=ctx.controls.get("primary_color") or ctx.theme.colors["accent"]),
+            layer_registry.create("arrows", df=_sample(prog, ctx), color=_primary(ctx),
+                                  label="Progressive pass"),
+        ]
