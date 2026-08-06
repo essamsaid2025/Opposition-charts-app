@@ -29,6 +29,11 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 
+# The only charts that offer the optional interactive (Plotly) preview. Kept in
+# sync with fap.visuals.charts.comparisons_interactive.INTERACTIVE_CHART_IDS.
+_INTERACTIVE_CHART_IDS = frozenset({
+    "player_percentile_radar", "player_comparison_bars", "team_radar", "rolling_form_trend"})
+
 from fap.theme import components as C
 from fap.theme import icon
 
@@ -523,6 +528,15 @@ def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name,
     dpi = dcol.selectbox("Export DPI", ["screen", "standard", "print", "ultra"], index=1,
                          key=f"{key}_dpi")
 
+    # OPTIONAL interactive Plotly preview - only for the four comparison charts, and
+    # OFF by default so nothing about the existing static-render/export path changes.
+    interactive_preview = False
+    if sel in _INTERACTIVE_CHART_IDS:
+        interactive_preview = st.checkbox(
+            "Interactive preview (Plotly)", value=False, key=f"{key}_interactive_{sel}",
+            help="Adds an interactive Plotly copy below the static chart. Downloads and "
+                 "report assignment still use the static image.")
+
     # settings: Options + Filters as tabs (single level - no nested expanders)
     set_tabs = st.tabs(["Options", "Filters"])
     with set_tabs[0]:
@@ -560,7 +574,7 @@ def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name,
         st.caption("Adjust options/filters, then click Render.")
         return
     _render_and_export(shell, viz, render_frame, controls, filt, theme_id, player_name, key, themes,
-                       on_assign=on_assign, viz_id=sel)
+                       on_assign=on_assign, viz_id=sel, interactive=interactive_preview)
 
 
 def _theme_manager(shell):
@@ -589,8 +603,33 @@ def _prepare_frame(frame):
     return out
 
 
+def _render_plotly_preview(viz_id, ctx, filt, key) -> None:
+    """Opt-in interactive (Plotly) copy of a comparison chart, rendered BELOW the
+    static one. It never touches the matplotlib figure used for export/assign, and
+    any failure degrades to a caption - it can never break the static path."""
+    try:
+        from fap.core.types import RenderContext
+        from fap.visuals.charts import comparisons_interactive as CI
+        df = ctx.df
+        try:                                    # match the static chart's filtered data
+            if filt is not None:
+                df = filt.apply(ctx.df)
+        except Exception:
+            df = ctx.df
+        pctx = RenderContext(df=df, theme=ctx.theme, controls=ctx.controls, meta=ctx.meta)
+        fig = CI.build(viz_id, pctx)
+        if fig is None:
+            return
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Interactive preview (Plotly) - downloads and report assignment use the "
+                   "static chart above.")
+    except Exception:
+        logger.exception("Interactive (Plotly) preview failed for %r", viz_id)
+        st.caption("Interactive preview unavailable.")
+
+
 def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name, key, themes,
-                       on_assign=None, viz_id: str = "") -> None:
+                       on_assign=None, viz_id: str = "", interactive: bool = False) -> None:
     from fap.core.types import RenderContext
     from fap.visuals.renderer import Renderer
     from fap.visuals.export import ExportEngine
@@ -604,6 +643,10 @@ def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name,
         st.error(f"Could not render this visualization: {exc}")
         return
     st.pyplot(fig, use_container_width=True)
+    # Additive, default-off: an interactive copy shown alongside the static chart.
+    # The matplotlib `fig` remains the ONLY source for the export/assign flow below.
+    if interactive and viz_id in _INTERACTIVE_CHART_IDS:
+        _render_plotly_preview(viz_id, ctx, filt, key)
     try:
         export = ExportEngine()
         title = controls.get("title") or player_name

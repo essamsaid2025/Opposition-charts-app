@@ -5,6 +5,9 @@ matplotlib
 numpy
 openpyxl
 mplsoccer
+# Optional interactive (Plotly) preview for the comparison charts. The default
+# static matplotlib render/export path does not require it.
+plotly>=5.0
 # Open Play now imports through the fap platform in src/, which needs these.
 # Kept in sync with the dependency list in pyproject.toml.
 PyYAML
