@@ -105,7 +105,8 @@ class TacticalService:
         fmts = ["svg"]
         from fap.tactical import export_render
         if export_render.available():
-            fmts += ["png", "pdf"]
+            # gif rides the SAME matplotlib/Pillow path (one board_image per frame)
+            fmts += ["png", "pdf", "gif"]
         else:
             try:
                 import cairosvg  # noqa: F401
@@ -119,6 +120,17 @@ class TacticalService:
         """Return (bytes, mime, filename). SVG is native; PNG/PDF are drawn from the same
         board model via matplotlib (falling back to cairosvg, then to SVG)."""
         safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in board.name).strip() or "board"
+        if fmt == "gif":
+            # gif is always an ALL-frames animation (frame_index is irrelevant here)
+            try:
+                from fap.tactical import export_render
+                if export_render.available():
+                    data = export_render.board_gif(board, colors=colors)
+                    return data, "image/gif", f"{safe}.gif"
+            except Exception:
+                pass                                 # degrade to a single SVG below, like png/pdf
+            svg = board_svg(board, frame_index, colors=colors)
+            return svg.encode("utf-8"), "image/svg+xml", f"{safe}.svg"
         if fmt in ("png", "pdf"):
             # preferred: matplotlib draws the model straight to PNG/PDF (no native cairo)
             try:

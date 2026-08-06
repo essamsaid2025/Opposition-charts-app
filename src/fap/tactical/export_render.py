@@ -205,6 +205,37 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
     return data
 
 
+def board_gif(board: Board, *, colors: dict[str, str] | None = None,
+              duration_ms: int = 800, dpi: int = 100) -> bytes:
+    """Render EVERY frame of ``board`` (in order) into one animated GIF.
+
+    Reuses ``board_image(..., fmt="png")`` per frame - no drawing logic is
+    duplicated - then stitches the frames with Pillow. Each frame is held for its
+    own ``Frame.duration_ms`` when present, else ``duration_ms``. A single-frame
+    board yields a valid (static) GIF. The default dpi is lower than the still
+    export (100 vs 150) because file size scales with frame_count × resolution, so
+    a many-frame animation stays reasonable; raise ``dpi`` for a crisper clip.
+
+    Raises if matplotlib/Pillow are unavailable - the caller import-guards on
+    ``available()`` and degrades exactly like ``board_image``."""
+    from PIL import Image                            # Pillow is already a project dependency
+
+    images: list[Any] = []
+    durations: list[int] = []
+    for i, fr in enumerate(board.frames):
+        png = board_image(board, i, fmt="png", colors=colors, dpi=dpi)
+        images.append(Image.open(io.BytesIO(png)).convert("RGB"))
+        d = getattr(fr, "duration_ms", None)
+        durations.append(int(d) if isinstance(d, (int, float)) and d > 0 else int(duration_ms))
+    if not images:                                   # Board guarantees >=1 frame; defensive anyway
+        raise ValueError("board has no frames to animate")
+
+    out = io.BytesIO()
+    images[0].save(out, format="GIF", save_all=True, append_images=images[1:],
+                   duration=durations, loop=0, disposal=2)
+    return out.getvalue()
+
+
 def _rotate(data: bytes, fmt: str) -> bytes:
     """Rotate a landscape export to portrait for vertical boards. PNG via Pillow; PDF is
     left landscape if Pillow can't help (content is still correct)."""

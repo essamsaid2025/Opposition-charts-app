@@ -75,25 +75,37 @@ class TacticalObject:
 
 @dataclass
 class Frame:
-    """A snapshot of every object at one coaching moment (Tacticalista-style frame)."""
+    """A snapshot of every object at one coaching moment (Tacticalista-style frame).
+
+    ``duration_ms`` is how long this frame is held in an animated (GIF) export;
+    it is additive with a sensible default, so old saved boards that never stored
+    it load unchanged (``from_dict`` just fills the default)."""
     id: str
     name: str = ""
     objects: list[TacticalObject] = field(default_factory=list)
+    duration_ms: int = 800
 
     def object(self, object_id: str) -> TacticalObject | None:
         return next((o for o in self.objects if o.id == object_id), None)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "name": self.name, "objects": [o.to_dict() for o in self.objects]}
+        return {"id": self.id, "name": self.name, "duration_ms": self.duration_ms,
+                "objects": [o.to_dict() for o in self.objects]}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Frame":
+        try:
+            duration = int(d.get("duration_ms", 800))
+        except (TypeError, ValueError):
+            duration = 800
         return cls(id=str(d.get("id") or new_id("frame")), name=str(d.get("name", "")),
+                   duration_ms=duration if duration > 0 else 800,
                    objects=[TacticalObject.from_dict(o) for o in (d.get("objects") or [])])
 
     def clone(self, *, name: str | None = None) -> "Frame":
         # keep object ids stable so an object "moves between frames" (the animation)
         return Frame(id=new_id("frame"), name=name if name is not None else self.name,
+                     duration_ms=self.duration_ms,
                      objects=[o.clone(fresh_id=False) for o in self.objects])
 
 

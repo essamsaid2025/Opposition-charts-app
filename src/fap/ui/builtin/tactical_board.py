@@ -20,6 +20,7 @@ from fap.tactical import (
 from fap.tactical.ops import apply_command as _apply_command
 from fap.tactical.ops import default_props
 from fap.tactical.render import DEFAULT_COLORS
+from fap.tactical.theme_colors import tactical_colors_from_theme
 from fap.theme import components as C
 from fap.ui.builtin.tactical_canvas import parse_result, tactical_canvas
 from fap.ui.nav import icon_css
@@ -147,13 +148,39 @@ def _set_frame(i: int) -> None:
 # them straight through ``apply_command`` (one undo step per interaction batch) - no
 # business logic lives in the browser. Selection is UI-only session state.
 def _canvas_colors() -> dict[str, str]:
+    """The board's default palette (no theme selected) - unchanged from before."""
     return dict(DEFAULT_COLORS)
 
 
-def _canvas_palette() -> list[dict]:
+def _theme_manager(shell):
+    """Same accessor viz_workspace uses; None when themes aren't available."""
+    try:
+        return shell.platform.services.get("themes")
+    except Exception:
+        return None
+
+
+def _resolve_board_colors(shell, board) -> dict[str, str]:
+    """Colours the board renders + exports with. A board with NO theme in its meta
+    is byte-identical to today (``DEFAULT_COLORS``); a selected theme is mapped onto
+    the tactical roles. Any failure (missing theme, bad shape) degrades to the
+    default palette rather than breaking the board."""
+    tid = str((getattr(board, "meta", None) or {}).get("theme") or "").strip()
+    if not tid:
+        return dict(DEFAULT_COLORS)                 # critical: existing boards unchanged
+    try:
+        themes = _theme_manager(shell)
+        theme = themes.get(tid) if themes else None
+        if theme is None:
+            return dict(DEFAULT_COLORS)
+        return tactical_colors_from_theme(theme)
+    except Exception:
+        return dict(DEFAULT_COLORS)
+
+
+def _canvas_palette(colors: dict[str, str]) -> list[dict]:
     """Flatten the object Library into draggable chips (data only - the drag simply
     emits an ``add_object`` command at the drop point)."""
-    colors = _canvas_colors()
     out: list[dict] = []
     for _title, _ic, items in _LIBRARY:
         for label, otype, extra in items:
@@ -268,7 +295,7 @@ class TacticalBoardPage(Page):
         with right:
             self._properties(board, can_edit)
         with center:
-            self._board_view(board, can_edit)
+            self._board_view(shell, board, can_edit)
         self._timeline(board, can_edit)
 
     # ------------------------------------------------------------ toolbar
@@ -302,9 +329,18 @@ class TacticalBoardPage(Page):
                 fmts = svc.export_formats()
                 fmt = st.selectbox("fmt", fmts, key="tb_fmt", label_visibility="collapsed")
             with cols[10]:
-                data, mime, fname = svc.export(board, _frame_index(), fmt=fmt)
+                # resolved colours so the download matches what's on screen (Part 1);
+                # gif animates ALL frames and is cached by board+colour signature (Part 2)
+                colors = _resolve_board_colors(shell, board)
+                if fmt == "gif":
+                    data, mime, fname = self._gif_export(svc, board, colors)
+                else:
+                    data, mime, fname = svc.export(board, _frame_index(), fmt=fmt, colors=colors)
                 st.download_button("", data=data, file_name=fname, mime=mime, key="tb_export",
                                    help="Export", use_container_width=True)
+        if fmt == "gif":
+            st.caption(f"GIF exports all {len(board.frames)} frame(s) as an animation "
+                       f"(PNG/PDF export the current frame only).")
         # inject the per-button icon masks (the return value MUST be rendered, and the
         # tb_toolbar base ::before rule in _inject_css gives them size + currentColor)
         st.markdown(icon_css([
@@ -320,6 +356,23 @@ class TacticalBoardPage(Page):
             st.session_state["_tb_flash"] = f"Saved '{board.name}'."
         except Exception as exc:
             st.session_state["_tb_flash"] = f"Save failed: {exc}"
+
+    @staticmethod
+    def _gif_export(svc, board, colors):
+        """Build (and cache) the animated GIF. Rendering every frame per rerun would be
+        wasteful, so the bytes are cached by a signature of the board + colours and only
+        regenerated when something actually changes. Tactical boards are small, so this
+        stays snappy; a very large frame count simply produces a bigger file, no hang."""
+        import hashlib
+        import json
+        sig = hashlib.sha1(json.dumps({"b": board.to_dict(), "c": colors},
+                                      sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        cache = st.session_state.get("_tb_gif_cache")
+        if not cache or cache.get("sig") != sig:
+            data, mime, fname = svc.export(board, 0, fmt="gif", colors=colors)
+            cache = {"sig": sig, "data": data, "mime": mime, "fname": fname}
+            st.session_state["_tb_gif_cache"] = cache
+        return cache["data"], cache["mime"], cache["fname"]
 
     # ------------------------------------------------------------ library
     def _library(self, can_edit) -> None:
@@ -350,19 +403,42 @@ class TacticalBoardPage(Page):
                     cols[1].button("", key=f"tbdel_{pr.id}", help="Delete", icon=":material/delete:",
                                    on_click=lambda pid=pr.id: svc.delete(shell.user, pid))
 
+    def _theme_selector(self, shell, board, col) -> None:
+        """Pick the board's colour theme. The default option keeps today's exact
+        DEFAULT_COLORS palette; a chosen theme is remembered in ``board.meta`` (so it
+        persists per board on Save, like the board name)."""
+        themes = _theme_manager(shell)
+        try:
+            ids = list(themes.ids()) if themes else []
+        except Exception:
+            ids = []
+        options = ["Default (board colors)"] + ids
+        current = str((board.meta or {}).get("theme") or "")
+        index = options.index(current) if current in options else 0
+        choice = col.selectbox("Theme", options, index=index, key="tb_theme",
+                               help="Colour the board from an app theme. 'Default' keeps the "
+                                    "classic tactical palette. Applies on screen and to exports.")
+        chosen = "" if choice == "Default (board colors)" else choice
+        if chosen != current:
+            board.meta["theme"] = chosen             # plain meta preference; saved with the board
+            board.touch()                            # bump updated_at so the canvas re-renders
+            st.rerun()
+
     # ------------------------------------------------------------ board
-    def _board_view(self, board, can_edit) -> None:
+    def _board_view(self, shell, board, can_edit) -> None:
         flash = st.session_state.pop("_tb_flash", "")
         if flash:
             C.render_alert(flash, "success")
-        name = st.text_input("Board name", value=board.name, key="tb_name",
-                             label_visibility="collapsed")
+        hcols = st.columns([4, 1.6])
+        name = hcols[0].text_input("Board name", value=board.name, key="tb_name",
+                                   label_visibility="collapsed")
         if name != board.name:
             _apply({"op": "rename_board", "name": name}, record=False)
+        self._theme_selector(shell, board, hcols[1])
 
         grid = st.session_state.get(TB_GRID, False)
         sel = st.session_state.get(TB_SEL)
-        colors = _canvas_colors()
+        colors = _resolve_board_colors(shell, board)
         svg = board_svg(board, _frame_index(), colors=colors, grid=grid, selected_id=sel)
 
         # Phase 15: the JS drag-and-drop canvas is the primary renderer + interaction.
@@ -376,7 +452,7 @@ class TacticalBoardPage(Page):
                  f"|{st.session_state.get(TB_CANVAS_TS)}")
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
-            palette=_canvas_palette() if can_edit else [], selected_id=sel,
+            palette=_canvas_palette(colors) if can_edit else [], selected_id=sel,
             snap=snap, editable=can_edit, nonce=nonce)
         if not rendered:
             # true fallback: the component could not mount, so draw the static SVG. The
@@ -506,6 +582,16 @@ class TacticalBoardPage(Page):
             st.button("Delete", key="tbfr_del", use_container_width=True,
                       disabled=not can_edit or len(board.frames) <= 1,
                       on_click=lambda: _apply({"op": "delete_frame", "index": cur}))
+        # optional per-frame hold time for animated GIF export (defaults to 800ms)
+        if can_edit and board.frames:
+            fr_cur = board.frame(cur)
+            prev = int(getattr(fr_cur, "duration_ms", 800))
+            dur = st.number_input("Frame hold for GIF (ms)", min_value=100, max_value=10000,
+                                  value=prev, step=100, key=f"tbfr_dur_{fr_cur.id}",
+                                  help="How long this frame is shown in an animated GIF export.")
+            if int(dur) != prev:
+                fr_cur.duration_ms = int(dur)         # plain per-frame preference; saved with board
+                board.touch()
         st.markdown('</div>', unsafe_allow_html=True)
 
     # ------------------------------------------------------------ styling (self-contained)
