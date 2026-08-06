@@ -33,16 +33,42 @@ class _ShapeBase(PitchVisualization):
     control_groups = ("titles", "pitch", "markers", "colors", "legend",
                       "text", "images", "export", "layout")
 
+    def _markers(self, ctx: LayerContext, sub: pd.DataFrame, color: str) -> Layer:
+        """Clean filled position dots: size nudged by involvement, crisp outline,
+        readable number, names only when the Text panel asks for them."""
+        c = ctx.theme.colors
+        base = float(ctx.style("marker_size"))
+        cnt = sub["count"].astype(float)
+        sizes = (base * 1.5 + cnt / max(cnt.max(), 1.0) * base * 1.0).to_numpy()
+        return layer_registry.create(
+            "player_markers", df=sub, sizes=sizes, color=color,
+            edge_color=c["text"], edge_width=1.4, number_color=c["bg"],
+            show_names=bool(ctx.controls.get("show_labels")))
+
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
-        nodes = _avg_positions(ctx.df, self.kinds)
+        nodes = _avg_positions_by_team(ctx.df, self.kinds)
         if nodes.empty:
             return []
+        c = ctx.theme.colors
+        teams = [t for t in nodes["team"].value_counts().index.tolist() if t]
         out: list[Layer] = []
-        if self.with_hull and len(nodes) >= 3:
-            out.append(layer_registry.create("convex_hull", df=nodes,
-                                             color=_primary(ctx)))
-        out.append(layer_registry.create("player_markers", df=nodes,
-                                         color=_secondary(ctx), show_names=True))
+        if len(teams) >= 2:                               # colour each team distinctly
+            a, b = teams[0], teams[1]
+            col = {a: ctx.controls.get("primary_color") or c["accent"],
+                   b: ctx.controls.get("fail_color") or c["accent_2"]}
+            nodes = nodes[nodes["team"].isin([a, b])]
+            for team in (a, b):
+                sub = nodes[nodes["team"] == team]
+                if self.with_hull and len(sub) >= 3:
+                    out.append(layer_registry.create("convex_hull", df=sub, color=col[team]))
+                out.append(self._markers(ctx, sub, col[team]))
+            ctx.legend.add(str(a), kind="patch", color=col[a])
+            ctx.legend.add(str(b), kind="patch", color=col[b])
+        else:
+            color = ctx.controls.get("primary_color") or c["accent"]
+            if self.with_hull and len(nodes) >= 3:
+                out.append(layer_registry.create("convex_hull", df=nodes, color=color))
+            out.append(self._markers(ctx, nodes, color))
         return out
 
 
@@ -91,9 +117,11 @@ class SpaceOccupation(TeamVoronoi):
             list(super().layers(ctx))
 
 
-def _avg_positions_by_team(df: pd.DataFrame) -> pd.DataFrame:
-    """Average position per player, keeping their team (for team-coloured control)."""
-    d = df[df["player"].astype(str).str.strip().ne("")]
+def _avg_positions_by_team(df: pd.DataFrame, kinds: tuple[str, ...] = ()) -> pd.DataFrame:
+    """Average position per player (optionally only for ``kinds`` of events),
+    keeping their team so the shape/voronoi can colour by team."""
+    d = df if not kinds else df[df["event_type"].str.lower().isin(kinds)]
+    d = d[d["player"].astype(str).str.strip().ne("")]
     if "team" in d.columns:
         d = d.assign(team=d["team"].astype(str).str.strip())
     else:

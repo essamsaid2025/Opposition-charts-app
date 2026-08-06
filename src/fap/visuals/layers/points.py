@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import matplotlib.patheffects as pe
 import numpy as np
 import pandas as pd
 
@@ -46,7 +47,9 @@ class ScatterLayer(Layer):
 @layer_registry.register
 class PlayerMarkerLayer(Layer):
     """Player dots with jersey numbers (and optional name labels).
-    Params: color, number_column, name_column, show_names."""
+
+    Params: color, sizes (per-node array -> passing-network style scaling),
+    edge_color, edge_width, number_color, number_column, name_column, show_names."""
     info = PluginInfo(id="player_markers", name="Player markers", category="points")
     zorder = 8
 
@@ -55,26 +58,33 @@ class PlayerMarkerLayer(Layer):
         if not len(x):
             return
         color = self.params.get("color") or ctx.theme.colors["accent"]
-        size = float(self.p("marker_size", ctx)) * 1.4
-        ctx.ax.scatter(x, y, s=size, c=color, edgecolors=ctx.theme.colors["lines"],
-                       linewidths=float(self.p("marker_edge_width", ctx)),
-                       alpha=float(self.p("marker_alpha", ctx)), zorder=self.zorder)
+        sizes = self.params.get("sizes")
+        if sizes is None:
+            sizes = float(self.p("marker_size", ctx)) * 1.6
+        edge = self.params.get("edge_color") or ctx.theme.colors["lines"]
+        edge_w = float(self.params.get("edge_width", self.p("marker_edge_width", ctx)))
+        ctx.ax.scatter(x, y, s=sizes, c=color, edgecolors=edge, linewidths=edge_w,
+                       alpha=float(self.params.get("face_alpha",
+                                                   self.p("marker_alpha", ctx))),
+                       zorder=self.zorder)
+        num_color = self.params.get("number_color") or ctx.theme.colors["bg"]
         numbers = df.get(self.params.get("number_column", "jersey_number"))
         if numbers is not None:
             for px, py, num in zip(x, y, numbers):
                 text = str(num).replace(".0", "")
                 if text and text.lower() != "nan":
                     ctx.ax.text(px, py, text, ha="center", va="center",
-                                fontsize=max(6, ctx.style("label_size") - 2),
-                                fontweight="bold", color=ctx.theme.colors["bg"],
-                                zorder=self.zorder + 1)
+                                fontsize=max(6, ctx.style("label_size") - 1),
+                                fontweight="bold", color=num_color, zorder=self.zorder + 1)
         if self.params.get("show_names"):
             names = df.get(self.params.get("name_column", "player"), pd.Series(dtype=str))
             for px, py, name in zip(x, y, names):
                 if str(name).strip():
-                    ctx.ax.text(px, py - 2.6, str(name), ha="center", va="top",
-                                fontsize=max(6, ctx.style("label_size") - 3),
-                                color=ctx.theme.colors["text"], zorder=self.zorder + 1)
+                    txt = ctx.ax.text(px, py - 3.2, str(name), ha="center", va="top",
+                                      fontsize=max(6, ctx.style("label_size") - 2),
+                                      color=ctx.theme.colors["text"], zorder=self.zorder + 1)
+                    txt.set_path_effects(                       # halo for legibility
+                        [pe.withStroke(linewidth=2.4, foreground=ctx.theme.colors["bg"])])
 
 
 @layer_registry.register

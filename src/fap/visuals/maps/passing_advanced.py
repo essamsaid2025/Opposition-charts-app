@@ -142,7 +142,9 @@ class PassingOptions(PitchVisualization):
 
 
 class _NetworkBase(PitchVisualization):
-    weighted = False
+    """Passing network in the professional style: node size scales with a player's
+    pass volume, edge thickness scales with how often a pair combined. Nodes are
+    drawn as coloured rings so the links read clearly underneath them."""
     edge_source = "pass"
     control_groups = ("titles", "pitch", "markers", "colors", "legend",
                       "text", "images", "export", "layout")
@@ -150,11 +152,11 @@ class _NetworkBase(PitchVisualization):
                         default=2, min_value=1, max_value=15),)
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
-        source = A.carries(ctx.df) if self.edge_source == "carry" else ctx.df
-        nodes, edges = A.pass_network(source if self.edge_source == "pass" else ctx.df,
+        nodes, edges = A.pass_network(ctx.df,
                                       min_links=int(ctx.controls.get("min_links", 2)))
         if self.edge_source == "carry":
             d = A.carries(ctx.df)
+            d = d[d["player"].astype(str).str.strip().ne("")]
             nodes = d.groupby("player").agg(x=("x", "mean"), y=("y", "mean"),
                                             count=("x", "size"),
                                             jersey_number=("jersey_number", "first")
@@ -162,43 +164,46 @@ class _NetworkBase(PitchVisualization):
             edges = pd.DataFrame(columns=["p1", "p2", "count"])
         if nodes.empty:
             return []
+        c = ctx.theme.colors
         pos = nodes.set_index("player")
         rows = []
         for _, e in edges.iterrows():
             if e["p1"] in pos.index and e["p2"] in pos.index:
                 rows.append({"x": pos.loc[e["p1"], "x"], "y": pos.loc[e["p1"], "y"],
                              "end_x": pos.loc[e["p2"], "x"], "end_y": pos.loc[e["p2"], "y"],
-                             "count": e["count"]})
+                             "count": float(e["count"])})
         out: list[Layer] = []
-        if rows:
+        if rows:                                          # edge thickness ~ combination
             edf = pd.DataFrame(rows)
-            if self.weighted:
-                for _, r in edf.iterrows():
-                    out.append(layer_registry.create(
-                        "lines", df=pd.DataFrame([r]), color=_primary(ctx),
-                        line_width=0.8 + 4.5 * r["count"] / edf["count"].max()))
-            else:
-                out.append(layer_registry.create("lines", df=edf, color=_primary(ctx),
-                                                 line_width=1.6))
-        base = float(ctx.style("marker_size"))
+            mx = max(edf["count"].max(), 1.0)
+            widths = (1.0 + 6.0 * edf["count"] / mx).tolist()
+            out.append(layer_registry.create(
+                "lines", df=edf, widths=widths, alpha=0.8,
+                color=ctx.controls.get("secondary_color") or c["muted"]))
+
+        base = float(ctx.style("marker_size"))            # node area ~ pass volume
+        cnt = nodes["count"].astype(float)
+        node_sizes = (base * 0.7 + cnt / max(cnt.max(), 1.0) * base * 4.0).to_numpy()
         out.append(layer_registry.create(
-            "player_markers",
-            df=nodes.assign(sizes=base + nodes["count"] / max(nodes["count"].max(), 1) * base),
-            color=_secondary(ctx), show_names=bool(ctx.controls.get("show_labels"))))
+            "player_markers", df=nodes, sizes=node_sizes,
+            color=c["panel"], edge_color=ctx.controls.get("primary_color") or c["accent"],
+            edge_width=2.6, number_color=c["text"], face_alpha=0.95,
+            show_names=bool(ctx.controls.get("show_labels"))))
         return out
 
 
 @visual_registry.register
 class PassNetwork(_NetworkBase):
     info = PluginInfo(id="pass_network", name="Pass Network", category=_C,
-                      description="Average positions linked by pass volume.")
+                      description="Average positions linked by pass volume - node size by "
+                                  "passes played, link width by combination strength.")
 
 
 @visual_registry.register
 class WeightedPassNetwork(_NetworkBase):
     info = PluginInfo(id="weighted_passing_network", name="Weighted Passing Network",
-                      category=_C, description="Edge width scaled by pass count.")
-    weighted = True
+                      category=_C, description="Node size by pass volume, edge width by "
+                                               "pass combination count.")
 
 
 @visual_registry.register

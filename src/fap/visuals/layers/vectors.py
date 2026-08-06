@@ -67,7 +67,8 @@ class CurvedArrowLayer(_ArrowBase):
 
 @layer_registry.register
 class LineLayer(Layer):
-    """Plain segments (no heads). Params: color, line_width, linestyle, label."""
+    """Plain segments (no heads). Params: color/colors, line_width, widths (per-row
+    array -> passing-network edge weighting), alpha, linestyle, label."""
     info = PluginInfo(id="lines", name="Lines", category="vectors")
     zorder = 4
 
@@ -76,13 +77,18 @@ class LineLayer(Layer):
         if d.empty:
             return
         color = self.params.get("color") or ctx.theme.colors["accent"]
+        colors = self.params.get("colors")
+        widths = self.params.get("widths")
+        base_w = float(self.params.get("line_width", self.p("arrow_width", ctx)))
+        alpha = float(self.params.get("alpha", self.p("arrow_alpha", ctx)))
         x, y = ctx.to_display(d["x"], d["y"])
         x2, y2 = ctx.to_display(d["end_x"], d["end_y"])
         for i in range(len(d)):
-            ctx.ax.plot([x[i], x2[i]], [y[i], y2[i]], color=color,
-                        lw=float(self.params.get("line_width", self.p("arrow_width", ctx))),
-                        ls=self.params.get("linestyle", "-"),
-                        alpha=float(self.p("arrow_alpha", ctx)), zorder=self.zorder)
+            ctx.ax.plot([x[i], x2[i]], [y[i], y2[i]],
+                        color=(colors[i] if colors is not None else color),
+                        lw=(float(widths[i]) if widths is not None else base_w),
+                        ls=self.params.get("linestyle", "-"), alpha=alpha,
+                        solid_capstyle="round", zorder=self.zorder)
         if self.params.get("label"):
             ctx.legend.add(self.params["label"], kind="line", color=color,
                            linestyle=self.params.get("linestyle", "-"))
