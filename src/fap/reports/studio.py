@@ -152,6 +152,10 @@ class Page:
     background_color: str = ""               # optional solid fill
     margin: float = 40.0                     # px guide margin
     columns: int = 1                         # multi-column guide count (layout aid)
+    #: "flow" = the classic auto-stacked vertical column (default, unchanged behaviour);
+    #: "free" = free-form canvas where blocks keep their manually-dragged x/y. A saved
+    #: page dict with no "kind" key loads as "flow", so every existing report is untouched.
+    kind: str = "flow"
 
     def dimensions(self, dpi: int = 96) -> tuple[int, int]:
         return page_size(self.size).pixels(self.orientation, dpi)
@@ -160,7 +164,7 @@ class Page:
         return {"id": self.id, "title": self.title, "size": self.size,
                 "orientation": self.orientation, "background": self.background,
                 "background_color": self.background_color, "margin": self.margin,
-                "columns": self.columns}
+                "columns": self.columns, "kind": self.kind}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Page":
@@ -168,12 +172,12 @@ class Page:
             id=d["id"], title=d.get("title", ""), size=d.get("size", DEFAULT_PAGE_SIZE),
             orientation=d.get("orientation", "portrait"), background=d.get("background", ""),
             background_color=d.get("background_color", ""), margin=float(d.get("margin", 40.0)),
-            columns=int(d.get("columns", 1)))
+            columns=int(d.get("columns", 1)), kind=str(d.get("kind", "flow")))
 
 
 def new_page(title: str = "", size: str = DEFAULT_PAGE_SIZE,
-             orientation: str = "portrait") -> Page:
-    return Page(id=str(uuid.uuid4()), title=title, size=size, orientation=orientation)
+             orientation: str = "portrait", kind: str = "flow") -> Page:
+    return Page(id=str(uuid.uuid4()), title=title, size=size, orientation=orientation, kind=kind)
 
 
 # ---------------------------------------------------------------- editor state

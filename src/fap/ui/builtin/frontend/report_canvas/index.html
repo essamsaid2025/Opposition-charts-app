@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { color-scheme: light dark; --accent: #2f7bd6; --paper: #ffffff; --edge: #d8dee9; }
+  html, body { margin: 0; padding: 0; background: transparent;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #wrap { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+  /* the scroll frame sizes to the SCALED page; the surface is authored in page pixels
+     and scaled as a whole so block coordinates stay in page-pixel space. */
+  #frame { position: relative; overflow: auto; max-width: 100%; }
+  #surface { position: relative; transform-origin: top left;
+    box-shadow: 0 6px 24px rgba(16,22,30,.20), 0 1px 3px rgba(16,22,30,.12);
+    outline: 1px solid var(--edge); border-radius: 3px; }
+  .rc-block { position: absolute; box-sizing: border-box; overflow: hidden;
+    cursor: grab; touch-action: none; border: 1px solid transparent; border-radius: 3px; }
+  .rc-block:hover { border-color: var(--accent); }
+  .rc-block.locked { cursor: not-allowed; }
+  .rc-block.locked:hover { border-color: var(--edge); }
+  .rc-block.dragging { cursor: grabbing; border-color: var(--accent);
+    box-shadow: 0 4px 14px rgba(0,0,0,.28); z-index: 9999 !important; }
+  .rc-block * { pointer-events: none; }          /* content never eats the drag */
+  #hint { font-size: 11px; color: #8a93a2; padding: 0 2px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="frame"><div id="surface"></div></div>
+  <div id="hint">Drag blocks to position them. Positions autosave.</div>
+</div>
+<script>
+(function () {
+  // ---- Streamlit static-component bridge (same protocol as tactical_canvas/sortable) ----
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
+  function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 2 }); }
+  function emit(payload) {
+    // INTENT ONLY: a batch of {op:"update_layout", id, x, y}. Python owns the model.
+    send("streamlit:setComponentValue", { dataType: "json", value: payload });
+  }
+
+  // strictly-increasing, session-unique action stamp (Date.now() only moves forward) so a
+  // remounted iframe never reuses an earlier stamp - lets Python dedup re-delivered values.
+  var lastTs = 0;
+  function nextTs() { var t = Date.now(); if (t <= lastTs) t = lastTs + 1; lastTs = t; return t; }
+
+  var frame = document.getElementById("frame");
+  var surface = document.getElementById("surface");
+  var cfg = { page: {}, blocks: [], snap: 0, zoom: 1, editable: true };
+
+  function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+  function snap(v) {
+    return (cfg.snap && cfg.snap > 0) ? Math.round(v / cfg.snap) * cfg.snap : v;
+  }
+
+  function render() {
+    var pg = cfg.page || {};
+    var pw = pg.w || 794, ph = pg.h || 1123, z = cfg.zoom || 1;
+    surface.style.width = pw + "px";
+    surface.style.height = ph + "px";
+    surface.style.transform = "scale(" + z + ")";
+    surface.style.background = pg.background || "var(--paper)";
+    frame.style.width = (pw * z + 2) + "px";
+    frame.style.height = (ph * z + 2) + "px";
+    surface.innerHTML = "";
+    (cfg.blocks || []).forEach(function (b) {
+      var el = document.createElement("div");
+      el.className = "rc-block" + (b.locked ? " locked" : "");
+      el.setAttribute("data-bid", b.id);
+      el.style.left = b.x + "px"; el.style.top = b.y + "px";
+      el.style.width = b.w + "px"; el.style.height = b.h + "px";
+      el.innerHTML = b.html || "";
+      if (cfg.editable && !b.locked) {
+        el.addEventListener("pointerdown", function (e) { beginDrag(el, b, e); });
+      }
+      surface.appendChild(el);
+    });
+    setHeight();
+  }
+
+  // ---- dragging: cache the surface rect ONCE at drag start (do NOT recompute it on every
+  // pointermove) and coalesce visual updates into one DOM write per animation frame. This is
+  // the performance pattern learned on the Tactical Board canvas, applied from day one. ----
+  function beginDrag(el, b, e) {
+    if (!cfg.editable || b.locked) return;
+    e.preventDefault();
+    var rect = surface.getBoundingClientRect();          // cached for the whole gesture
+    var scale = cfg.zoom || 1;
+    var pw = (cfg.page && cfg.page.w) || 794, ph = (cfg.page && cfg.page.h) || 1123;
+    // pointer position in page-pixel space, and the grab offset within the block
+    function toPage(cx, cy) {
+      return { x: (cx - rect.left) / scale, y: (cy - rect.top) / scale };
+    }
+    var start = toPage(e.clientX, e.clientY);
+    var grab = { dx: start.x - b.x, dy: start.y - b.y };
+    var maxX = Math.max(0, pw - b.w), maxY = Math.max(0, ph - b.h);
+    el.classList.add("dragging");
+    try { el.setPointerCapture(e.pointerId); } catch (x) {}
+
+    var pending = null, raf = 0, last = { x: b.x, y: b.y };
+    function paint() {
+      raf = 0;
+      if (!pending) return;
+      var p = toPage(pending.x, pending.y);
+      last.x = clamp(p.x - grab.dx, 0, maxX);
+      last.y = clamp(p.y - grab.dy, 0, maxY);
+      el.style.left = last.x + "px"; el.style.top = last.y + "px";
+    }
+    function move(ev) {
+      pending = { x: ev.clientX, y: ev.clientY };
+      if (!raf) raf = requestAnimationFrame(paint);
+    }
+    function up(ev) {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      el.classList.remove("dragging");
+      var p = toPage(ev.clientX, ev.clientY);
+      var x = snap(clamp(p.x - grab.dx, 0, maxX));
+      var y = snap(clamp(p.y - grab.dy, 0, maxY));
+      x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100;
+      el.style.left = x + "px"; el.style.top = y + "px";   // leave it where dropped
+      b.x = x; b.y = y;                                     // keep local metadata in sync
+      // Python is authoritative: it re-renders this surface at the committed x/y, so the
+      // block never visibly jumps back while the (async) Streamlit round-trip completes.
+      emit({ ts: nextTs(), commands: [{ op: "update_layout", id: b.id, x: x, y: y }] });
+    }
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  }
+
+  window.addEventListener("message", function (event) {
+    var data = event.data || {};
+    if (data.type !== "streamlit:render") return;
+    var args = data.args || {};
+    cfg.page = args.page || {};
+    cfg.blocks = args.blocks || [];
+    cfg.snap = Number(args.snap || 0);
+    cfg.zoom = Number(args.zoom || 1);
+    cfg.editable = args.editable !== false;
+    render();
+  });
+
+  window.addEventListener("resize", setHeight);
+  if (window.ResizeObserver) { new ResizeObserver(setHeight).observe(document.body); }
+  ready();
+  window.addEventListener("load", setHeight);
+})();
+</script>
+</body>
+</html>

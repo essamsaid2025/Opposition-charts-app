@@ -241,14 +241,16 @@ def distribute_blocks(studio: ReportStudio, block_ids: list[str],
 
 # ================================================================ page ops
 def create_page(studio: ReportStudio, *, title: str = "", size: str | None = None,
-                orientation: str | None = None, at: int | None = None) -> Page:
+                orientation: str | None = None, at: int | None = None,
+                kind: str = "flow") -> Page:
     """Add a new page. Inherits size/orientation from the active (or last) page
-    unless overridden."""
+    unless overridden. ``kind`` selects "flow" (auto-stacked) or "free" (free-form)."""
     ref = studio.page(studio.editor.active_page or "") or (studio.pages[-1] if studio.pages else None)
     page = new_page(
         title=title or f"Page {len(studio.pages) + 1}",
         size=size or (ref.size if ref else "A4"),
-        orientation=orientation or (ref.orientation if ref else "portrait"))
+        orientation=orientation or (ref.orientation if ref else "portrait"),
+        kind=kind)
     if at is None or at >= len(studio.pages):
         studio.pages.append(page)
     else:
@@ -264,7 +266,8 @@ def duplicate_page(studio: ReportStudio, page_id: str) -> Page | None:
         return None
     clone = Page(id=str(uuid.uuid4()), title=f"{src.title or 'Page'} (copy)", size=src.size,
                  orientation=src.orientation, background=src.background,
-                 background_color=src.background_color, margin=src.margin, columns=src.columns)
+                 background_color=src.background_color, margin=src.margin, columns=src.columns,
+                 kind=src.kind)
     idx = studio.page_index(page_id)
     studio.pages.insert(idx + 1, clone)
     for block in studio.blocks_on(page_id):

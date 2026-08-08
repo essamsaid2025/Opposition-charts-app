@@ -27,9 +27,11 @@ from typing import Any, Callable
 import streamlit as st
 
 from fap.reports import chart_block, image_block, qr_block, text_block
+from fap.reports.editor_ops import create_page, delete_page
 from fap.theme import DEFAULT_PALETTE
 from fap.theme import components as C
 from fap.theme import icon
+from fap.ui.builtin.report_canvas import report_canvas
 from fap.ui.studio import history, preview
 from fap.ui.studio.covers import (
     COVER_PRESETS, COVER_TEMPLATES, palette_from_image, suggest_from_logo,
@@ -54,6 +56,10 @@ _HEIGHT = {SECTION_HEADER: 54, NOTES: 150, DIVIDER: 24, SPACER: 40}
 _MARGIN = 48.0
 _GAP = 18.0
 _QR_SIDE = 200.0                        # default square side (px) for a QR-code block
+_CASCADE = 28.0                         # px offset between successive free-page drops
+# default drop size (px) per kind when a block is added onto a FREE page
+_FREE_SIZE = {"chart": (360.0, 260.0), "image": (300.0, 220.0), "qr": (_QR_SIDE, _QR_SIDE),
+              "text": (320.0, 120.0)}
 _PREVIEW = "_studio_preview_html"       # cached export-preview HTML (session, per report)
 
 
@@ -85,7 +91,7 @@ def render_studio(shell: Any, reports: Any, report_id: str) -> None:
         with tabs[3]:
             _export(shell, reports, report_id)
     with stage:
-        _preview_pane(shell, reports, report_id, studio)
+        _stage(shell, reports, report_id, studio)
 
 
 # ================================================================ toolbar
@@ -159,8 +165,166 @@ def _reorder_apply(studio, ordered_ids: list[str]) -> None:
     _reflow(studio)
 
 
-# ================================================================ preview stage
+# ================================================================ stage (preview / canvas)
 _ZOOMS = [0.5, 0.65, 0.75, 0.85, 1.0, 1.25]
+
+
+def _stage(shell, reports, report_id, studio) -> None:
+    """The right-hand stage. A flow page (the default, and every legacy report) shows the
+    unchanged live A4 preview; a free-form page shows the interactive drag canvas instead.
+    The page bar is the only new chrome for flow reports — it never alters flow rendering."""
+    _pages_bar(shell, reports, report_id, studio)
+    active = studio.page(studio.editor.active_page or "")
+    if active is not None and getattr(active, "kind", "flow") == "free":
+        _free_canvas(shell, reports, report_id, studio, active)
+    else:
+        _preview_pane(shell, reports, report_id, studio)
+
+
+def _pages_bar(shell, reports, report_id, studio) -> None:
+    """Switch between pages and add a free-form page. For a standard single-flow-page report
+    this is just an unobtrusive '+ Free-form page' button above the preview."""
+    pages = studio.pages
+    active_id = studio.editor.active_page or (pages[0].id if pages else None)
+    active = studio.page(active_id or "")
+    show_delete = active is not None and getattr(active, "kind", "flow") == "free" and len(pages) > 1
+    cols = st.columns(len(pages) + (2 if show_delete else 1))
+    for i, p in enumerate(pages):
+        free = getattr(p, "kind", "flow") == "free"
+        label = (p.title or f"Page {i + 1}") + (" ◆" if free else "")
+        if cols[i].button(label, key=f"pgsel_{report_id}_{p.id}", use_container_width=True,
+                          type="primary" if p.id == active_id else "secondary"):
+            _apply(shell, reports, report_id, lambda s, pid=p.id: _set_active_page(s, pid))
+    if cols[len(pages)].button("＋ Free-form page", key=f"pgadd_{report_id}",
+                               use_container_width=True):
+        _apply(shell, reports, report_id,
+               lambda s: create_page(s, title="Free-form", kind="free"))
+    if show_delete:
+        if cols[len(pages) + 1].button("Delete page", key=f"pgdel_{report_id}",
+                                       use_container_width=True):
+            _apply(shell, reports, report_id, lambda s, pid=active_id: delete_page(s, pid))
+
+
+def _set_active_page(studio, page_id: str) -> None:
+    studio.editor.active_page = page_id
+
+
+# ---------------------------------------------------------------- free-form canvas
+def _free_canvas(shell, reports, report_id, studio, page) -> None:
+    """Render a free-form page as an interactive drag surface. Blocks are drawn with the
+    EXISTING exporter renderer (reused, not reinvented); the JS only positions and drags
+    them and reports ``update_layout`` intent, which Python validates + applies. Degrades to
+    the live preview note if the component can't mount."""
+    pw, ph = page.dimensions()
+    blocks = _canvas_block_data(reports, studio, page)
+
+    bar = st.columns([3, 2, 2], vertical_alignment="center")
+    bar[0].markdown(
+        f'<div style="font-size:.82rem;color:var(--fap-text-muted)">'
+        f'Free-form canvas · <b style="color:var(--fap-text)">{len(blocks)} block'
+        f'{"" if len(blocks) == 1 else "s"}</b> · drag to position</div>', unsafe_allow_html=True)
+    zoom_key = f"_rc_zoom_{report_id}"
+    if zoom_key not in st.session_state:
+        st.session_state[zoom_key] = 0.75
+    zoom = bar[2].selectbox("Zoom", _ZOOMS, index=_ZOOMS.index(st.session_state[zoom_key]),
+                            format_func=lambda z: f"{int(z * 100)}%", key=zoom_key,
+                            label_visibility="collapsed")
+    snap = float(studio.editor.grid_size) if studio.editor.snap_to_grid else 0.0
+
+    if not blocks:
+        C.render_empty_state("Empty canvas", "Add blocks from the Sections tab — they drop "
+                             "onto this page where you can drag them anywhere.", icon_name="reports")
+        return
+
+    sig = "|".join(f"{b['id']}:{b['x']:.1f},{b['y']:.1f}:{len(b['html'])}" for b in blocks)
+    nonce = hashlib.sha1(f"{page.id}|{zoom}|{snap}|{sig}".encode("utf-8")).hexdigest()[:12]
+    rendered, intent = report_canvas(
+        page={"id": page.id, "w": float(pw), "h": float(ph),
+              "background": page.background_color or "#ffffff"},
+        blocks=blocks, snap=snap, zoom=float(zoom), editable=True, nonce=nonce,
+        key=f"rc_{report_id}")
+    if not rendered:
+        st.info("The drag canvas couldn't load in this browser. Saved positions still render "
+                "in the preview — switch to a flow page to see the full document.")
+        return
+    if intent is not None:
+        ts = intent.get("ts")
+        if ts != st.session_state.get(f"_rc_ts_{report_id}"):
+            st.session_state[f"_rc_ts_{report_id}"] = ts       # dedup Streamlit re-delivery
+            cmds = intent.get("commands") or []
+            if cmds:
+                _apply(shell, reports, report_id, lambda s, c=list(cmds): _apply_layout_cmds(s, c))
+    st.caption("Phase 1: move only. Resize and layering come later. Positions autosave.")
+
+
+def _canvas_block_data(reports, studio, page) -> list[dict]:
+    """Per-block data for the canvas: position/size + the block's HTML, produced by the SAME
+    exporter element renderer the live preview uses (so the canvas shows the real content)."""
+    from fap.reports.exporters import _element_inner
+    from fap.reports.layout import LayoutEngine
+    eng = LayoutEngine()
+    pw, ph = page.dimensions()
+
+    def resolve(iid):
+        return reports.image_bytes(iid) if iid else None
+
+    out: list[dict] = []
+    for b in studio.blocks_on(page.id):
+        if b.hidden:
+            continue
+        lay = studio.layouts[b.id]
+        render_block = _qr_render_copy(b) if b.kind == "qr" else b
+        try:
+            el = eng._element_from_block(render_block, lay, pw, ph, resolve)
+            html = _element_inner(el)
+        except Exception:
+            html = (f"<div style='padding:8px;font:600 12px Inter,Arial;color:#5b6472'>"
+                    f"{_esc(b.title or _kind_label(b))}</div>")
+        out.append({"id": b.id, "x": float(lay.x), "y": float(lay.y),
+                    "w": float(lay.width), "h": float(lay.height),
+                    "locked": bool(lay.locked), "html": html})
+    return out
+
+
+def _qr_render_copy(block):
+    """A shallow copy of a QR block with a freshly generated ``image_b64`` for canvas
+    preview only — so we never persist canvas-side materialization onto the saved block."""
+    payload = block.payload or {}
+    if payload.get("image_b64"):
+        return block
+    from fap.reports.blocks import qr_png
+    png = qr_png(payload.get("url", ""))
+    if not png:
+        return block
+    import base64
+    import copy
+    nb = copy.copy(block)
+    nb.payload = {**payload, "image_b64": base64.b64encode(png).decode("ascii")}
+    return nb
+
+
+def _apply_layout_cmds(studio, cmds: list[dict]) -> None:
+    """Apply validated ``update_layout`` commands to block layouts (snap to the editor grid,
+    clamp inside the page). Locked blocks are ignored — a second guard behind the JS one."""
+    for c in cmds:
+        if c.get("op") != "update_layout":
+            continue
+        lay = studio.layouts.get(c.get("id"))
+        if lay is None or lay.locked:
+            continue
+        x, y = c.get("x"), c.get("y")
+        if x is None or y is None:
+            continue
+        x, y = float(x), float(y)
+        g = studio.editor.grid_size
+        if studio.editor.snap_to_grid and g > 0:
+            x, y = round(x / g) * g, round(y / g) * g
+        page = studio.page(lay.page_id)
+        if page is not None:
+            pw, ph = page.dimensions()
+            x = _clampf(x, 0.0, max(0.0, pw - lay.width))
+            y = _clampf(y, 0.0, max(0.0, ph - lay.height))
+        lay.x, lay.y = x, y
 
 
 def _preview_pane(shell, reports, report_id, studio) -> None:
@@ -376,7 +540,7 @@ def _insert_grid(shell, reports, report_id, items: dict) -> None:
     cols = st.columns(3)
     for i, (label, factory) in enumerate(items.items()):
         if cols[i % 3].button(label, key=f"ins_{label}", use_container_width=True):
-            _apply(shell, reports, report_id, lambda s, f=factory: _add(s, f()))
+            _apply(shell, reports, report_id, lambda s, f=factory: _add_block(s, f()))
 
 
 def _section(label: str, body: str = "") -> Callable:
@@ -440,7 +604,7 @@ def _chart_picker_grid(shell, reports, report_id) -> None:
     if st.button("Insert chart (renders at Export/Refresh)", key="add_chart_ins"):
         name = labels.get(viz_id, "Chart")
         _apply(shell, reports, report_id,
-               lambda s, v=viz_id, n=name: _add(s, chart_block(v, {}, title=n)))
+               lambda s, v=viz_id, n=name: _add_block(s, chart_block(v, {}, title=n)))
 
 
 def _scouting_service(shell):
@@ -507,7 +671,7 @@ def _qr_picker(shell, reports, report_id) -> None:
         else:
             _apply(shell, reports, report_id,
                    lambda s, u=url, pi=player_id, vi=video_id, cap=caption:
-                       _add(s, qr_block(u, player_id=pi, video_id=vi, caption=cap, title="QR Code")))
+                       _add_block(s, qr_block(u, player_id=pi, video_id=vi, caption=cap, title="QR Code")))
 
 
 def _block_card(shell, reports, report_id, block, index, total) -> None:
@@ -691,6 +855,37 @@ def _add(studio, block) -> None:
     _reflow(studio)
 
 
+def _add_block(studio, block) -> None:
+    """Add a block onto whichever page is active. On a FREE page it is placed at a sensible
+    cascaded position and NOT reflowed; on a FLOW page it takes the classic vertical-stack
+    path (``_add``) — so flow behaviour is completely unchanged."""
+    page = studio.page(studio.editor.active_page or "")
+    if page is not None and getattr(page, "kind", "flow") == "free":
+        _place_on_free_page(studio, block, page)
+    else:
+        _add(studio, block)
+
+
+def _place_on_free_page(studio, block, page) -> None:
+    """Drop a new block onto a free page: centred-ish and cascaded from the blocks already
+    there so repeated adds don't land exactly on top of each other. No reflow — the block
+    keeps this position until the user drags it."""
+    from fap.reports.studio import BlockLayout
+    studio.document.blocks.append(block)
+    pw, ph = page.dimensions()
+    w, h = _FREE_SIZE.get(block.kind, (320.0, 160.0))
+    n = sum(1 for l in studio.layouts.values() if l.page_id == page.id)
+    off = (n % 8) * _CASCADE
+    x = _clampf((pw - w) / 2 + off, _MARGIN, max(_MARGIN, pw - w - _MARGIN))
+    y = _clampf(_MARGIN + off, _MARGIN, max(_MARGIN, ph - h - _MARGIN))
+    studio.layouts[block.id] = BlockLayout(page_id=page.id, x=x, y=y, width=w, height=h,
+                                           z=studio.max_z(page.id) + 1)
+
+
+def _clampf(v: float, lo: float, hi: float) -> float:
+    return lo if v < lo else (hi if v > hi else v)
+
+
 def _move(studio, block_id: str, delta: int) -> None:
     blocks = studio.document.blocks
     i = next((k for k, b in enumerate(blocks) if b.id == block_id), -1)
@@ -762,17 +957,32 @@ def _set_qr(studio, block_id: str, url: str, caption: str, detach_ref: bool = Fa
 
 
 def _reflow(studio) -> None:
-    """Auto-stack every block into a single clean vertical flow on the first page,
-    so the editor order equals the exported order and the 6C LayoutEngine positions
-    everything with no manual coordinates. This is the 'no positioning' guarantee."""
+    """Auto-stack FLOW-page blocks into a single clean vertical column, so the editor
+    order equals the exported order and the 6C LayoutEngine positions them with no manual
+    coordinates. This is the 'no positioning' guarantee for flow pages.
+
+    Free-form ("free") pages are the opt-in exception: a block that lives on a free page
+    keeps the x/y the user dragged it to and is NEVER touched here — this per-block, by-page
+    guard (not a global active-page skip) is what lets flow and free pages coexist. When a
+    report has NO free page, ``free_ids`` is empty and the first flow page is ``pages[0]``,
+    so the behaviour is byte-identical to before this phase."""
     if not studio.pages:
         return
-    page = studio.pages[0]
-    pid = page.id
-    pw, ph = page.dimensions()
+    free_ids = {p.id for p in studio.pages if getattr(p, "kind", "flow") == "free"}
+    # the flow column targets the first FLOW page (today always pages[0]); if every page is
+    # free there is nothing to stack.
+    flow_page = next((p for p in studio.pages if getattr(p, "kind", "flow") != "free"), None)
+    if flow_page is None:
+        return
+    pid = flow_page.id
+    pw, ph = flow_page.dimensions()
     x, width = _MARGIN, pw - 2 * _MARGIN
     y = _MARGIN
     for b in studio.document.blocks:
+        lay = studio.layouts.get(b.id)
+        # a block on a free page is user-positioned — leave its layout completely alone
+        if lay is not None and lay.page_id in free_ids:
+            continue
         variant = (b.payload or {}).get("variant", "")
         h = _HEIGHT.get(variant)
         bw = width                                    # blocks span the content width…
@@ -787,7 +997,6 @@ def _reflow(studio) -> None:
             else:
                 lines = max(1, (b.payload or {}).get("text", "").count("\n") + 1)
                 h = max(120.0, lines * 22.0)
-        lay = studio.layouts.get(b.id)
         if lay is None:
             from fap.reports.studio import BlockLayout
             lay = BlockLayout(page_id=pid)
