@@ -78,7 +78,7 @@ def _docx_element(doc, el: RenderedElement) -> None:
     if el.kind == "divider":
         doc.add_paragraph("_" * 40)
         return
-    if el.kind in ("image", "chart", "logo"):
+    if el.kind in ("image", "chart", "logo", "qr"):
         data = c.get("image_bytes")
         if data:
             try:
@@ -177,7 +177,7 @@ def _pptx_element(slide, el: RenderedElement, sw, sh) -> None:
     left, top = Emu(int(el.fx * sw)), Emu(int(el.fy * sh))
     width, height = Emu(int(el.fw * sw)), Emu(int(el.fh * sh))
     c = el.content
-    if el.kind in ("image", "chart", "logo"):
+    if el.kind in ("image", "chart", "logo", "qr"):
         data = c.get("image_bytes")
         if data:
             try:

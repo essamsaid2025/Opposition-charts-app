@@ -113,6 +113,10 @@ def _md_element(el: RenderedElement) -> list[str]:
         return [f"_[chart: {c.get('viz_id', '') or 'visualization'}]_", ""]
     if el.kind == "image":
         return [f"_[image: {c.get('caption') or 'image'}]_", ""]
+    if el.kind == "qr":
+        url = c.get("url", "")
+        label = c.get("caption") or "QR code"
+        return [f"_[QR: {label}]_" + (f" {url}" if url else ""), ""]
     if el.kind == "kpis":
         rows = c.get("kpis", [])
         return ["| Metric | Value |", "| --- | --- |"] + [f"| {k} | {v} |" for k, v in rows] + [""]
@@ -368,15 +372,17 @@ def _element_inner(el: RenderedElement) -> str:
     if el.kind == "logo":
         data = c.get("image_bytes")
         return f"<img style='max-width:100%;max-height:100%' src='data:image/png;base64,{_b64(data)}'/>" if data else ""
-    if el.kind in ("image", "chart"):
+    if el.kind in ("image", "chart", "qr"):
         data = c.get("image_bytes")
-        fit = c.get("fit", "contain" if el.kind == "chart" else "cover")
+        fit = c.get("fit", "contain" if el.kind in ("chart", "qr") else "cover")
         out = ""
         if data:
             out = (f"<img style='width:100%;height:100%;object-fit:{fit};"
                    f"border-radius:{el.radius}px' src='data:{c.get('mime', 'image/png')};base64,{_b64(data)}'/>")
         elif el.kind == "chart":
             out = f"<div style='color:#8a93a2'>chart “{_esc(c.get('viz_id', ''))}”</div>"
+        elif el.kind == "qr":
+            out = f"<div style='color:#8a93a2'>QR: {_esc(c.get('url', ''))}</div>"
         if c.get("caption"):
             out += f"<div style='font-size:11px;color:#5b6472'>{_esc(c['caption'])}</div>"
         return out

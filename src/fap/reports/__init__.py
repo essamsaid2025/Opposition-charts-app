@@ -20,8 +20,8 @@ from fap.reports.models import (
 )
 from fap.reports.blocks import (
     BLOCK_KINDS, ChartBlockRenderer, add_block, chart_block, delete_block,
-    duplicate_block, image_block, move_block, reorder_blocks, set_hidden,
-    text_block, visible_blocks,
+    duplicate_block, image_block, materialize_qr, move_block, qr_available,
+    qr_block, qr_png, reorder_blocks, set_hidden, text_block, visible_blocks,
 )
 # report studio (editable page/layout overlay - phase 6A)
 from fap.reports.studio import (
@@ -50,7 +50,8 @@ __all__ = [
     "ReportBuilder", "ReportSection", "ReportSpec", "section_registry",
     # models
     "ReportDocument", "ReportRecord", "Section", "Cover", "KPI", "Table", "Insight", "Chart",
-    "Block", "BLOCK_KINDS", "text_block", "image_block", "chart_block", "add_block",
+    "Block", "BLOCK_KINDS", "text_block", "image_block", "chart_block", "qr_block",
+    "qr_png", "qr_available", "materialize_qr", "add_block",
     "delete_block", "duplicate_block", "move_block", "reorder_blocks", "set_hidden",
     "visible_blocks", "ChartBlockRenderer",
     # report studio (phase 6A)

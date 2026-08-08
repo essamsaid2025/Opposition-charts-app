@@ -266,6 +266,14 @@ class LayoutEngine:
                                    content={"image_bytes": _inlined(p), "mime": "image/png",
                                             "caption": p.get("caption", ""), "viz_id": p.get("viz_id", "")},
                                    **geom)
+        if block.kind == "qr":
+            # like chart: the PNG is materialized to image_b64 ahead of render (cached),
+            # so here we only read the inlined bytes - the layout engine stays pure.
+            return RenderedElement(kind="qr",
+                                   content={"image_bytes": _inlined(p), "mime": "image/png",
+                                            "caption": p.get("caption", ""), "url": p.get("url", ""),
+                                            "fit": "contain"},
+                                   **geom)
         return RenderedElement(kind="text", content={"text": p.get("text", "")}, **geom)
 
     # -------------------------------------------------------------- legacy flow

@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from fap.reports import chart_block, image_block, text_block
+from fap.reports import chart_block, image_block, qr_block, text_block
 from fap.theme import DEFAULT_PALETTE
 from fap.theme import components as C
 from fap.theme import icon
@@ -53,6 +53,7 @@ REPORT_TEMPLATES: dict[str, str] = {
 _HEIGHT = {SECTION_HEADER: 54, NOTES: 150, DIVIDER: 24, SPACER: 40}
 _MARGIN = 48.0
 _GAP = 18.0
+_QR_SIDE = 200.0                        # default square side (px) for a QR-code block
 _PREVIEW = "_studio_preview_html"       # cached export-preview HTML (session, per report)
 
 
@@ -111,6 +112,8 @@ def _toolbar(shell, reports, report_id, record) -> None:
 # ================================================================ sections panel (rail)
 def _kind_label(block) -> str:
     variant = (block.payload or {}).get("variant", "")
+    if not variant and block.kind == "qr":
+        return "QR Code"
     return {"section_header": "Section", "notes": "Notes", "divider": "Divider",
             "spacer": "Spacer"}.get(variant, block.kind.title())
 
@@ -361,6 +364,8 @@ def _add_content(shell, reports, report_id) -> None:
             _insert_grid(shell, reports, report_id, _data_items())
         with tabs[3]:
             _insert_grid(shell, reports, report_id, _media_items())
+            st.markdown("**QR Code** — links to a player's video")
+            _qr_picker(shell, reports, report_id)
         with tabs[4]:
             _insert_grid(shell, reports, report_id, _analysis_items())
         with tabs[5]:
@@ -438,6 +443,73 @@ def _chart_picker_grid(shell, reports, report_id) -> None:
                lambda s, v=viz_id, n=name: _add(s, chart_block(v, {}, title=n)))
 
 
+def _scouting_service(shell):
+    """The ScoutingService if the platform exposes one, else None (graceful)."""
+    try:
+        return getattr(shell.platform, "scouting", None)
+    except Exception:
+        return None
+
+
+def _player_external_videos(svc, shell, player_id: str) -> list:
+    """A player's external (link-based) videos - the QR's URL source."""
+    try:
+        return [v for v in svc.list_videos(player_id) if getattr(v, "kind", "") == "external"]
+    except Exception:
+        return []
+
+
+def _qr_picker(shell, reports, report_id) -> None:
+    """Add a QR-code block. Preferred path: pick a player, then one of their linked
+    external videos (auto-fills the URL, and records player_id/video_id for re-editing).
+    Fallback path (no scouting service, no linked video, or ad-hoc link): paste any URL.
+    Either way this inserts a normal block through the same flow as image/chart."""
+    svc = _scouting_service(shell)
+    url, player_id, video_id = "", "", ""
+
+    if svc is not None:
+        try:
+            players = svc.search(shell.user, query="")
+        except Exception:
+            players = []
+        if players:
+            plabels = {p.id: (f"{p.name} · {p.club}" if getattr(p, "club", "") else p.name)
+                       for p in players}
+            pid = st.selectbox("Player", list(plabels), format_func=lambda i: plabels[i],
+                               key="qr_player")
+            vids = _player_external_videos(svc, shell, pid)
+            if vids:
+                vlabels = {v.id: (v.title or v.url or v.provider or v.id) for v in vids}
+                vid = st.selectbox("Linked video", list(vlabels),
+                                   format_func=lambda i: vlabels[i], key="qr_video")
+                chosen = next((v for v in vids if v.id == vid), None)
+                if chosen is not None:
+                    url, player_id, video_id = chosen.url, pid, chosen.id
+                st.caption(f"QR will encode: {url or '(this video has no URL)'}")
+            else:
+                st.caption("This player has no linked external video — paste a URL below.")
+        else:
+            st.caption("No players found — paste a URL below.")
+    else:
+        st.caption("Scouting not available — paste a URL below.")
+
+    # manual fallback (always available): a pasted URL overrides, and clears the
+    # player/video reference so we don't store a mismatched source.
+    manual = st.text_input("…or paste a video / any URL", value="", key="qr_manual_url",
+                           placeholder="https://…")
+    if manual.strip():
+        url, player_id, video_id = manual.strip(), "", ""
+
+    caption = st.text_input("Caption (optional)", value="", key="qr_caption")
+    if st.button("Insert QR code", key="qr_insert", use_container_width=True):
+        if not url:
+            st.warning("Pick a player video or paste a URL first.")
+        else:
+            _apply(shell, reports, report_id,
+                   lambda s, u=url, pi=player_id, vi=video_id, cap=caption:
+                       _add(s, qr_block(u, player_id=pi, video_id=vi, caption=cap, title="QR Code")))
+
+
 def _block_card(shell, reports, report_id, block, index, total) -> None:
     variant = (block.payload or {}).get("variant", "")
     kind_label = _kind_label(block)
@@ -464,6 +536,8 @@ def _block_card(shell, reports, report_id, block, index, total) -> None:
             _edit_chart(shell, reports, report_id, block)
         elif block.kind == "image":
             _edit_image(shell, reports, report_id, block)
+        elif block.kind == "qr":
+            _edit_qr(shell, reports, report_id, block)
 
 
 def _edit_text(shell, reports, report_id, block, variant) -> None:
@@ -527,6 +601,33 @@ def _edit_image(shell, reports, report_id, block) -> None:
             new_id = img.id
         _apply(shell, reports, report_id,
                lambda s, b=block.id, i=new_id, c=caption, f=fit: _set_image(s, b, i, c, f))
+
+
+def _edit_qr(shell, reports, report_id, block) -> None:
+    from fap.reports import qr_png
+    p = block.payload or {}
+    url = p.get("url", "")
+    # cached preview if already materialized, else generate a live preview from the url
+    b64 = p.get("image_b64", "")
+    png = None
+    if not b64 and url:
+        png = qr_png(url)
+    if b64:
+        st.image(f"data:image/png;base64,{b64}", caption="QR preview", width=180)
+    elif png:
+        st.image(png, caption="QR preview", width=180)
+    else:
+        st.caption("Set a URL below — the QR renders at Export/Refresh.")
+    # show which player/video this QR is linked to (reference only)
+    if p.get("player_id") or p.get("video_id"):
+        st.caption(f"Linked to player `{p.get('player_id', '')}` · video `{p.get('video_id', '')}`")
+    new_url = st.text_input("URL", value=url, key=f"qru_{block.id}")
+    caption = st.text_input("Caption", value=p.get("caption", ""), key=f"qrc_{block.id}")
+    if st.button("Apply", key=f"qra_{block.id}"):
+        # a manually edited URL detaches the player/video reference (it no longer matches)
+        detach = new_url.strip() != url
+        _apply(shell, reports, report_id,
+               lambda s, b=block.id, u=new_url.strip(), c=caption, d=detach: _set_qr(s, b, u, c, d))
 
 
 # ================================================================ template / theme
@@ -649,6 +750,17 @@ def _set_image(studio, block_id: str, image_id: str, caption: str, fit: str) -> 
             b.payload["fit"] = fit
 
 
+def _set_qr(studio, block_id: str, url: str, caption: str, detach_ref: bool = False) -> None:
+    for b in studio.document.blocks:
+        if b.id == block_id:
+            b.payload["url"] = url
+            b.payload["caption"] = caption
+            b.payload.pop("image_b64", None)          # force a fresh QR at next materialize
+            if detach_ref:                            # manual URL no longer matches the source
+                b.payload["player_id"] = ""
+                b.payload["video_id"] = ""
+
+
 def _reflow(studio) -> None:
     """Auto-stack every block into a single clean vertical flow on the first page,
     so the editor order equals the exported order and the 6C LayoutEngine positions
@@ -663,11 +775,15 @@ def _reflow(studio) -> None:
     for b in studio.document.blocks:
         variant = (b.payload or {}).get("variant", "")
         h = _HEIGHT.get(variant)
+        bw = width                                    # blocks span the content width…
         if h is None:
             if b.kind == "chart":
                 h = 340.0
             elif b.kind == "image":
                 h = 260.0
+            elif b.kind == "qr":
+                # …except a QR, which renders as a compact SQUARE (equal width/height)
+                bw = h = min(_QR_SIDE, width)
             else:
                 lines = max(1, (b.payload or {}).get("text", "").count("\n") + 1)
                 h = max(120.0, lines * 22.0)
@@ -676,7 +792,7 @@ def _reflow(studio) -> None:
             from fap.reports.studio import BlockLayout
             lay = BlockLayout(page_id=pid)
             studio.layouts[b.id] = lay
-        lay.page_id, lay.x, lay.y, lay.width, lay.height = pid, x, y, width, float(h)
+        lay.page_id, lay.x, lay.y, lay.width, lay.height = pid, x, y, bw, float(h)
         lay.z, lay.rotation, lay.locked = 0, 0.0, False
         if not b.hidden:
             y += h + _GAP

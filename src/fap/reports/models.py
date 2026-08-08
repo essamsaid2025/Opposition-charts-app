@@ -65,13 +65,16 @@ class Block:
         text  -> {"text": "markdown with # headings and - bullets"}
         image -> {"image_id": "...", "caption": "...", "width_pct": 100}
         chart -> {"viz_id": "...", "controls": {...}, "caption": ""}
+        qr    -> {"url": "...", "player_id": "...", "video_id": "...", "caption": ""}
 
     A chart block stores a REFERENCE to a registered visualization, never a
     duplicated image: the renderer regenerates it from the saved dataset at
-    export time.
+    export time. A qr block is the same idea - it stores only the ``url`` (plus
+    the player/video it was sourced from, for re-editing) and the QR PNG is
+    regenerated from that url at materialize time.
     """
     id: str
-    kind: str                                   # text | image | chart
+    kind: str                                   # text | image | chart | qr
     title: str = ""
     hidden: bool = False
     payload: dict[str, Any] = field(default_factory=dict)

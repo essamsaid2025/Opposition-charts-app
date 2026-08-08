@@ -22,8 +22,8 @@ from fap.reports.models import Block, ReportDocument
 
 logger = logging.getLogger(__name__)
 
-TEXT, IMAGE, CHART = "text", "image", "chart"
-BLOCK_KINDS: tuple[str, ...] = (TEXT, IMAGE, CHART)
+TEXT, IMAGE, CHART, QR = "text", "image", "chart", "qr"
+BLOCK_KINDS: tuple[str, ...] = (TEXT, IMAGE, CHART, QR)
 
 
 # ---------------------------------------------------------------- factories
@@ -43,6 +43,58 @@ def chart_block(viz_id: str, controls: dict[str, Any] | None = None, caption: st
     return Block(id=str(uuid.uuid4()), kind=CHART, title=title,
                  payload={"viz_id": viz_id, "controls": dict(controls or {}),
                           "caption": caption})
+
+
+def qr_block(url: str, player_id: str = "", video_id: str = "", caption: str = "",
+             title: str = "") -> Block:
+    """A QR-code block. Like a chart block it stores only a REFERENCE (the ``url``);
+    the PNG is regenerated at materialize time and cached on ``image_b64``.
+    ``player_id``/``video_id`` are kept purely for re-editing (so the block editor can
+    show which player/video the QR points at); they are empty for a manually-pasted URL."""
+    return Block(id=str(uuid.uuid4()), kind=QR, title=title,
+                 payload={"url": url, "player_id": player_id, "video_id": video_id,
+                          "caption": caption})
+
+
+# ---------------------------------------------------------------- QR generation
+def qr_available() -> bool:
+    """True when the ``qrcode`` library is importable (degrades gracefully like the
+    optional Office exporters when it is not)."""
+    try:
+        import qrcode  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def qr_png(url: str) -> bytes | None:
+    """PNG bytes for a QR code encoding ``url``, or None if it can't be produced
+    (empty url, or the ``qrcode`` library not installed). Deterministic for a url."""
+    if not url:
+        return None
+    try:
+        import io
+        import qrcode
+        img = qrcode.make(url)                     # PIL image (pairs with pillow)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        logger.exception("QR block could not be generated for %r", url)
+        return None
+
+
+def materialize_qr(document: ReportDocument) -> ReportDocument:
+    """Fill every visible QR block's ``image_b64`` from its ``url`` so exporters only
+    embed the cached PNG - the same reference-then-materialize convention chart blocks
+    use. Deterministic: same url -> same bytes."""
+    for block in document.blocks:
+        if block.kind != QR or block.hidden:
+            continue
+        png = qr_png(block.payload.get("url", ""))
+        if png:
+            block.payload["image_b64"] = base64.b64encode(png).decode("ascii")
+    return document
 
 
 # ---------------------------------------------------------------- layout ops (pure)

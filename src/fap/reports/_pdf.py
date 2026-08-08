@@ -86,7 +86,7 @@ def _draw_element(fig, el: RenderedElement, ink: str, muted: str, primary: str) 
         fig.add_artist(Line2D([el.fx, el.fx + el.fw], [y, y], transform=fig.transFigure,
                               color="#d5dbe6", linewidth=1.2))
         return
-    if el.kind in ("image", "chart", "logo"):
+    if el.kind in ("image", "chart", "logo", "qr"):
         _draw_image(fig, el)
         return
     if el.kind == "table":
@@ -130,7 +130,8 @@ def _draw_image(fig, el: RenderedElement) -> None:
         return
     left, bottom, w, h = _rect((el.fx, el.fy, el.fw, el.fh))
     ax = fig.add_axes([left, bottom, w, h]); ax.set_axis_off()
-    ax.imshow(img, aspect="auto" if el.kind != "chart" else None, alpha=el.opacity)
+    # charts and QR codes keep their true aspect (no stretch); photos fill the box
+    ax.imshow(img, aspect="auto" if el.kind not in ("chart", "qr") else None, alpha=el.opacity)
 
 
 def _draw_table(fig, el: RenderedElement, ink: str, muted: str) -> None:

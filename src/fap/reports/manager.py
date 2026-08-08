@@ -286,6 +286,10 @@ class ReportsManager:
         if dataset_id and self._frame_provider is not None:
             frame = self._frame_provider(dataset_id)
         self._charts.materialize(doc, frame)
+        # QR blocks: regenerate the PNG from the stored url and cache it on the block
+        # (same reference-then-materialize convention as chart blocks; no dataset needed)
+        from fap.reports.blocks import materialize_qr
+        materialize_qr(doc)
         if self._images is not None:
             for block in doc.blocks:
                 if block.kind == "image" and not block.hidden:
