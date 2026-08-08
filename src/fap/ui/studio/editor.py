@@ -258,6 +258,21 @@ def _cover_editor(shell, reports, report_id, studio) -> None:
             st.markdown("**Content**")
             title = st.text_input("Title", value=cover.title, key="cv_title")
             subtitle = st.text_input("Subtitle", value=cover.subtitle, key="cv_sub")
+
+            # -- cover details (every field that appears on the rendered cover) --
+            dc = st.columns(2)
+            club = dc[0].text_input("Club", value=cover.club, key="cv_club")
+            organization = dc[1].text_input("Organization", value=cover.organization, key="cv_org")
+            player = dc[0].text_input("Player (scouting report)", value=cover.player, key="cv_player",
+                                      help="Set this for a player-focused scouting cover; leave "
+                                           "empty for an opponent/match report.")
+            opponent = dc[1].text_input("Opponent", value=cover.opponent, key="cv_opp")
+            competition = dc[0].text_input("Competition", value=cover.competition, key="cv_comp")
+            season = dc[1].text_input("Season", value=cover.season, key="cv_season")
+            match_date = dc[0].text_input("Match date", value=cover.match_date, key="cv_mdate")
+            analyst = dc[1].text_input("Analyst", value=cover.analyst, key="cv_analyst")
+            version = dc[0].text_input("Version", value=cover.version, key="cv_version")
+
             ic = st.columns(2)
             photo = ic[0].file_uploader("Player / background photo",
                                         type=["png", "jpg", "jpeg", "webp"], key="cv_photo")
@@ -281,8 +296,10 @@ def _cover_editor(shell, reports, report_id, studio) -> None:
                 salign = d1.selectbox("Subtitle align", ["left", "center", "right"],
                                       index=_ai(cd.get("subtitle_align") or cd.get("alignment", "left")),
                                       key="cd_sa")
-                logo_pos = d2.selectbox("Logo position", ["top", "center", "corner"],
-                                        index=["top", "center", "corner"].index(cd.get("logo_position", "top")),
+                _logo_positions = ["top", "center", "corner", "spread"]
+                logo_pos = d2.selectbox("Logo position", _logo_positions,
+                                        index=_logo_positions.index(cd.get("logo_position", "top"))
+                                        if cd.get("logo_position", "top") in _logo_positions else 0,
                                         key="cd_lp")
                 show_logos = d1.checkbox("Show logos", value=cd.get("show_logos", True), key="cd_sl")
                 divider = d2.checkbox("Accent divider", value=cd.get("divider", True), key="cd_dv")
@@ -302,9 +319,20 @@ def _cover_editor(shell, reports, report_id, studio) -> None:
                           "subtitle_align": salign, "logo_position": logo_pos, "show_logos": show_logos,
                           "divider": divider}
 
-                def m(s, t=title, sub=subtitle, pid=photo_id, bid=badge_id, fid=fed_id, d=design):
+                def m(s, t=title, sub=subtitle, pid=photo_id, bid=badge_id, fid=fed_id, d=design,
+                      club=club, org=organization, player=player, opp=opponent, comp=competition,
+                      season=season, mdate=match_date, analyst=analyst, version=version):
                     s.document.cover.title = t
                     s.document.cover.subtitle = sub
+                    s.document.cover.club = club
+                    s.document.cover.organization = org
+                    s.document.cover.player = player
+                    s.document.cover.opponent = opp
+                    s.document.cover.competition = comp
+                    s.document.cover.season = season
+                    s.document.cover.match_date = mdate
+                    s.document.cover.analyst = analyst
+                    s.document.cover.version = version
                     s.document.cover.cover_image = pid
                     s.document.cover.club_logo = bid
                     s.document.cover.organization_logo = fid

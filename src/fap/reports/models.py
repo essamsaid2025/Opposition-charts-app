@@ -94,6 +94,7 @@ class Cover:
     template_id: str = ""
     club_logo: str = ""
     organization_logo: str = ""
+    player: str = ""                            # scouting-report subject (empty = opponent report)
 
 
 @dataclass(slots=True)

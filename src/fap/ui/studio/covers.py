@@ -47,6 +47,14 @@ COVER_TEMPLATES: dict[str, dict[str, Any]] = {
     "Academy Report": dict(template="academy", background_color="#132a13", overlay_opacity=0.0,
                            alignment="left", accent_color="#8ac926", text_color="#ffffff",
                            divider=True, logo_position="top"),
+    # Right To Dream house covers (approved mockups). Accent #eca137 is sampled directly
+    # from the Right To Dream logo's pixels. Logos sit at opposite top corners ("spread").
+    "Right To Dream Dark": dict(template="rtd_dark", background_color="#000000", overlay_opacity=0.0,
+                                alignment="left", accent_color="#eca137", text_color="#ffffff",
+                                divider=True, show_logos=True, logo_position="spread"),
+    "Right To Dream Light": dict(template="rtd_light", background_color="#ffffff", overlay_opacity=0.0,
+                                 alignment="left", accent_color="#eca137", text_color="#111111",
+                                 divider=True, show_logos=True, logo_position="spread"),
 }
 
 # report-type quick presets -> a cover template (design only; never content)
@@ -54,7 +62,7 @@ COVER_PRESETS: dict[str, str] = {
     "Player Report": "Minimal White",
     "Opponent Report": "Opposition Report",
     "Match Report": "Match Report",
-    "Scouting Report": "Recruitment Report",
+    "Scouting Report": "Right To Dream Dark",
     "Tournament Report": "UEFA Technical",
     "Academy Report": "Academy Report",
     "Weekly Report": "Modern Dark",

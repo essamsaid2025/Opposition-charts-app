@@ -193,11 +193,15 @@ class LayoutEngine:
                              content={"color": cd.overlay_color, "opacity": cd.overlay_opacity}))
         if cd.show_logos:
             lx, ly = {"top": (0.08, 0.10), "center": (0.44, 0.16),
-                      "corner": (0.80, 0.06)}.get(cd.logo_position, (0.08, 0.10))
+                      "corner": (0.80, 0.06), "spread": (0.08, 0.06)}.get(cd.logo_position, (0.08, 0.10))
+            # "spread" pins the two logos to OPPOSITE corners (club top-left, organization
+            # top-right); every other position lays them out adjacently from lx.
+            spread = cd.logo_position == "spread"
             for i, logo in enumerate((cover.club_logo, cover.organization_logo)):
                 data = _logo_bytes(logo, resolve, branding)
                 if data:
-                    page.elements.append(RenderedElement(kind="logo", fx=lx + i * 0.14,
+                    fx = (0.80 if i == 1 else 0.08) if spread else (lx + i * 0.14)
+                    page.elements.append(RenderedElement(kind="logo", fx=fx,
                                          fy=ly, fw=0.12, fh=0.07, content={"image_bytes": data}))
         page.elements.append(RenderedElement(kind="text", fx=0.08, fy=0.62, fw=0.84, fh=0.12,
                              align=title_align, role="title", content={"text": cover.title}))
@@ -207,9 +211,16 @@ class LayoutEngine:
         if cover.subtitle:
             page.elements.append(RenderedElement(kind="text", fx=0.08, fy=0.75, fw=0.84, fh=0.06,
                                  align=sub_align, role="subtitle", content={"text": cover.subtitle}))
+        # a scouting report is player-focused: replace the "vs opponent · date" match line
+        # with the player's identity. Opponent reports (player == "") are unchanged.
+        if cover.player:
+            second_line = _join(" · ", cover.player, cover.club)
+        else:
+            second_line = _join(" · ", ("vs " + cover.opponent) if cover.opponent else "",
+                                cover.match_date)
         meta_lines = [v for v in (
             _join(" · ", cover.competition, cover.season),
-            _join(" · ", ("vs " + cover.opponent) if cover.opponent else "", cover.match_date),
+            second_line,
             _join(" · ", cover.analyst, cover.generated_at, ("v" + cover.version) if cover.version else "")
         ) if v]
         if meta_lines:
