@@ -58,9 +58,9 @@ def _variables(brand: Branding, mode: str) -> str:
   --fap-radius-2xl: {sp.radius_2xl};
   --fap-radius-full: {sp.radius_full};
   --fap-sidebar-width: {sp.sidebar_width};
-  --fap-rail-expanded: 280px;
+  --fap-rail-expanded: 248px;
   --fap-rail-collapsed: 72px;
-  --fap-rail-width: 280px;
+  --fap-rail-width: 248px;
   --fap-header-height: {sp.header_height};
   --fap-shadow-xs: {sp.shadow_xs};
   --fap-shadow-sm: {sp.shadow_sm};
@@ -742,16 +742,16 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 .st-key-fap_rail .nv-brand { position: sticky; top: 0; z-index: 3; background: var(--fap-surface); }
 
 /* ---- 1) brand block: FC Masar x Right To Dream, centred + divider accent ---- */
-.nv-brand { padding: 22px 20px 18px; border-bottom: 1px solid var(--fap-border); position: relative; }
-.nv-brand::after { content: ""; position: absolute; left: 20px; right: 20px; bottom: -1px; height: 2px;
+.nv-brand { padding: 14px 16px 12px; border-bottom: 1px solid var(--fap-border); position: relative; }
+.nv-brand::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: -1px; height: 2px;
   background: var(--fap-primary); border-radius: 2px; opacity: .9; }
-.nv-brand.collapsed { padding: 16px 0; display: flex; justify-content: center; }
-.nv-logos { display: flex; align-items: center; justify-content: center; gap: 16px; }
-.nv-logos img.nv-logo { height: 42px; width: auto; object-fit: contain; display: block; }
-.nv-logo-sep { width: 1px; height: 32px; background: var(--fap-border); }
-.nv-brand-title { text-align: center; margin-top: 16px; font-size: 16px; font-weight: 800; line-height: 1.2;
+.nv-brand.collapsed { padding: 12px 0; display: flex; justify-content: center; }
+.nv-logos { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.nv-logos img.nv-logo { height: 30px; width: auto; object-fit: contain; display: block; }
+.nv-logo-sep { width: 1px; height: 22px; background: var(--fap-border); }
+.nv-brand-title { text-align: center; margin-top: 9px; font-size: 13px; font-weight: 800; line-height: 1.2;
   letter-spacing: -.01em; color: var(--fap-text); }
-.nv-brand-sub { text-align: center; margin-top: 4px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+.nv-brand-sub { text-align: center; margin-top: 3px; font-size: 10px; font-weight: 600; letter-spacing: .06em;
   color: var(--fap-text-subtle); }
 
 /* ---- 3) search pill (styled st.text_input; icon inside) ---- */
@@ -770,45 +770,42 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
   border-color: var(--fap-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fap-primary) 18%, transparent); }
 
 /* ---- 4) section titles ---- */
-.nv-sec { margin: 20px 12px 10px; color: var(--fap-text-subtle); font-size: 11px; font-weight: 700;
+.nv-sec { margin: 13px 12px 6px; color: var(--fap-text-subtle); font-size: 11px; font-weight: 700;
   letter-spacing: .12em; text-transform: uppercase; }
 
 /* ---- navigation rows = REAL st.buttons, styled as desktop nav items ----
    The button IS the row (native, always clickable in Streamlit). No overlay. */
-.st-key-fap_rail .stButton { margin: 3px 0; }
+.st-key-fap_rail .stButton { margin: 2px 0; }
 .st-key-fap_rail .stButton > button { display: flex; align-items: center; justify-content: flex-start;
-  width: 100%; min-height: 48px; text-align: left; font-weight: 500; font-size: 14.5px;
-  padding: 0 15px; border: 1px solid transparent; background: transparent; border-radius: 12px;
+  width: 100%; min-height: 38px; text-align: left; font-weight: 500; font-size: 13.5px;
+  padding: 0 12px; border: 1px solid transparent; background: transparent; border-radius: 10px;
   color: var(--fap-text-muted); white-space: nowrap; overflow: hidden;
   transition: background 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 200ms ease; }
 .st-key-fap_rail .stButton > button:hover { background: var(--fap-hover); color: var(--fap-text);
   transform: translateX(3px); }
 .st-key-fap_rail .stButton > button::before { content: ""; display: inline-block; flex: 0 0 auto;
-  width: 20px; height: 20px; margin-right: 14px; background-color: currentColor;
+  width: 18px; height: 18px; margin-right: 11px; background-color: currentColor;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center;
   mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
-/* active page: filled blue pill + 4px accent bar + soft glow + bold */
+/* active page: BOLD solid-orange fill with on-primary text (matches the reference) */
 .st-key-fap_rail .stButton > button[kind="primary"] {
-  background: color-mix(in srgb, var(--fap-primary) 18%, transparent);
-  color: var(--fap-primary); font-weight: 700; transform: none;
-  box-shadow: inset 4px 0 0 var(--fap-primary),
-    0 0 0 1px color-mix(in srgb, var(--fap-primary) 16%, transparent),
-    0 6px 18px color-mix(in srgb, var(--fap-primary) 22%, transparent); }
+  background: var(--fap-primary); color: var(--fap-on-primary); font-weight: 700; transform: none;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--fap-primary) 30%, transparent); }
 .st-key-fap_rail .stButton > button[kind="primary"]:hover {
-  background: color-mix(in srgb, var(--fap-primary) 24%, transparent); transform: none; }
+  background: var(--fap-primary-hover); color: var(--fap-on-primary); transform: none; }
 /* recent rows: smaller, muted (keyed by st-key-rec_ prefix) */
-.st-key-fap_rail [class*="st-key-rec_"] button { min-height: 40px; font-size: 13px;
+.st-key-fap_rail [class*="st-key-rec_"] button { min-height: 32px; font-size: 12.5px;
   color: var(--fap-text-subtle); font-weight: 500; }
-.st-key-fap_rail [class*="st-key-rec_"] button::before { width: 16px; height: 16px; margin-right: 12px; }
+.st-key-fap_rail [class*="st-key-rec_"] button::before { width: 15px; height: 15px; margin-right: 10px; }
 /* collapsible SECTION headers (dropdowns): a real button styled as a section label
    with a chevron that flips down/right with the open state (keyed by st-key-grp_) */
-.st-key-fap_rail [class*="st-key-grp_"] .stButton > button { min-height: 34px; margin-top: 14px;
-  padding: 0 12px; background: transparent; color: var(--fap-text-subtle); font-size: 11px;
+.st-key-fap_rail [class*="st-key-grp_"] .stButton > button { min-height: 28px; margin-top: 10px;
+  padding: 0 10px; background: transparent; color: var(--fap-text-subtle); font-size: 11px;
   font-weight: 700; letter-spacing: .12em; text-transform: uppercase; transform: none; }
 .st-key-fap_rail [class*="st-key-grp_"] .stButton > button:hover { background: transparent;
   color: var(--fap-text); transform: none; box-shadow: none; }
-.st-key-fap_rail [class*="st-key-grp_"] .stButton > button::before { width: 14px; height: 14px;
-  margin-right: 10px; opacity: .75; }
+.st-key-fap_rail [class*="st-key-grp_"] .stButton > button::before { width: 13px; height: 13px;
+  margin-right: 9px; opacity: .75; }
 
 /* ---- 6) footer status card ---- */
 .nv-footer { padding: var(--fap-space-4); }

@@ -351,8 +351,8 @@ def _render_rail(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) ->
     stays fully in-session (no href/query params) while nothing looks like a
     Streamlit button."""
     try:
-        club = C.logo_html(brand.primary_logo, height=42, alt=brand.club_name, cls="nv-logo")
-        org = C.logo_html(brand.secondary_logo, height=42, alt=brand.organization_name, cls="nv-logo")
+        club = C.logo_html(brand.primary_logo, height=30, alt=brand.club_name, cls="nv-logo")
+        org = C.logo_html(brand.secondary_logo, height=30, alt=brand.organization_name, cls="nv-logo")
     except FileNotFoundError as exc:
         st.error(f"Branding asset missing: {exc}")
         club = org = ""
