@@ -34,6 +34,7 @@ TB_GRID = "_tb_grid"
 TB_SNAP = "_tb_snap"
 TB_CANVAS_TS = "_tb_canvas_ts"    # last processed canvas action (dedups Streamlit reruns)
 TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are currently synced to
+TB_DRAW_TOOL = "_tb_draw_tool"    # armed click-drag draw tool ("none" = off); single-shot
 
 # Every Properties widget that follows the "read the widget, write it back to the model if
 # it differs" pattern. Those widgets keep their OWN value in session_state, so after the
@@ -58,16 +59,23 @@ _LIBRARY = [
     ("Players", "players", [("Home player", "player", {"team": "home"}),
                             ("Away player", "player", {"team": "away"}),
                             ("Goalkeeper", "player", {"team": "home", "goalkeeper": True})]),
-    ("Balls", "target", [("Ball", "ball", {})]),
-    ("Cones", "flag", [("Cone", "cone", {})]),
-    ("Goals", "shield", [("Goal", "goal", {})]),
-    ("Mannequins", "user", [("Mannequin", "mannequin", {})]),
+    ("Balls", "ball", [("Ball", "ball", {})]),
+    ("Cones", "cone", [("Cone", "cone", {})]),
+    ("Goals", "goal", [("Goal", "goal", {})]),
+    ("Mannequins", "mannequin", [("Mannequin", "mannequin", {})]),
     ("Arrows", "arrow-right", [("Arrow", "arrow", {}), ("Curved arrow", "curved_arrow", {}),
                                ("Dashed arrow", "dashed_arrow", {})]),
-    ("Lines", "sliders", [("Line", "line", {})]),
-    ("Zones", "grid", [("Zone", "zone", {}), ("Highlight", "highlight", {"shape": "ellipse"})]),
+    ("Lines", "line-straight", [("Line", "line", {})]),
+    ("Zones", "zone-marker", [("Zone", "zone", {}), ("Highlight", "highlight", {"shape": "ellipse"})]),
     ("Text", "edit", [("Text", "text", {"text": "Text"})]),
-    ("Shapes", "layers", [("Shape", "shape", {})]),
+    ("Shapes", "shapes", [("Shape", "shape", {})]),
+]
+
+# click-drag "draw" tools (key, label). "none" = off (default); single-shot (resets after
+# one draw). Vectors/zones/shapes only — the drawn geometry maps onto the SAME add_object.
+_DRAW_TOOLS: list[tuple[str, str]] = [
+    ("none", "None"), ("zone", "Zone"), ("shape", "Shape"), ("arrow", "Arrow"),
+    ("curved_arrow", "Curved arrow"), ("dashed_arrow", "Dashed arrow"), ("line", "Line"),
 ]
 
 
@@ -80,6 +88,7 @@ def _state() -> tuple[Board, History]:
         st.session_state[TB_SEL] = None
     st.session_state.setdefault(TB_GRID, False)
     st.session_state.setdefault(TB_SNAP, False)
+    st.session_state.setdefault(TB_DRAW_TOOL, "none")
     return st.session_state[TB_BOARD], st.session_state[TB_HIST]
 
 
@@ -266,7 +275,16 @@ def _consume_canvas_intent(can_edit: bool) -> None:
     raw = st.session_state.get("tb_canvas")
     result = parse_result(raw) if raw is not None else None
     if result is not None:
-        _commit_canvas(result, can_edit)
+        armed = st.session_state.get(TB_DRAW_TOOL, "none") != "none"
+        changed = _commit_canvas(result, can_edit)
+        # SINGLE-SHOT: after a canvas-committed add_object while a draw tool was armed, disarm
+        # the tool so the mode never silently persists. Done HERE (top of the page run, before
+        # the selector widget is instantiated) so resetting its widget key is always safe —
+        # never in the catch-up _commit_canvas() inside _board_view, which runs AFTER the widget.
+        # Only canvas adds reach this path; popover-click adds go through _apply (a separate
+        # callback) and correctly leave the armed tool untouched.
+        if changed and armed and any(c.get("op") == "add_object" for c in result.get("commands", [])):
+            st.session_state[TB_DRAW_TOOL] = "none"
 
 
 @page_registry.register
@@ -296,6 +314,7 @@ class TacticalBoardPage(Page):
 
         left, center, right = st.columns([2.3, 6.2, 2.6], gap="small")
         with left:
+            self._draw_tool_control(can_edit)
             self._library(can_edit)
             self._templates_and_saved(shell, svc, board, can_edit)
         with right:
@@ -391,6 +410,23 @@ class TacticalBoardPage(Page):
             st.session_state["_tb_gif_cache"] = cache
         return cache["data"], cache["mime"], cache["fname"]
 
+    # ------------------------------------------------------------ draw tool
+    def _draw_tool_control(self, can_edit) -> None:
+        """Arm a click-drag 'draw' tool (single-shot). A THIRD way to add objects alongside
+        click-to-add (Library popovers) and drag-from-palette (chips), both unchanged. The
+        widget key IS ``TB_DRAW_TOOL`` so ``_consume_canvas_intent`` can disarm it after one
+        draw (safe because that runs before this widget is instantiated)."""
+        st.markdown('<div class="tb-panel-title">Draw on pitch</div>', unsafe_allow_html=True)
+        keys = [k for k, _ in _DRAW_TOOLS]
+        labels = dict(_DRAW_TOOLS)
+        st.selectbox("Draw tool", keys, format_func=lambda k: labels[k], key=TB_DRAW_TOOL,
+                     disabled=not can_edit, label_visibility="collapsed",
+                     help="Pick a shape/arrow, then click-drag on empty pitch to draw it at "
+                          "that size/direction. Resets to None after one draw. Clicking without "
+                          "dragging places a default-sized object.")
+        if can_edit and st.session_state.get(TB_DRAW_TOOL, "none") != "none":
+            st.caption("✎ Draw mode on — click-drag on empty pitch.")
+
     # ------------------------------------------------------------ library
     def _library(self, can_edit) -> None:
         """Compact vertical icon rail: one icon per _LIBRARY category (its own icon_name),
@@ -478,15 +514,18 @@ class TacticalBoardPage(Page):
         # It reuses the Python SVG above and only reports intent (JSON commands); if it
         # cannot initialise it returns None and we fall back to the static SVG + sliders.
         snap = 5.0 if st.session_state.get(TB_SNAP, False) else 0.0
-        # include the last processed action stamp so the nonce ALWAYS changes after a
-        # commit (updated_at only has 1s resolution) — guarantees the post-commit SVG is
-        # pushed to the canvas so a dropped piece settles at its committed position.
+        # the armed draw tool (single-shot). None (default) => unchanged canvas behaviour.
+        tool = st.session_state.get(TB_DRAW_TOOL, "none")
+        draw_tool = {"type": tool, "props": default_props(tool)} if (can_edit and tool != "none") else None
+        # include the last processed action stamp AND the draw tool so the nonce ALWAYS changes
+        # after a commit or when the tool is armed/disarmed — guarantees the canvas gets a fresh
+        # render (post-commit SVG settles a dropped piece; the new draw_tool reaches the JS).
         nonce = (f"{board.updated_at}|{_frame_index()}|{sel}|{int(grid)}|{int(bool(snap))}"
-                 f"|{st.session_state.get(TB_CANVAS_TS)}")
+                 f"|{st.session_state.get(TB_CANVAS_TS)}|{tool}")
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
             palette=_canvas_palette(colors) if can_edit else [], selected_id=sel,
-            snap=snap, editable=can_edit, nonce=nonce)
+            snap=snap, editable=can_edit, nonce=nonce, draw_tool=draw_tool)
         if not rendered:
             # true fallback: the component could not mount, so draw the static SVG. The
             # interaction-agnostic core is still fully usable via Library + Properties.

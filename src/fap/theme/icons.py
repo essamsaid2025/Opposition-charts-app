@@ -78,6 +78,16 @@ _PATHS: dict[str, str] = {
     "map-pin": '<path d="M12 21s7-5.6 7-11a7 7 0 0 0-14 0c0 5.4 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/>',
     "book": '<path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z"/><path d="M8 3v18"/>',
     "inbox": '<path d="M3 12h5l2 3h4l2-3h5"/><path d="M5 5h14l2 7v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z"/>',
+    # -- tactical-board object glyphs (purpose-built for the Object Library rail) --------
+    "ball": '<circle cx="12" cy="12" r="8.5"/><path d="M12 12V7M12 12l4.3 2.5M12 12l-4.3 2.5"/>',
+    "cone": '<path d="M12 5l3.5 12h-7z"/><path d="M6.5 20h11"/><path d="M10 13h4"/>',
+    "goal": '<path d="M4 6v13M20 6v13M4 6h16"/><path d="M4 12h16M9 6v13M15 6v13" opacity="0.4"/>',
+    "mannequin": '<circle cx="12" cy="5.5" r="2.5"/><rect x="9" y="9" width="6" height="9" rx="2"/><ellipse cx="12" cy="20" rx="5" ry="1.5"/>',
+    "line-straight": '<path d="M5 19L19 5"/><circle cx="5" cy="19" r="1.4"/><circle cx="19" cy="5" r="1.4"/>',
+    "arrow-curved": '<path d="M4 19C4 11 9 5 19 5"/><path d="M15.5 2.5L19 5l-3.5 2.5"/>',
+    "arrow-dashed": '<path d="M3 12h13" stroke-dasharray="3 3"/><path d="M13 7l5 5-5 5"/>',
+    "zone-marker": '<rect x="3.5" y="6.5" width="17" height="11" rx="2" fill="currentColor" fill-opacity="0.2"/><path d="M12 6.5v11" opacity="0.5"/>',
+    "shapes": '<circle cx="7" cy="8" r="3.4"/><path d="M15.5 4l4 7h-8z"/><rect x="12" y="13" width="8" height="8" rx="1.5"/>',
 }
 
 

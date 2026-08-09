@@ -422,3 +422,68 @@ def test_canvas_wrapper_never_raises():
                           selected_id=None, snap=0.0, editable=True, nonce="n")
     assert isinstance(out, tuple) and len(out) == 2
     assert isinstance(out[0], bool) and (out[1] is None or isinstance(out[1], dict))
+
+
+# ---------------------------------------------------------- purpose-built rail icons
+def test_new_rail_icons_resolve():
+    from fap.theme.icons import has_icon, icon
+    for name in ("ball", "cone", "goal", "mannequin", "line-straight", "arrow-curved",
+                 "arrow-dashed", "zone-marker", "shapes"):
+        assert has_icon(name), name
+        svg = icon(name)
+        assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>") and len(svg) > 40
+
+
+def test_every_library_icon_has_a_real_path():
+    """Guards against a future typo silently rendering a blank rail icon."""
+    from fap.theme.icons import has_icon
+    from fap.ui.builtin.tactical_board import _LIBRARY
+    for _title, ic, _items in _LIBRARY:
+        assert has_icon(ic), f"library category references missing icon {ic!r}"
+
+
+# ---------------------------------------------------------- click-drag draw tool
+def test_draw_tool_defaults_to_none_and_covers_real_types():
+    from fap.ui.builtin.tactical_board import _DRAW_TOOLS
+    assert _DRAW_TOOLS[0] == ("none", "None")               # default = off
+    for key, _label in _DRAW_TOOLS[1:]:                     # each arms a real, addable type
+        props = default_props(key)
+        assert isinstance(props, dict)
+    # the props the JS falls back to for a near-zero drag exist for each type
+    assert {"w", "h"} <= set(default_props("zone")) and {"w", "h"} <= set(default_props("shape"))
+    assert {"x2", "y2", "curvature"} <= set(default_props("curved_arrow"))
+
+
+def test_drawn_zone_command_round_trips_through_trust_boundary():
+    """A drawn zone emits the SAME add_object shape as any other add, with the drawn w/h in
+    props; it must survive parse_result and create a zone at that centre + size."""
+    from fap.ui.builtin.tactical_canvas import parse_result
+    b = new_board("t")
+    drawn = {"op": "add_object", "type": "zone", "x": 55.0, "y": 42.0,
+             "props": {"w": 30.0, "h": 18.0, "opacity": 0.28, "shape": "rect"}}
+    r = parse_result({"ts": 1, "commands": [drawn]})
+    assert r is not None
+    oid = apply_command(b, {**r["commands"][0], "frame": 0})["id"]
+    o = b.frames[0].object(oid)
+    assert o.type == "zone" and (o.x, o.y) == (55.0, 42.0)
+    assert o.props["w"] == 30.0 and o.props["h"] == 18.0
+
+
+def test_drawn_vector_command_round_trips_through_trust_boundary():
+    from fap.ui.builtin.tactical_canvas import parse_result
+    b = new_board("t")
+    drawn = {"op": "add_object", "type": "arrow", "x": 10.0, "y": 12.0,
+             "props": {"x2": 44.0, "y2": 66.0, "curvature": 0.0}}
+    r = parse_result({"ts": 2, "commands": [drawn]})
+    oid = apply_command(b, {**r["commands"][0], "frame": 0})["id"]
+    o = b.frames[0].object(oid)
+    assert o.type == "arrow" and (o.x, o.y) == (10.0, 12.0)
+    assert o.props["x2"] == 44.0 and o.props["y2"] == 66.0
+
+
+def test_canvas_wrapper_accepts_draw_tool_arg():
+    from fap.ui.builtin.tactical_canvas import tactical_canvas
+    out = tactical_canvas("<svg></svg>", [], key="k", colors={}, palette=[],
+                          selected_id=None, snap=0.0, editable=True, nonce="n",
+                          draw_tool={"type": "zone", "props": default_props("zone")})
+    assert isinstance(out, tuple) and len(out) == 2

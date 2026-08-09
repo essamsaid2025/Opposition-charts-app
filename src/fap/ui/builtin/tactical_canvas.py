@@ -91,7 +91,8 @@ def parse_result(value: Any) -> dict[str, Any] | None:
 def tactical_canvas(svg: str, objects: list[dict[str, Any]], *, key: str,
                     colors: dict[str, str], palette: list[dict[str, Any]],
                     selected_id: str | None, snap: float, editable: bool,
-                    nonce: str) -> tuple[bool, dict[str, Any] | None]:
+                    nonce: str, draw_tool: dict[str, Any] | None = None
+                    ) -> tuple[bool, dict[str, Any] | None]:
     """Render the interactive board and return ``(rendered, intent)``.
 
     ``rendered`` is ``True`` when the iframe was mounted (so the caller must NOT also
@@ -102,12 +103,17 @@ def tactical_canvas(svg: str, objects: list[dict[str, Any]], *, key: str,
 
     ``svg`` is produced by ``board_svg`` (the Python renderer - reused, not rewritten);
     ``objects`` is lightweight metadata ``[{id,type,x,y,x2,y2,locked}]`` used only to
-    place endpoint handles and respect locks. ``nonce`` stamps the current board version
-    so Streamlit pushes a fresh render when state changes. Never raises."""
+    place endpoint handles and respect locks. ``draw_tool`` (optional) is
+    ``{"type": <object type>, "props": <default props>}`` arming the click-drag "draw"
+    mode, or ``None`` (the default) for the unchanged behaviour. ``nonce`` stamps the
+    current board version so Streamlit pushes a fresh render when state changes. Never
+    raises. A drawn object still emits the SAME ``add_object`` command shape as every
+    other add - the trust boundary (``parse_result``) is unchanged."""
     try:
         value = _component()(svg=svg, objects=objects, colors=colors, palette=palette,
                              selected_id=selected_id, snap=float(snap),
-                             editable=bool(editable), nonce=nonce, key=key, default=None)
+                             editable=bool(editable), draw_tool=draw_tool,
+                             nonce=nonce, key=key, default=None)
     except Exception:
         return False, None
     return True, parse_result(value)
