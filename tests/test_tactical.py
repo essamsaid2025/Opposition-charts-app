@@ -297,6 +297,51 @@ def test_set_pitch_orientation_toggle_flips_and_exports():
     assert "rotate(90)" not in board_svg(b, 0)
 
 
+def test_library_items_all_reachable_and_addable():
+    """The icon-rail refactor must not drop or rename any library item: every
+    ``(otype, extra)`` the old accordions exposed is still present AND still adds through
+    the model via the same path ``_add`` uses (default_props + extra -> add_object)."""
+    from fap.tactical.ops import default_props
+    from fap.ui.builtin.tactical_board import _LIBRARY
+    flat = [(otype, extra) for _t, _i, items in _LIBRARY for _l, otype, extra in items]
+    assert [o for o, _ in flat] == [
+        "player", "player", "player", "ball", "cone", "goal", "mannequin",
+        "arrow", "curved_arrow", "dashed_arrow", "line", "zone", "highlight", "text", "shape"]
+    b = new_board("t")
+    for otype, extra in flat:
+        props = default_props(otype); props.update(extra)
+        res = apply_command(b, {"op": "add_object", "frame": 0, "type": otype,
+                                "x": 50.0, "y": 50.0, "props": props})
+        assert res.get("id")                       # each rail item is a real, addable object
+
+
+def test_canvas_palette_output_unchanged():
+    """The drag-to-canvas chips must be byte-for-byte identical after the rail refactor —
+    ``_canvas_palette`` still derives the SAME {label,type,props,color} shape from _LIBRARY."""
+    from fap.ui.builtin.tactical_board import _canvas_palette
+    colors = {"home": "#111111", "away": "#222222", "ball": "#333333",
+              "cone": "#444444", "zone": "#555555", "accent": "#666666"}
+    assert _canvas_palette(colors) == [
+        {"label": "Home player", "type": "player", "props": {"team": "home"}, "color": "#111111"},
+        {"label": "Away player", "type": "player", "props": {"team": "away"}, "color": "#222222"},
+        {"label": "Goalkeeper", "type": "player",
+         "props": {"team": "home", "goalkeeper": True}, "color": "#111111"},
+        {"label": "Ball", "type": "ball", "props": {}, "color": "#333333"},
+        {"label": "Cone", "type": "cone", "props": {}, "color": "#444444"},
+        {"label": "Goal", "type": "goal", "props": {}, "color": "#666666"},
+        {"label": "Mannequin", "type": "mannequin", "props": {}, "color": "#666666"},
+        {"label": "Arrow", "type": "arrow", "props": {}, "color": "#666666"},
+        {"label": "Curved arrow", "type": "curved_arrow", "props": {}, "color": "#666666"},
+        {"label": "Dashed arrow", "type": "dashed_arrow", "props": {}, "color": "#666666"},
+        {"label": "Line", "type": "line", "props": {}, "color": "#666666"},
+        {"label": "Zone", "type": "zone", "props": {}, "color": "#555555"},
+        {"label": "Highlight", "type": "highlight",
+         "props": {"shape": "ellipse"}, "color": "#555555"},
+        {"label": "Text", "type": "text", "props": {"text": "Text"}, "color": "#666666"},
+        {"label": "Shape", "type": "shape", "props": {}, "color": "#555555"},
+    ]
+
+
 def test_canvas_wrapper_never_raises():
     """``tactical_canvas`` always returns a (rendered, intent) tuple, even outside a
     live Streamlit run - so the page can always fall back gracefully."""

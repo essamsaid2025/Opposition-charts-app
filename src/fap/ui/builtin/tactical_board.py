@@ -392,14 +392,30 @@ class TacticalBoardPage(Page):
 
     # ------------------------------------------------------------ library
     def _library(self, can_edit) -> None:
+        """Compact vertical icon rail: one icon per _LIBRARY category (its own icon_name),
+        each opening a popover of that category's items. The items call the SAME
+        ``on_click=_add`` as before, so click-to-add is unchanged; drag-to-canvas
+        (``_canvas_palette`` -> ``tactical_canvas``) is a separate surface, untouched."""
         st.markdown('<div class="tb-panel-title">Object Library</div>', unsafe_allow_html=True)
         if not can_edit:
             C.render_alert("Read-only: you can view but not edit this board.", "info")
-        for title, ic, items in _LIBRARY:
-            with st.expander(title, expanded=(title == "Players")):
-                for label, otype, extra in items:
-                    st.button(label, key=f"tblib_{title}_{label}", use_container_width=True,
-                              disabled=not can_edit, on_click=_add, args=(otype, extra))
+        with st.container(key="tb_rail"):
+            for title, ic, items in _LIBRARY:
+                # divider between the OBJECTS group and the drawing TOOLS group, matching the
+                # reference rail (Players/Ball/Cones/Goals/Mannequins · Arrows/Lines/Zones/Text/Shapes)
+                if title == "Arrows":
+                    st.markdown('<div class="tb-rail-sep"></div>', unsafe_allow_html=True)
+                with st.container(key=f"tbrail_{title}"):
+                    # trigger is NOT disabled read-only (items stay browsable, exactly like the
+                    # old expanders); only the add buttons inside are gated, as before.
+                    with st.popover("", help=title, use_container_width=True):
+                        for label, otype, extra in items:
+                            st.button(label, key=f"tblib_{title}_{label}", use_container_width=True,
+                                      disabled=not can_edit, on_click=_add, args=(otype, extra))
+        # wire each rail trigger's real icon (its _LIBRARY icon_name) via the same mask-image
+        # mechanism the toolbar uses; the base ::before box comes from _inject_css's tb_rail rule.
+        st.markdown(icon_css([(f"tbrail_{title}", ic) for title, ic, _ in _LIBRARY]),
+                    unsafe_allow_html=True)
 
     def _templates_and_saved(self, shell, svc, board, can_edit) -> None:
         with st.expander("Templates", expanded=False):
@@ -673,6 +689,28 @@ class TacticalBoardPage(Page):
 .st-key-tb_toolbar .st-key-tb_orient button { font-size: 18px; font-weight: 700; }
 .tb-panel-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   color: var(--fap-text-subtle); margin: 2px 2px 8px; }
+/* ---- Object Library icon rail --------------------------------------------------
+   Each category is an st.popover whose icon-only TRIGGER (data-testid="stPopoverButton")
+   shows the category's real icon via the same mask-image mechanism as the toolbar
+   (icon_css sets mask-image; the rule below gives the ::before box + currentColor). The
+   popover's item buttons (data-testid="stBaseButton-secondary") render inline in the same
+   container, so we hide the icon box on every rail button by default and re-enable it ONLY
+   on the trigger — items keep their plain text labels. */
+.st-key-tb_rail button::before { display: none; }
+.st-key-tb_rail [data-testid="stPopoverButton"]::before {
+  content: ""; display: inline-block; width: 20px; height: 20px; background-color: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain; }
+/* the trigger is icon-only: hide Streamlit's default 'expand_more' chevron glyph */
+.st-key-tb_rail [data-testid="stPopoverButton"] [data-testid="stIconMaterial"] { display: none; }
+/* trigger styled like the toolbar icon buttons */
+.st-key-tb_rail [data-testid="stPopoverButton"] {
+  min-height: 40px; color: var(--fap-text); background: var(--fap-surface);
+  border: 1px solid var(--fap-border); }
+.st-key-tb_rail [data-testid="stPopoverButton"]:hover {
+  color: var(--fap-primary); border-color: var(--fap-primary); }
+.tb-rail-sep { height: 1px; background: var(--fap-border); margin: 8px 4px; }
 .tb-board { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 14px; padding: 10px; box-shadow: var(--fap-shadow-sm); }
 .tb-timeline-wrap { background: var(--fap-surface); border: 1px solid var(--fap-border);
