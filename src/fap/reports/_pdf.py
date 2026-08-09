@@ -11,6 +11,7 @@ import io
 import logging
 from typing import Any
 
+from fap.reports.block_style import font_for
 from fap.reports.layout import RenderedDocument, RenderedElement, RenderedPage
 
 logger = logging.getLogger(__name__)
@@ -100,20 +101,36 @@ def _draw_element(fig, el: RenderedElement, ink: str, muted: str, primary: str) 
         _text(fig, el, "‣ " + c.get("text", ""), _ROLE_PT["body"], ink)
         return
     # text-like
+    size, color, weight, family = _text_style(el, ink, muted)
+    _text(fig, el, _plain(c.get("text", "")), size, color, weight, family)
+
+
+def _text_style(el: RenderedElement, ink: str, muted: str) -> tuple[float, str, str, str | None]:
+    """Resolve (size, color, weight, family) for a text element: the role-based theme default,
+    with the per-block override (font_size / color / font_family) applied on top when present.
+    Returns ``family=None`` when no family override is set (matplotlib keeps its default).
+    With no override this is byte-identical to the original role-only styling."""
+    style = el.content.get("style") or {}
     color = {"title": ink, "subtitle": muted, "meta": muted, "caption": muted}.get(el.role, ink)
+    if style.get("color"):
+        color = style["color"]
+    size = style.get("font_size") or _ROLE_PT.get(el.role, 11)
     weight = "bold" if el.role in ("title", "h1", "h2") else "normal"
-    _text(fig, el, _plain(c.get("text", "")), _ROLE_PT.get(el.role, 11), color, weight)
+    return size, color, weight, font_for(style, "mpl")
 
 
 def _text(fig, el: RenderedElement, s: str, size: float, color: str,
-          weight: str = "normal") -> None:
+          weight: str = "normal", family: str | None = None) -> None:
     if not s:
         return
     ha = {"left": "left", "center": "center", "right": "right"}.get(el.align, "left")
     x = el.fx if ha == "left" else (el.fx + el.fw / 2 if ha == "center" else el.fx + el.fw)
     y = 1.0 - el.fy
-    fig.text(x, y, s, ha=ha, va="top", fontsize=size, color=color, weight=weight,
-             wrap=True, alpha=el.opacity)
+    kw: dict[str, Any] = dict(ha=ha, va="top", fontsize=size, color=color, weight=weight,
+                              wrap=True, alpha=el.opacity)
+    if family:                                    # only override when set (else mpl default)
+        kw["fontfamily"] = family
+    fig.text(x, y, s, **kw)
 
 
 def _draw_image(fig, el: RenderedElement) -> None:

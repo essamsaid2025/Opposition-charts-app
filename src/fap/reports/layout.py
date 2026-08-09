@@ -20,6 +20,7 @@ import base64
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from fap.reports.block_style import clean_style
 from fap.reports.models import Cover, ReportDocument, Section
 from fap.reports.publishing import MasterPage, PublishSettings, Watermark, Zone
 from fap.reports.studio import ReportStudio, page_size
@@ -244,6 +245,16 @@ class LayoutEngine:
 
     def _element_from_block(self, block: Any, lay: Any, pw: float, ph: float,
                             resolve: ImageResolver) -> RenderedElement:
+        el = self._element_from_block_core(block, lay, pw, ph, resolve)
+        # optional per-block typography/colour override rides along on the element content;
+        # exporters read el.content["style"] and fall back to their role default when absent.
+        style = clean_style((block.payload or {}).get("style"))
+        if style:
+            el.content["style"] = style
+        return el
+
+    def _element_from_block_core(self, block: Any, lay: Any, pw: float, ph: float,
+                                 resolve: ImageResolver) -> RenderedElement:
         p = block.payload or {}
         geom = dict(fx=lay.x / pw, fy=lay.y / ph, fw=lay.width / pw, fh=lay.height / ph,
                     z=lay.z, rotation=lay.rotation, align=lay.align)

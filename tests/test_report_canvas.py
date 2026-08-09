@@ -169,8 +169,8 @@ def test_parse_result_rejects_malformed_and_foreign_ops():
     assert parse_result({"ts": 1, "commands": [{"op": "resize", "id": "a", "x": 1, "y": 2}]}) is None
     # missing id
     assert parse_result({"ts": 1, "commands": [{"op": "update_layout", "x": 1, "y": 2}]}) is None
-    # missing coordinate
-    assert parse_result({"ts": 1, "commands": [{"op": "update_layout", "id": "a", "x": 1}]}) is None
+    # NO geometry at all (Phase 2 accepts partial x-only/width-only, but SOMETHING is required)
+    assert parse_result({"ts": 1, "commands": [{"op": "update_layout", "id": "a"}]}) is None
     # bool is not a coordinate (bool is an int subclass — must be rejected)
     assert parse_result({"ts": 1, "commands": [{"op": "update_layout", "id": "a",
                                                "x": True, "y": 2}]}) is None

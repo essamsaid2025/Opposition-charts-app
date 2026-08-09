@@ -17,12 +17,39 @@ import io
 import logging
 from typing import Any
 
+from fap.reports.block_style import font_for, hex_to_rgb
 from fap.reports.layout import RenderedDocument, RenderedElement, RenderedPage
 
 logger = logging.getLogger(__name__)
 
 _ROLE_STYLE = {"title": "Title", "subtitle": "Subtitle", "h1": "Heading 1",
                "h2": "Heading 2", "meta": "Normal", "body": "Normal", "caption": "Caption"}
+
+
+def docx_run_overrides(style: dict | None) -> dict | None:
+    """Run-level font overrides a DOCX paragraph should receive (``size`` pt / ``name`` /
+    ``rgb`` tuple), or ``None`` when nothing is overridden. Pure + unit-tested; the DOCX
+    renderer applies exactly this."""
+    style = style or {}
+    out: dict = {}
+    if style.get("font_size"):
+        out["size"] = int(style["font_size"])
+    name = font_for(style, "office")
+    if name:
+        out["name"] = name
+    rgb = hex_to_rgb(style.get("color"))
+    if rgb is not None:
+        out["rgb"] = rgb
+    return out or None
+
+
+def pptx_text_style(role: str, style: dict | None) -> tuple[int, str | None, tuple | None]:
+    """Resolve (size, family, rgb) for a PPTX text box: the role default size with the
+    per-block override applied. ``family``/``rgb`` are ``None`` when not overridden. Pure +
+    unit-tested; the PPTX renderer applies exactly this."""
+    style = style or {}
+    size = int(style.get("font_size") or _pptx_size(role))
+    return size, font_for(style, "office"), hex_to_rgb(style.get("color"))
 
 
 # ================================================================ DOCX
@@ -120,6 +147,28 @@ def _docx_element(doc, el: RenderedElement) -> None:
 
 
 def _docx_text(doc, el: RenderedElement) -> None:
+    # run the unchanged text logic, then post-apply any per-block override to the paragraphs
+    # it added (snapshot the count so we touch only those — byte-identical when no override).
+    start = len(doc.paragraphs)
+    _docx_text_core(doc, el)
+    overrides = docx_run_overrides(el.content.get("style"))
+    if overrides:
+        for para in doc.paragraphs[start:]:
+            _apply_docx_overrides(para, overrides)
+
+
+def _apply_docx_overrides(paragraph, overrides: dict) -> None:
+    from docx.shared import Pt, RGBColor
+    for run in paragraph.runs:
+        if "size" in overrides:
+            run.font.size = Pt(overrides["size"])
+        if "name" in overrides:
+            run.font.name = overrides["name"]
+        if "rgb" in overrides:
+            run.font.color.rgb = RGBColor(*overrides["rgb"])
+
+
+def _docx_text_core(doc, el: RenderedElement) -> None:
     style = _ROLE_STYLE.get(el.role, "Normal")
     text = el.content.get("text", "")
     if el.role in ("title", "subtitle") and "\n" not in text:
@@ -189,8 +238,9 @@ def _pptx_element(slide, el: RenderedElement, sw, sh) -> None:
         return
     text = _pptx_text_for(el)
     if text:
+        size, family, rgb = pptx_text_style(el.role, el.content.get("style"))
         _pptx_textbox(slide, text, left, top, width, height,
-                      size=_pptx_size(el.role), align=el.align)
+                      size=size, align=el.align, family=family, rgb=rgb)
 
 
 def _pptx_text_for(el: RenderedElement) -> str:
@@ -206,7 +256,8 @@ def _pptx_text_for(el: RenderedElement) -> str:
     return _plain(c.get("text", ""))
 
 
-def _pptx_textbox(slide, text, left, top, width, height, size=14, align="left") -> None:
+def _pptx_textbox(slide, text, left, top, width, height, size=14, align="left",
+                  family=None, rgb=None) -> None:
     from pptx.enum.text import PP_ALIGN
     from pptx.util import Emu, Pt
     box = slide.shapes.add_textbox(Emu(int(left)), Emu(int(top)), Emu(int(width)), Emu(int(height)))
@@ -217,6 +268,14 @@ def _pptx_textbox(slide, text, left, top, width, height, size=14, align="left") 
         para = tf.paragraphs[0] if first else tf.add_paragraph()
         para.text = line
         para.font.size = Pt(size)
+        if family:                                # per-block font-family override
+            para.font.name = family
+        if rgb is not None:                       # per-block colour override
+            try:
+                from pptx.dml.color import RGBColor
+                para.font.color.rgb = RGBColor(*rgb)
+            except Exception:
+                pass
         para.alignment = {"center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}.get(align, PP_ALIGN.LEFT)
         first = False
 

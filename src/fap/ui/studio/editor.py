@@ -27,6 +27,7 @@ from typing import Any, Callable
 import streamlit as st
 
 from fap.reports import chart_block, image_block, qr_block, text_block
+from fap.reports.block_style import FONT_CHOICES, MAX_FONT_SIZE, MIN_FONT_SIZE, clean_style, html_style_css
 from fap.reports.editor_ops import create_page, delete_page
 from fap.theme import DEFAULT_PALETTE
 from fap.theme import components as C
@@ -57,6 +58,7 @@ _MARGIN = 48.0
 _GAP = 18.0
 _QR_SIDE = 200.0                        # default square side (px) for a QR-code block
 _CASCADE = 28.0                         # px offset between successive free-page drops
+_MIN_BLOCK = 48.0                       # px floor for a resized free-page block (never collapse)
 # default drop size (px) per kind when a block is added onto a FREE page
 _FREE_SIZE = {"chart": (360.0, 260.0), "image": (300.0, 220.0), "qr": (_QR_SIDE, _QR_SIDE),
               "text": (320.0, 120.0)}
@@ -254,7 +256,24 @@ def _free_canvas(shell, reports, report_id, studio, page) -> None:
             cmds = intent.get("commands") or []
             if cmds:
                 _apply(shell, reports, report_id, lambda s, c=list(cmds): _apply_layout_cmds(s, c))
-    st.caption("Phase 1: move only. Resize and layering come later. Positions autosave.")
+    st.caption("Drag to move · drag a corner/edge to resize · autosaves.")
+    _canvas_text_style_panel(shell, reports, report_id, studio, page)
+
+
+def _canvas_text_style_panel(shell, reports, report_id, studio, page) -> None:
+    """Reachable WITHOUT leaving the canvas: pick a text block on this page and restyle it
+    (font / size / colour) with the same controls as the rail's per-block editor."""
+    texts = [b for b in studio.blocks_on(page.id)
+             if b.kind == "text" and (b.payload or {}).get("variant", "") not in (DIVIDER, SPACER)]
+    if not texts:
+        return
+    with st.expander("Style a text block", expanded=False):
+        labels = {b.id: (b.title or (b.payload or {}).get("text", "") or "Text")[:40] for b in texts}
+        sel = st.selectbox("Text block", list(labels), format_func=lambda i: labels[i],
+                           key=f"_rc_stylesel_{report_id}")
+        block = next((b for b in texts if b.id == sel), None)
+        if block is not None:
+            _style_controls(shell, reports, report_id, block, suffix="canvas")
 
 
 def _canvas_block_data(reports, studio, page) -> list[dict]:
@@ -276,10 +295,14 @@ def _canvas_block_data(reports, studio, page) -> list[dict]:
         render_block = _qr_render_copy(b) if b.kind == "qr" else b
         try:
             el = eng._element_from_block(render_block, lay, pw, ph, resolve)
-            html = _element_inner(el)
+            inner = _element_inner(el)
         except Exception:
-            html = (f"<div style='padding:8px;font:600 12px Inter,Arial;color:#5b6472'>"
-                    f"{_esc(b.title or _kind_label(b))}</div>")
+            inner = (f"<div style='padding:8px;font:600 12px Inter,Arial;color:#5b6472'>"
+                     f"{_esc(b.title or _kind_label(b))}</div>")
+        # reflect the per-block typography override in the canvas too, using the SAME CSS the
+        # HTML exporter applies — so the canvas preview matches the download.
+        css = html_style_css(clean_style((b.payload or {}).get("style")))
+        html = f"<div style='height:100%;{css}'>{inner}</div>" if css else inner
         out.append({"id": b.id, "x": float(lay.x), "y": float(lay.y),
                     "w": float(lay.width), "h": float(lay.height),
                     "locked": bool(lay.locked), "html": html})
@@ -304,27 +327,33 @@ def _qr_render_copy(block):
 
 
 def _apply_layout_cmds(studio, cmds: list[dict]) -> None:
-    """Apply validated ``update_layout`` commands to block layouts (snap to the editor grid,
-    clamp inside the page). Locked blocks are ignored — a second guard behind the JS one."""
+    """Apply validated ``update_layout`` commands to block layouts. A command may carry a move
+    (x/y), a resize (width/height), or both; every present field is snapped to the editor grid
+    and clamped so the block never leaves the page or collapses below ``_MIN_BLOCK``. Locked
+    blocks are ignored — a second guard behind the JS one."""
     for c in cmds:
         if c.get("op") != "update_layout":
             continue
         lay = studio.layouts.get(c.get("id"))
         if lay is None or lay.locked:
             continue
-        x, y = c.get("x"), c.get("y")
-        if x is None or y is None:
-            continue
-        x, y = float(x), float(y)
-        g = studio.editor.grid_size
-        if studio.editor.snap_to_grid and g > 0:
-            x, y = round(x / g) * g, round(y / g) * g
         page = studio.page(lay.page_id)
-        if page is not None:
-            pw, ph = page.dimensions()
-            x = _clampf(x, 0.0, max(0.0, pw - lay.width))
-            y = _clampf(y, 0.0, max(0.0, ph - lay.height))
-        lay.x, lay.y = x, y
+        pw, ph = page.dimensions() if page is not None else (float("inf"), float("inf"))
+        g = studio.editor.grid_size
+        snap = studio.editor.snap_to_grid and g > 0
+
+        def _g(v: float) -> float:
+            return round(v / g) * g if snap else v
+
+        # resize first so the position clamp below uses the NEW size
+        if c.get("width") is not None:
+            lay.width = _clampf(_g(float(c["width"])), _MIN_BLOCK, max(_MIN_BLOCK, pw - lay.x))
+        if c.get("height") is not None:
+            lay.height = _clampf(_g(float(c["height"])), _MIN_BLOCK, max(_MIN_BLOCK, ph - lay.y))
+        if c.get("x") is not None:
+            lay.x = _clampf(_g(float(c["x"])), 0.0, max(0.0, pw - lay.width))
+        if c.get("y") is not None:
+            lay.y = _clampf(_g(float(c["y"])), 0.0, max(0.0, ph - lay.height))
 
 
 def _preview_pane(shell, reports, report_id, studio) -> None:
@@ -714,6 +743,45 @@ def _edit_text(shell, reports, report_id, block, variant) -> None:
     if st.button("Apply", key=f"ap_{block.id}"):
         _apply(shell, reports, report_id,
                lambda s, b=block.id, t=title, x=body: _set_text(s, b, t, x))
+    _style_controls(shell, reports, report_id, block, suffix="rail")
+
+
+# ---------------------------------------------------------------- per-block typography override
+def _style_controls(shell, reports, report_id, block, *, suffix: str) -> None:
+    """Font family / size / colour overrides for one text block, layered on top of the theme.
+    Each field can be turned off ('Theme default' / unchecked) and a Reset clears them all —
+    so the block falls back to the role-based theme styling, byte-identical to an unstyled block.
+    ``suffix`` keeps widget keys unique across the rail card and the canvas-side panel."""
+    style = (block.payload or {}).get("style") or {}
+    k = f"{block.id}_{suffix}"
+    with st.expander("Text style (override)", expanded=bool(style)):
+        fam_opts = ["Theme default", *FONT_CHOICES]
+        cur_fam = style.get("font_family")
+        fam = st.selectbox("Font", fam_opts,
+                           index=fam_opts.index(cur_fam) if cur_fam in FONT_CHOICES else 0,
+                           key=f"sf_{k}")
+        c1, c2 = st.columns([1, 1])
+        use_size = c1.checkbox("Size", value=bool(style.get("font_size")), key=f"szu_{k}")
+        size = c2.number_input("pt", MIN_FONT_SIZE, MAX_FONT_SIZE,
+                               int(style.get("font_size") or 16), key=f"sz_{k}",
+                               label_visibility="collapsed", disabled=not use_size)
+        cc1, cc2 = st.columns([1, 1])
+        use_col = cc1.checkbox("Colour", value=bool(style.get("color")), key=f"scu_{k}")
+        color = cc2.color_picker("Colour", value=style.get("color") or "#111111", key=f"sc_{k}",
+                                 label_visibility="collapsed", disabled=not use_col)
+        b1, b2 = st.columns(2)
+        if b1.button("Apply style", key=f"sa_{k}", use_container_width=True):
+            new = {}
+            if fam in FONT_CHOICES:
+                new["font_family"] = fam
+            if use_size:
+                new["font_size"] = int(size)
+            if use_col:
+                new["color"] = color
+            _apply(shell, reports, report_id, lambda s, b=block.id, ns=new: _set_style(s, b, ns))
+        if b2.button("Reset to theme default", key=f"sr_{k}", use_container_width=True,
+                     disabled=not style):
+            _apply(shell, reports, report_id, lambda s, b=block.id: _set_style(s, b, {}))
 
 
 def _edit_chart(shell, reports, report_id, block) -> None:
@@ -926,6 +994,19 @@ def _set_text(studio, block_id: str, title: str, text: str) -> None:
             b.title = title
             b.payload["text"] = text
     _reflow(studio)
+
+
+def _set_style(studio, block_id: str, style: dict) -> None:
+    """Set (or, when empty, REMOVE) a block's typography/colour override. Removing the key
+    leaves the block byte-identical to one that never had a style, so 'reset' truly reverts
+    to the theme default. No reflow — this changes appearance, not position/size."""
+    cleaned = clean_style(style)
+    for b in studio.document.blocks:
+        if b.id == block_id:
+            if cleaned:
+                b.payload["style"] = cleaned
+            else:
+                b.payload.pop("style", None)
 
 
 def _set_chart(studio, block_id: str, viz_id: str, controls: dict, image_b64: str | None = None) -> None:

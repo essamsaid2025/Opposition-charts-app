@@ -35,7 +35,9 @@ def _component():
 
 
 def _clean_command(cmd: Any) -> dict[str, Any] | None:
-    """Keep only a well-formed, allow-listed ``update_layout`` with numeric x/y."""
+    """Keep only a well-formed, allow-listed ``update_layout``. A move carries x/y, a resize
+    carries width/height; a command may carry any subset but must carry at least one, and
+    every present geometry field must be a real number (bools rejected)."""
     if not isinstance(cmd, dict):
         return None
     if cmd.get("op") not in ALLOWED_OPS:
@@ -43,11 +45,15 @@ def _clean_command(cmd: Any) -> dict[str, Any] | None:
     if not isinstance(cmd.get("id"), str) or not cmd["id"]:
         return None
     out: dict[str, Any] = {"op": "update_layout", "id": cmd["id"]}
-    for k in ("x", "y"):
+    for k in ("x", "y", "width", "height"):
         v = cmd.get(k)
+        if v is None:
+            continue
         if isinstance(v, bool) or not isinstance(v, (int, float)):
-            return None                    # x/y are mandatory numbers for a move
+            return None                    # a present geometry field must be numeric
         out[k] = float(v)
+    if not any(k in out for k in ("x", "y", "width", "height")):
+        return None                        # nothing to change
     return out
 
 

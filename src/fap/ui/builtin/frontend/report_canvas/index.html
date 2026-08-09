@@ -16,18 +16,29 @@
   .rc-block { position: absolute; box-sizing: border-box; overflow: hidden;
     cursor: grab; touch-action: none; border: 1px solid transparent; border-radius: 3px; }
   .rc-block:hover { border-color: var(--accent); }
+  .rc-block.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .rc-block.locked { cursor: not-allowed; }
   .rc-block.locked:hover { border-color: var(--edge); }
   .rc-block.dragging { cursor: grabbing; border-color: var(--accent);
     box-shadow: 0 4px 14px rgba(0,0,0,.28); z-index: 9999 !important; }
   .rc-block * { pointer-events: none; }          /* content never eats the drag */
+  /* resize handles: direct children re-enabled for pointer events, kept INSIDE the block
+     box so overflow:hidden never clips them. Shown only on the selected, unlocked block. */
+  .rc-block > .rc-handle { pointer-events: auto; position: absolute; background: var(--accent);
+    border: 1px solid #fff; box-sizing: border-box; z-index: 10; }
+  .rc-h-se { right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+    border-radius: 2px 0 3px 0; }
+  .rc-h-e  { right: 0; top: 50%; width: 8px; height: 26px; margin-top: -13px; cursor: ew-resize;
+    border-radius: 2px 0 0 2px; }
+  .rc-h-s  { bottom: 0; left: 50%; width: 26px; height: 8px; margin-left: -13px; cursor: ns-resize;
+    border-radius: 2px 2px 0 0; }
   #hint { font-size: 11px; color: #8a93a2; padding: 0 2px; }
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="frame"><div id="surface"></div></div>
-  <div id="hint">Drag blocks to position them. Positions autosave.</div>
+  <div id="hint">Click a block to select · drag body to move · drag a corner/edge to resize · autosaves.</div>
 </div>
 <script>
 (function () {
@@ -38,7 +49,7 @@
   function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
   function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 2 }); }
   function emit(payload) {
-    // INTENT ONLY: a batch of {op:"update_layout", id, x, y}. Python owns the model.
+    // INTENT ONLY: a batch of {op:"update_layout", id, ...geometry}. Python owns the model.
     send("streamlit:setComponentValue", { dataType: "json", value: payload });
   }
 
@@ -47,57 +58,71 @@
   var lastTs = 0;
   function nextTs() { var t = Date.now(); if (t <= lastTs) t = lastTs + 1; lastTs = t; return t; }
 
+  var MIN = 48;                                    // px floor for a block (matches Python _MIN_BLOCK)
   var frame = document.getElementById("frame");
   var surface = document.getElementById("surface");
   var cfg = { page: {}, blocks: [], snap: 0, zoom: 1, editable: true };
+  var selectedId = null;                           // JS-local selection (not persisted)
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
   function snap(v) {
     return (cfg.snap && cfg.snap > 0) ? Math.round(v / cfg.snap) * cfg.snap : v;
   }
+  function round2(v) { return Math.round(v * 100) / 100; }
+  function pageW() { return (cfg.page && cfg.page.w) || 794; }
+  function pageH() { return (cfg.page && cfg.page.h) || 1123; }
 
   function render() {
-    var pg = cfg.page || {};
-    var pw = pg.w || 794, ph = pg.h || 1123, z = cfg.zoom || 1;
+    var pw = pageW(), ph = pageH(), z = cfg.zoom || 1;
     surface.style.width = pw + "px";
     surface.style.height = ph + "px";
     surface.style.transform = "scale(" + z + ")";
-    surface.style.background = pg.background || "var(--paper)";
+    surface.style.background = (cfg.page && cfg.page.background) || "var(--paper)";
     frame.style.width = (pw * z + 2) + "px";
     frame.style.height = (ph * z + 2) + "px";
     surface.innerHTML = "";
     (cfg.blocks || []).forEach(function (b) {
       var el = document.createElement("div");
-      el.className = "rc-block" + (b.locked ? " locked" : "");
+      var selected = b.id === selectedId;
+      el.className = "rc-block" + (b.locked ? " locked" : "") + (selected ? " selected" : "");
       el.setAttribute("data-bid", b.id);
       el.style.left = b.x + "px"; el.style.top = b.y + "px";
       el.style.width = b.w + "px"; el.style.height = b.h + "px";
       el.innerHTML = b.html || "";
       if (cfg.editable && !b.locked) {
         el.addEventListener("pointerdown", function (e) { beginDrag(el, b, e); });
+        if (selected) {                            // resize handles only on the selected block
+          ["se", "e", "s"].forEach(function (kind) {
+            var h = document.createElement("div");
+            h.className = "rc-handle rc-h-" + kind;
+            h.addEventListener("pointerdown", function (e) { beginResize(el, b, kind, e); });
+            el.appendChild(h);
+          });
+        }
       }
       surface.appendChild(el);
     });
     setHeight();
   }
 
-  // ---- dragging: cache the surface rect ONCE at drag start (do NOT recompute it on every
-  // pointermove) and coalesce visual updates into one DOM write per animation frame. This is
-  // the performance pattern learned on the Tactical Board canvas, applied from day one. ----
+  // shared drag-time coordinate mapping: cache the surface rect ONCE per gesture (never
+  // recompute it per pointermove) and return a page-pixel mapper. Performance pattern carried
+  // over from the Tactical Board / Phase-1 canvas.
+  function gestureMapper() {
+    var rect = surface.getBoundingClientRect();
+    var scale = cfg.zoom || 1;
+    return function (cx, cy) { return { x: (cx - rect.left) / scale, y: (cy - rect.top) / scale }; };
+  }
+
+  // ---- move: drag the block body. A press without meaningful movement = select. ----
   function beginDrag(el, b, e) {
     if (!cfg.editable || b.locked) return;
     e.preventDefault();
-    var rect = surface.getBoundingClientRect();          // cached for the whole gesture
-    var scale = cfg.zoom || 1;
-    var pw = (cfg.page && cfg.page.w) || 794, ph = (cfg.page && cfg.page.h) || 1123;
-    // pointer position in page-pixel space, and the grab offset within the block
-    function toPage(cx, cy) {
-      return { x: (cx - rect.left) / scale, y: (cy - rect.top) / scale };
-    }
+    var toPage = gestureMapper();
     var start = toPage(e.clientX, e.clientY);
     var grab = { dx: start.x - b.x, dy: start.y - b.y };
-    var maxX = Math.max(0, pw - b.w), maxY = Math.max(0, ph - b.h);
-    el.classList.add("dragging");
+    var maxX = Math.max(0, pageW() - b.w), maxY = Math.max(0, pageH() - b.h);
+    var moved = false, sx = e.clientX, sy = e.clientY;
     try { el.setPointerCapture(e.pointerId); } catch (x) {}
 
     var pending = null, raf = 0, last = { x: b.x, y: b.y };
@@ -110,6 +135,9 @@
       el.style.left = last.x + "px"; el.style.top = last.y + "px";
     }
     function move(ev) {
+      if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) {
+        if (!moved) { moved = true; el.classList.add("dragging"); }
+      }
       pending = { x: ev.clientX, y: ev.clientY };
       if (!raf) raf = requestAnimationFrame(paint);
     }
@@ -118,19 +146,67 @@
       el.removeEventListener("pointerup", up);
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       el.classList.remove("dragging");
+      if (!moved) {                                // a click: select this block, show handles
+        selectedId = b.id; render(); return;
+      }
       var p = toPage(ev.clientX, ev.clientY);
-      var x = snap(clamp(p.x - grab.dx, 0, maxX));
-      var y = snap(clamp(p.y - grab.dy, 0, maxY));
-      x = Math.round(x * 100) / 100; y = Math.round(y * 100) / 100;
+      var x = round2(snap(clamp(p.x - grab.dx, 0, maxX)));
+      var y = round2(snap(clamp(p.y - grab.dy, 0, maxY)));
       el.style.left = x + "px"; el.style.top = y + "px";   // leave it where dropped
-      b.x = x; b.y = y;                                     // keep local metadata in sync
-      // Python is authoritative: it re-renders this surface at the committed x/y, so the
+      b.x = x; b.y = y; selectedId = b.id;
+      // Python is authoritative: it re-renders this surface at the committed geometry, so the
       // block never visibly jumps back while the (async) Streamlit round-trip completes.
       emit({ ts: nextTs(), commands: [{ op: "update_layout", id: b.id, x: x, y: y }] });
     }
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
   }
+
+  // ---- resize: drag a corner/edge handle. Same cache-rect-once + RAF pattern as move. ----
+  function beginResize(el, b, kind, e) {
+    if (!cfg.editable || b.locked) return;
+    e.preventDefault(); e.stopPropagation();       // do NOT also start a move drag
+    var toPage = gestureMapper();
+    var start = toPage(e.clientX, e.clientY);
+    var startW = b.w, startH = b.h;
+    var maxW = Math.max(MIN, pageW() - b.x), maxH = Math.max(MIN, pageH() - b.y);
+    try { el.setPointerCapture(e.pointerId); } catch (x) {}
+
+    function sizeAt(cx, cy) {
+      var p = toPage(cx, cy);
+      var w = (kind === "s") ? startW : clamp(startW + (p.x - start.x), MIN, maxW);
+      var h = (kind === "e") ? startH : clamp(startH + (p.y - start.y), MIN, maxH);
+      return { w: w, h: h };
+    }
+    var pending = null, raf = 0;
+    function paint() {
+      raf = 0;
+      if (!pending) return;
+      var s = sizeAt(pending.x, pending.y);
+      el.style.width = s.w + "px"; el.style.height = s.h + "px";
+    }
+    function move(ev) {
+      pending = { x: ev.clientX, y: ev.clientY };
+      if (!raf) raf = requestAnimationFrame(paint);
+    }
+    function up(ev) {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      var s = sizeAt(ev.clientX, ev.clientY);
+      var w = round2(clamp(snap(s.w), MIN, maxW)), h = round2(clamp(snap(s.h), MIN, maxH));
+      el.style.width = w + "px"; el.style.height = h + "px";
+      b.w = w; b.h = h; selectedId = b.id;
+      emit({ ts: nextTs(), commands: [{ op: "update_layout", id: b.id, width: w, height: h }] });
+    }
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  }
+
+  // click the empty surface clears the selection (hides handles)
+  surface.addEventListener("pointerdown", function (e) {
+    if (e.target === surface && selectedId !== null) { selectedId = null; render(); }
+  });
 
   window.addEventListener("message", function (event) {
     var data = event.data || {};
@@ -141,6 +217,8 @@
     cfg.snap = Number(args.snap || 0);
     cfg.zoom = Number(args.zoom || 1);
     cfg.editable = args.editable !== false;
+    // drop a stale selection if that block is gone
+    if (selectedId && !cfg.blocks.some(function (b) { return b.id === selectedId; })) selectedId = null;
     render();
   });
 

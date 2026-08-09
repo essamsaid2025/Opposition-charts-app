@@ -23,6 +23,7 @@ from typing import Any
 
 from fap.core.exceptions import FAPError
 from fap.core.plugin import Plugin, PluginInfo, PluginRegistry
+from fap.reports.block_style import html_style_css
 from fap.reports.layout import (
     LayoutEngine, RenderedDocument, RenderedElement, RenderedPage, ResolvedZone,
 )
@@ -354,6 +355,9 @@ def _element_html(el: RenderedElement) -> str:
            f"z-index:{el.z};opacity:{el.opacity};text-align:{el.align};")
     if el.rotation:
         box += f"transform:rotate({el.rotation}deg);"
+    # optional per-block override: inline rules on the SAME element that carries the role-*
+    # class, so they win over the role stylesheet; empty string (byte-identical) when absent.
+    box += html_style_css(el.content.get("style"))
     inner = _element_inner(el)
     return f"<div class='el role-{el.role}' style='{box}'>{inner}</div>"
 
