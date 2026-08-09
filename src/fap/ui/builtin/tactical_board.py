@@ -326,6 +326,17 @@ class TacticalBoardPage(Page):
                 with col:
                     st.button("", key=key, help=tip, on_click=cb, disabled=disabled,
                               use_container_width=True)
+            # pitch orientation toggle — flips the existing set_pitch op; the visible glyph
+            # shows the CURRENT state (↔ horizontal / ↕ vertical), the tooltip the action.
+            # Default "horizontal" so existing boards look and export exactly as today.
+            is_vertical = getattr(board.pitch, "orientation", "horizontal") == "vertical"
+            with cols[7]:
+                st.button("↕" if is_vertical else "↔", key="tb_orient",
+                          help=("Pitch: Vertical — switch to Horizontal" if is_vertical
+                                else "Pitch: Horizontal — switch to Vertical"),
+                          disabled=not can_edit, use_container_width=True,
+                          on_click=lambda t=("horizontal" if is_vertical else "vertical"):
+                              _apply({"op": "set_pitch", "orientation": t}))
             # save + export live at the right end of the toolbar
             with cols[8]:
                 st.button("", key="tb_save", help="Save board", disabled=not can_edit,
@@ -656,6 +667,10 @@ class TacticalBoardPage(Page):
   -webkit-mask-size: contain; mask-size: contain; }
 .st-key-tb_toolbar .stButton button:hover,
 .st-key-tb_toolbar [data-testid="stDownloadButton"] button:hover { color: var(--fap-primary); }
+/* the orientation toggle shows a text glyph (↔/↕), not a masked icon: hide the base
+   ::before box (which would otherwise paint a solid square) and size the glyph. */
+.st-key-tb_toolbar .st-key-tb_orient button::before { display: none; }
+.st-key-tb_toolbar .st-key-tb_orient button { font-size: 18px; font-weight: 700; }
 .tb-panel-title { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
   color: var(--fap-text-subtle); margin: 2px 2px 8px; }
 .tb-board { background: var(--fap-surface); border: 1px solid var(--fap-border);

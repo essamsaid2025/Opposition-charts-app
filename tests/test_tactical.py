@@ -276,6 +276,27 @@ def test_service_export_formats_and_png():
     assert mime == "image/svg+xml" and data.startswith(b"<svg")
 
 
+def test_set_pitch_orientation_toggle_flips_and_exports():
+    """The toolbar orientation toggle only calls the existing ``set_pitch`` op. Flipping to
+    vertical updates the model and BOTH renderers (live SVG rotates; matplotlib PNG/GIF
+    export doesn't raise); the default stays 'horizontal' so existing boards are unchanged."""
+    from fap.tactical import export_render
+    b = new_board("t")
+    assert b.pitch.orientation == "horizontal"           # default: unchanged from today
+    assert "rotate(90)" not in board_svg(b, 0)           # a horizontal board is not rotated
+
+    apply_command(b, {"op": "set_pitch", "orientation": "vertical"})
+    assert b.pitch.orientation == "vertical"
+    assert "rotate(90)" in board_svg(b, 0)               # live board rotates to portrait
+    if export_render.available():                        # PNG + GIF export come out (rotated)
+        assert export_render.board_image(b, 0, fmt="png")[:8] == b"\x89PNG\r\n\x1a\n"
+        assert export_render.board_gif(b)[:4] == b"GIF8"
+
+    apply_command(b, {"op": "set_pitch", "orientation": "horizontal"})   # toggling back
+    assert b.pitch.orientation == "horizontal"
+    assert "rotate(90)" not in board_svg(b, 0)
+
+
 def test_canvas_wrapper_never_raises():
     """``tactical_canvas`` always returns a (rendered, intent) tuple, even outside a
     live Streamlit run - so the page can always fall back gracefully."""
