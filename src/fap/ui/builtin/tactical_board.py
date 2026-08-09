@@ -45,6 +45,7 @@ _PROP_VALUE_KEYS: tuple[str, ...] = (
     "tb_x", "tb_y", "tb_rot", "tb_sca", "tb_pnum", "tb_pteam", "tb_pname", "tb_pcap", "tb_pgk",
     "tb_ptext", "tb_psize", "tb_px2", "tb_py2", "tb_pcurv", "tb_pw", "tb_ph", "tb_pop",
     "tb_pcolor", "tb_zcolor",
+    "tb_pshape", "tb_pfilled", "tb_psw", "tb_psstyle", "tb_zstroke",
 )
 
 
@@ -597,13 +598,36 @@ class TacticalBoardPage(Page):
             c1, c2 = st.columns(2)
             w = c1.slider("Width", 4, 60, int(p.get("w", 20)), key="tb_pw", disabled=not can_edit)
             h = c2.slider("Height", 4, 60, int(p.get("h", 16)), key="tb_ph", disabled=not can_edit)
+            # shape picker only for free "shape" objects: zones stay rectangles and highlights
+            # stay ellipses (their identity), and a highlight ignores the shape prop anyway.
+            shape = p.get("shape", "rect")
+            if obj.type == "shape":
+                opts = ["rect", "ellipse", "triangle"]
+                labels = {"rect": "Rectangle", "ellipse": "Ellipse", "triangle": "Triangle"}
+                shape = st.selectbox("Shape", opts, index=opts.index(shape if shape in opts else "rect"),
+                                     format_func=lambda s: labels[s], key="tb_pshape",
+                                     disabled=not can_edit)
+            # fill toggle + opacity (opacity has no effect with no fill, so grey it out)
+            filled = st.checkbox("Filled", value=bool(p.get("filled", True)), key="tb_pfilled",
+                                 disabled=not can_edit)
             op = st.slider("Opacity", 5, 90, int(float(p.get("opacity", 0.28)) * 100),
-                           key="tb_pop", disabled=not can_edit) / 100.0
+                           key="tb_pop", disabled=not can_edit or not filled) / 100.0
+            # stroke (border) width + style
+            sc1, sc2 = st.columns(2)
+            swid = sc1.slider("Border width", 0, 10, int(float(p.get("stroke_width", 2))),
+                              key="tb_psw", disabled=not can_edit, help="0 = no border.")
+            sstyle = sc2.selectbox("Border style", ["solid", "dashed"],
+                                   index=1 if p.get("stroke_style", "solid") == "dashed" else 0,
+                                   key="tb_psstyle", disabled=not can_edit)
             if can_edit:
-                upd(props={"w": float(w), "h": float(h), "opacity": op})
-            # per-zone colour override (falls back to the resolved theme "zone" colour)
+                upd(props={"w": float(w), "h": float(h), "opacity": op, "shape": shape,
+                           "filled": bool(filled), "stroke_width": float(swid),
+                           "stroke_style": sstyle})
+            # per-zone FILL colour override (falls back to the resolved theme "zone" colour)
             self._color_override(obj, upd, can_edit, colors, default_key="zone",
                                  pkey="tb_zcolor")
+            # per-zone BORDER colour override (falls back to the resolved fill colour)
+            self._stroke_color_override(obj, upd, can_edit, colors)
 
     def _color_override(self, obj, upd, can_edit, colors, *, default_key, pkey,
                         reseed: bool = False) -> None:
@@ -631,6 +655,28 @@ class TacticalBoardPage(Page):
             upd(props={"color": ""})
         elif picked and picked.lower() != resolved.lower():
             upd(props={"color": picked})
+
+    def _stroke_color_override(self, obj, upd, can_edit, colors) -> None:
+        """Border-colour override for zone/highlight/shape, mirroring ``_color_override`` but
+        writing ``props["stroke_color"]``. Seeded with the resolved FILL colour (so the border
+        matches the fill until changed); Reset clears it back to ``""`` -> the renderer falls
+        back to the fill colour again. Only written on an actual change."""
+        fill = str(obj.props.get("color") or "").strip() \
+            or colors.get("zone") or DEFAULT_COLORS.get("zone", "#888888")
+        override = str(obj.props.get("stroke_color") or "").strip()
+        resolved = override or fill
+        ca, cb = st.columns([3, 2])
+        picked = ca.color_picker("Border colour", value=resolved, key="tb_zstroke",
+                                 disabled=not can_edit)
+        reset = cb.button("Reset to fill", key="tb_zstroke_reset", use_container_width=True,
+                          disabled=not can_edit or not override,
+                          help="Clear the border-colour override and follow the fill colour.")
+        if not can_edit:
+            return
+        if reset:
+            upd(props={"stroke_color": ""})
+        elif picked and picked.lower() != resolved.lower():
+            upd(props={"stroke_color": picked})
 
     # ------------------------------------------------------------ timeline / frames
     def _timeline(self, board, can_edit) -> None:

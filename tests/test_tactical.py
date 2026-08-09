@@ -276,6 +276,78 @@ def test_service_export_formats_and_png():
     assert mime == "image/svg+xml" and data.startswith(b"<svg")
 
 
+# ---------------------------------------------------------- zone/shape stroke + fill styling
+def _one_obj_svg(o):
+    """board_svg for a blank board holding just ``o``, plus that object's <g> inner SVG."""
+    import re
+    b = new_board("t", pitch_kind="blank")
+    b.frames[0].objects = [o]
+    svg = board_svg(b, 0)
+    m = re.search(r'<g data-oid="%s"[^>]*>(.*?)</g>' % o.id, svg)
+    return b, svg, (m.group(1) if m else "")
+
+
+def test_zone_shape_no_new_props_render_identical_to_before():
+    """The no-regression guarantee: a zone/highlight/shape with only the classic props must
+    render byte-identically (SVG) to before this change, and its PNG must be identical to the
+    same object with the new props explicitly set to their documented defaults."""
+    from fap.tactical import export_render
+    # pinned 'before' SVG snapshots (captured from the pre-change renderer)
+    zone = TacticalObject(id="z", type="zone", x=40.0, y=30.0,
+                          props={"w": 20.0, "h": 16.0, "color": "", "opacity": 0.28, "shape": "rect"})
+    _, _, zel = _one_obj_svg(zone)
+    assert zel == ('<rect x="315.0" y="149.6" width="210.0" height="108.8" rx="6" '
+                   'fill="#2f7bd6" fill-opacity="0.28" stroke="#2f7bd6" stroke-width="2"/>')
+    hi = TacticalObject(id="h", type="highlight", x=60.0, y=50.0,
+                        props={"w": 20.0, "h": 16.0, "color": "", "opacity": 0.28, "shape": "rect"})
+    _, _, hel = _one_obj_svg(hi)
+    assert hel == ('<ellipse cx="630.0" cy="340.0" rx="105.0" ry="54.4" '
+                   'fill="#2f7bd6" fill-opacity="0.28" stroke="#2f7bd6" stroke-width="2"/>')
+    # PNG: adding the new props at their defaults must not change a single byte (proves the
+    # new code path is a no-op at defaults, robust across matplotlib versions/platforms)
+    if export_render.available():
+        b_old, _, _ = _one_obj_svg(zone)
+        z_new = TacticalObject(id="z", type="zone", x=40.0, y=30.0,
+                               props={"w": 20.0, "h": 16.0, "color": "", "opacity": 0.28,
+                                      "shape": "rect", "filled": True, "stroke_color": "",
+                                      "stroke_width": 2.0, "stroke_style": "solid"})
+        b_new, _, _ = _one_obj_svg(z_new)
+        assert export_render.board_image(b_old, 0, fmt="png") == \
+            export_render.board_image(b_new, 0, fmt="png")
+
+
+def test_zone_unfilled_has_no_fill_and_exports():
+    from fap.tactical import export_render
+    o = TacticalObject(id="u", type="zone", x=40.0, y=30.0,
+                       props={"w": 20.0, "h": 16.0, "filled": False})
+    b, _, el = _one_obj_svg(o)
+    assert 'fill="none"' in el                          # outline only, no fill colour
+    assert 'fill="#' not in el                          # the fill is not a colour
+    if export_render.available():
+        assert export_render.board_image(b, 0, fmt="png")[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_zone_stroke_overrides_reflected_in_svg():
+    o = TacticalObject(id="k", type="zone", x=40.0, y=30.0,
+                       props={"w": 20.0, "h": 16.0, "stroke_color": "#ff0000",
+                              "stroke_width": 5.0, "stroke_style": "dashed"})
+    _, _, el = _one_obj_svg(o)
+    assert 'stroke="#ff0000"' in el
+    assert 'stroke-width="5"' in el                     # 5.0 -> "5"
+    assert 'stroke-dasharray="10 8"' in el              # dashed border == dashed_arrow dash
+
+
+def test_shape_triangle_renders_polygon_in_both_renderers():
+    from fap.tactical import export_render
+    o = TacticalObject(id="t", type="shape", x=50.0, y=40.0,
+                       props={"w": 20.0, "h": 16.0, "shape": "triangle"})
+    b, _, el = _one_obj_svg(o)
+    assert "<polygon" in el and "points=" in el
+    if export_render.available():
+        assert export_render.board_image(b, 0, fmt="png")[:8] == b"\x89PNG\r\n\x1a\n"
+        assert export_render.board_image(b, 0, fmt="pdf")[:5] == b"%PDF-"
+
+
 def test_set_pitch_orientation_toggle_flips_and_exports():
     """The toolbar orientation toggle only calls the existing ``set_pitch`` op. Flipping to
     vertical updates the model and BOTH renderers (live SVG rotates; matplotlib PNG/GIF

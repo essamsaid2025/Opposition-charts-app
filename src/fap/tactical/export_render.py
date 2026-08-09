@@ -147,16 +147,29 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str]) -> None:
                                         linestyle=style, connectionstyle=conn,
                                         shrinkA=0, shrinkB=0, mutation_scale=22))
     elif t in ("zone", "highlight", "shape"):
+        # kept in lockstep with render.py _zone(): identical stroke/fill/shape props, and the
+        # default (no new props) reproduces today's exact patch call -> pixel-identical export.
         w = p.get("w", 20) / 100 * _W
         h = p.get("h", 16) / 100 * _H
         col = p.get("color") or _c(colors, "zone")
         op = float(p.get("opacity", 0.28))
-        if p.get("shape") == "ellipse" or t == "highlight":
-            ax.add_patch(mp.Ellipse((x, y), w, h, facecolor=col, alpha=op, edgecolor=col,
-                                    linewidth=2, zorder=z))
+        filled = p.get("filled", True)
+        face = col if filled else "none"
+        edge = p.get("stroke_color") or col
+        # filled: keep today's exact behaviour (alpha dims fill+border together). Unfilled:
+        # full-opacity border so the outline matches the SVG's full-opacity stroke.
+        kw = dict(facecolor=face, alpha=(op if filled else 1.0), edgecolor=edge,
+                  linewidth=float(p.get("stroke_width", 2)), zorder=z)
+        if p.get("stroke_style") == "dashed":              # match dashed_arrow's linestyle
+            kw["linestyle"] = "--"
+        shape = p.get("shape")
+        if shape == "triangle" and t != "highlight":       # isoceles, pointing up (cone-glyph style)
+            ax.add_patch(mp.Polygon([(x, y - h / 2), (x - w / 2, y + h / 2), (x + w / 2, y + h / 2)],
+                                    closed=True, **kw))
+        elif shape == "ellipse" or t == "highlight":
+            ax.add_patch(mp.Ellipse((x, y), w, h, **kw))
         else:
-            ax.add_patch(mp.Rectangle((x - w / 2, y - h / 2), w, h, facecolor=col, alpha=op,
-                                      edgecolor=col, linewidth=2, zorder=z))
+            ax.add_patch(mp.Rectangle((x - w / 2, y - h / 2), w, h, **kw))
     elif t in ("text", "number"):
         size = float(p.get("size", 14)) * o.scale
         ax.text(x, y, str(p.get("text", "")), ha="center", va="center",

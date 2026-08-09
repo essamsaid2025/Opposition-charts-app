@@ -25,8 +25,11 @@ def default_props(obj_type: str) -> dict[str, Any]:
                 "captain": False, "goalkeeper": False}
     if obj_type in _VECTOR_TYPES:
         return {"x2": 62.0, "y2": 50.0, "curvature": 0.0}
-    if obj_type in ("zone", "highlight"):
-        return {"w": 20.0, "h": 16.0, "color": "", "opacity": 0.28, "shape": "rect"}
+    if obj_type in ("zone", "highlight", "shape"):
+        # stroke/fill defaults chosen so a freshly-added object looks EXACTLY like before:
+        # filled, same-colour 2px solid border (the renderer applies the same fallbacks).
+        return {"w": 20.0, "h": 16.0, "color": "", "opacity": 0.28, "shape": "rect",
+                "filled": True, "stroke_color": "", "stroke_width": 2.0, "stroke_style": "solid"}
     if obj_type in ("text", "number"):
         return {"text": "T", "size": 14, "color": ""}
     if obj_type == "image":

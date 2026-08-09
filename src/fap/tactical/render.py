@@ -196,11 +196,22 @@ def _vector(o: TacticalObject, colors: dict[str, str], marker: str) -> str:
 def _zone(o: TacticalObject, colors: dict[str, str]) -> str:
     x, y = _px(o.x, o.y); w = o.props.get("w", 20) / 100 * _W; h = o.props.get("h", 16) / 100 * _H
     col = o.props.get("color") or _c(colors, "zone"); op = float(o.props.get("opacity", 0.28))
-    if o.props.get("shape") == "ellipse" or o.type == "highlight":
-        return (f'<ellipse cx="{x}" cy="{y}" rx="{w/2}" ry="{h/2}" fill="{col}" '
-                f'fill-opacity="{op}" stroke="{col}" stroke-width="2"/>')
-    return (f'<rect x="{x-w/2}" y="{y-h/2}" width="{w}" height="{h}" rx="6" fill="{col}" '
-            f'fill-opacity="{op}" stroke="{col}" stroke-width="2"/>')
+    # optional stroke/fill overrides - all default to today's exact look (filled, same-colour
+    # 2px solid stroke) so an object with none of these renders byte-identically to before.
+    fill = col if o.props.get("filled", True) else "none"
+    stroke = o.props.get("stroke_color") or col
+    sw = float(o.props.get("stroke_width", 2))
+    sw_s = str(int(sw)) if sw == int(sw) else str(sw)       # 2.0 -> "2" (keep old byte output)
+    # reuse the dashed_arrow dash-array so a dashed border matches dashed arrows visually
+    dash = ' stroke-dasharray="10 8"' if o.props.get("stroke_style") == "dashed" else ""
+    style = f'fill="{fill}" fill-opacity="{op}" stroke="{stroke}" stroke-width="{sw_s}"{dash}'
+    shape = o.props.get("shape")
+    if shape == "triangle" and o.type != "highlight":       # isoceles, pointing up (cone-glyph style)
+        pts = f"{x},{y-h/2} {x-w/2},{y+h/2} {x+w/2},{y+h/2}"
+        return f'<polygon points="{pts}" {style}/>'
+    if shape == "ellipse" or o.type == "highlight":
+        return f'<ellipse cx="{x}" cy="{y}" rx="{w/2}" ry="{h/2}" {style}/>'
+    return f'<rect x="{x-w/2}" y="{y-h/2}" width="{w}" height="{h}" rx="6" {style}/>'
 
 
 def _text(o: TacticalObject, colors: dict[str, str]) -> str:
