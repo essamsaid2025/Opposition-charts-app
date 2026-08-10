@@ -443,6 +443,108 @@ def test_every_library_icon_has_a_real_path():
         assert has_icon(ic), f"library category references missing icon {ic!r}"
 
 
+def test_canvas_objects_sends_rotation_and_shape_size(monkeypatch):
+    """The on-canvas rotate/resize handles need per-object metadata: ``rotation`` on EVERY
+    object, and bounding-box ``w``/``h`` on zone/highlight/shape (so the JS places the
+    corner handles without guessing). Others must NOT carry w/h."""
+    import fap.ui.builtin.tactical_board as TB
+    monkeypatch.setattr(TB, "_frame_index", lambda: 0)     # no Streamlit session needed
+    b = new_board("t")
+    b.frames[0].objects = [
+        TacticalObject(id="p", type="player", x=30.0, y=40.0, rotation=45.0,
+                       props=default_props("player")),
+        TacticalObject(id="a", type="arrow", x=10.0, y=10.0,
+                       props={"x2": 50.0, "y2": 60.0, "curvature": 0.0}),
+        TacticalObject(id="z", type="zone", x=55.0, y=42.0, rotation=20.0,
+                       props={**default_props("zone"), "w": 30.0, "h": 18.0}),
+    ]
+    meta = {m["id"]: m for m in TB._canvas_objects(b)}
+    # rotation on every object
+    assert meta["p"]["rotation"] == 45.0
+    assert meta["a"]["rotation"] == 0.0
+    assert meta["z"]["rotation"] == 20.0
+    # w/h ONLY on the shape family
+    assert meta["z"]["w"] == 30.0 and meta["z"]["h"] == 18.0
+    assert "w" not in meta["p"] and "h" not in meta["p"]
+    assert "w" not in meta["a"] and "h" not in meta["a"]
+
+
+# ---------------------------------------------------------- sticky ball
+def test_ball_resolve_position_free_is_noop():
+    from fap.tactical.models import resolve_position
+    b = new_board("t")
+    ball = TacticalObject(id="bl", type="ball", x=33.0, y=44.0, props={})
+    b.frames[0].objects = [ball]
+    assert resolve_position(b.frames[0], ball) == (33.0, 44.0)   # every existing board: unchanged
+
+
+def test_ball_attached_resolves_to_player_plus_offset():
+    from fap.tactical.models import BALL_ATTACH_OFFSET, resolve_position
+    b = new_board("t")
+    pl = TacticalObject(id="p1", type="player", x=60.0, y=50.0, props={})
+    ball = TacticalObject(id="bl", type="ball", x=10.0, y=10.0, props={"attached_to": "p1"})
+    b.frames[0].objects = [pl, ball]
+    dx, dy = BALL_ATTACH_OFFSET
+    assert resolve_position(b.frames[0], ball) == (60.0 + dx, 50.0 + dy)
+    ball.props["attached_to"] = "ghost"                          # player removed -> free fallback
+    assert resolve_position(b.frames[0], ball) == (10.0, 10.0)
+
+
+def test_nearest_player_picks_closest():
+    from fap.tactical.models import nearest_player
+    players = [TacticalObject(id="a", type="player", x=20.0, y=20.0, props={}),
+               TacticalObject(id="b", type="player", x=45.0, y=48.0, props={}),
+               TacticalObject(id="c", type="player", x=90.0, y=90.0, props={})]
+    assert nearest_player(50.0, 50.0, players).id == "b"
+    assert nearest_player(0.0, 0.0, players).id == "a"
+    assert nearest_player(1.0, 1.0, []) is None
+
+
+def test_detach_ball_preserves_last_resolved_position():
+    """Detaching freezes the ball exactly where it visually was (no snap-back to a stale coord)."""
+    from fap.tactical.models import resolve_position
+    b = new_board("t")
+    pl = TacticalObject(id="p1", type="player", x=70.0, y=40.0, props={})
+    ball = TacticalObject(id="bl", type="ball", x=5.0, y=5.0, props={"attached_to": "p1"})
+    b.frames[0].objects = [pl, ball]
+    rx, ry = resolve_position(b.frames[0], ball)                 # current on-screen spot
+    apply_command(b, {"op": "update_object", "id": "bl", "x": rx, "y": ry,
+                      "props": {"attached_to": ""}})            # same shape the UI's detach sends
+    assert ball.props.get("attached_to", "") == "" and (ball.x, ball.y) == (rx, ry)
+    assert resolve_position(b.frames[0], ball) == (rx, ry)      # no longer follows the player
+
+
+def test_detach_ball_on_manual_move_frees_a_dragged_sticky_ball():
+    from fap.ui.builtin.tactical_board import _detach_ball_on_manual_move
+    b = new_board("t")
+    b.frames[0].objects = [
+        TacticalObject(id="p1", type="player", x=70.0, y=40.0, props={}),
+        TacticalObject(id="bl", type="ball", x=5.0, y=5.0, props={"attached_to": "p1"})]
+    cmd = {"op": "update_object", "id": "bl", "x": 30.0, "y": 25.0, "frame": 0}
+    _detach_ball_on_manual_move(b, cmd)                         # dragging folds attached_to="" in
+    assert cmd["props"]["attached_to"] == ""
+    apply_command(b, cmd)
+    ball = b.frames[0].object("bl")
+    assert ball.props["attached_to"] == "" and (ball.x, ball.y) == (30.0, 25.0)
+    # a props-only update (no x/y) must NOT detach a sticky ball
+    ball.props["attached_to"] = "p1"
+    cmd2 = {"op": "update_object", "id": "bl", "frame": 0, "props": {"scale": 1.0}}
+    _detach_ball_on_manual_move(b, cmd2)
+    assert "attached_to" not in (cmd2.get("props") or {})
+
+
+def test_attached_ball_exports_without_raising():
+    from fap.tactical import export_render
+    if not export_render.available():
+        return
+    b = new_board("t")
+    b.frames[0].objects = [
+        TacticalObject(id="p1", type="player", x=60.0, y=50.0, props={}),
+        TacticalObject(id="bl", type="ball", x=10.0, y=10.0, props={"attached_to": "p1"})]
+    assert export_render.board_image(b, 0, fmt="png")[:8] == b"\x89PNG\r\n\x1a\n"
+    assert export_render.board_gif(b)[:4] == b"GIF8"
+
+
 # ---------------------------------------------------------- click-drag draw tool
 def test_draw_tool_defaults_to_select_and_covers_real_types():
     from fap.ui.builtin.tactical_board import _DRAW_TOOLS

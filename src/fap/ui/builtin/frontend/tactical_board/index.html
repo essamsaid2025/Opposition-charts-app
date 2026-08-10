@@ -376,6 +376,137 @@
   // ---- overlay handles for the selected vector object ---------------------------
   // control=true renders the curve handle inverted (filled accent) so it reads as a
   // distinct grab point from the hollow endpoint handles.
+  // ---- rotate + resize handles (any selected object; resize only for zone/shape) --------
+  // Same mechanism as the curve handle: SVG shapes appended to `plane`, dragged with a
+  // cached inverse CTM + RAF throttling, emitting the SAME update_object command on release.
+  var ROTATE_COL = "#2ea043";                             // green: distinct from accent handles
+
+  function groupOf(id) {                                   // the object's <g data-oid> in the live SVG
+    var gs = svg.querySelectorAll("[data-oid]");
+    for (var i = 0; i < gs.length; i++) if (gs[i].getAttribute("data-oid") === id) return gs[i];
+    return null;
+  }
+  // rotate a vector by deg using render.py's SVG convention (clockwise-positive, y-down)
+  function rotVec(vx, vy, deg) {
+    var r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+    return { x: vx * c - vy * s, y: vx * s + vy * c };
+  }
+  function rotateDist(sel) {                               // handle offset from centre (local px)
+    var shape = sel.type === "zone" || sel.type === "highlight" || sel.type === "shape";
+    return shape ? (sel.h / 100 * PLANE_H) / 2 + 28 : 40;
+  }
+
+  function addRotateHandle(sel) {
+    var NS = "http://www.w3.org/2000/svg";
+    var acc = cfg.colors.accent || "#2f7bd6", surf = cfg.colors.surface || "#12151c";
+    var c = pitchToLocal(sel.x, sel.y), d = rotateDist(sel);
+    var off = rotVec(0, -d, sel.rotation || 0);           // "up" (0deg) rotated by current rotation
+    var hx = c.x + off.x, hy = c.y + off.y;
+    var stem = document.createElementNS(NS, "line");      // dashed stem from centre to the grab
+    stem.setAttribute("x1", c.x); stem.setAttribute("y1", c.y);
+    stem.setAttribute("x2", hx); stem.setAttribute("y2", hy);
+    stem.setAttribute("stroke", acc); stem.setAttribute("stroke-width", 2);
+    stem.setAttribute("stroke-dasharray", "3 3"); stem.style.pointerEvents = "none";
+    stem.setAttribute("class", "tb-handle-stem"); plane.appendChild(stem);
+    var h = document.createElementNS(NS, "circle");
+    h.setAttribute("cx", hx); h.setAttribute("cy", hy); h.setAttribute("r", 8);
+    h.setAttribute("fill", ROTATE_COL); h.setAttribute("stroke", surf); h.setAttribute("stroke-width", 2.5);
+    h.setAttribute("class", "tb-handle tb-rotate");
+    h.addEventListener("pointerdown", function (e) { beginRotateDrag(h, stem, sel, e); });
+    plane.appendChild(h);
+  }
+
+  function beginRotateDrag(handle, stem, sel, e) {
+    if (!cfg.editable || sel.locked) return;
+    e.preventDefault(); e.stopPropagation();
+    var inv = planeInverseCTM(); if (!inv) return;
+    var c = pitchToLocal(sel.x, sel.y), d = rotateDist(sel), group = groupOf(sel.id);
+    try { handle.setPointerCapture(e.pointerId); } catch (x) {}
+    function angleAt(loc) {                                // 0deg = up, clockwise-positive, 0..359
+      var deg = Math.atan2(loc.x - c.x, -(loc.y - c.y)) * 180 / Math.PI;
+      return ((Math.round(deg) % 360) + 360) % 360;
+    }
+    var pending = null, raf = 0;
+    function paint() {
+      raf = 0; if (!pending) return;
+      var deg = angleAt(pending), off = rotVec(0, -d, deg);
+      handle.setAttribute("cx", c.x + off.x); handle.setAttribute("cy", c.y + off.y);
+      stem.setAttribute("x2", c.x + off.x); stem.setAttribute("y2", c.y + off.y);
+      if (group) group.setAttribute("transform", "rotate(" + deg + " " + c.x + " " + c.y + ")");
+    }
+    function move(ev) { pending = toPlaneWith(inv, ev.clientX, ev.clientY); if (!raf) raf = requestAnimationFrame(paint); }
+    function up(ev) {
+      handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      var deg = angleAt(toPlaneWith(inv, ev.clientX, ev.clientY));
+      emit({ ts: nextTs(), select: sel.id, commands: [{ op: "update_object", id: sel.id, rotation: deg }] });
+    }
+    handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", up);
+  }
+
+  function addResizeHandles(sel) {                         // four bbox-corner handles (rotation-aware)
+    var NS = "http://www.w3.org/2000/svg";
+    var acc = cfg.colors.accent || "#2f7bd6", surf = cfg.colors.surface || "#12151c";
+    var c = pitchToLocal(sel.x, sel.y), th = sel.rotation || 0;
+    var halfW = sel.w / 100 * PLANE_W / 2, halfH = sel.h / 100 * PLANE_H / 2;
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(function (cn) {
+      var sx = cn[0], sy = cn[1], off = rotVec(sx * halfW, sy * halfH, th);
+      var h = document.createElementNS(NS, "rect");
+      h.setAttribute("x", c.x + off.x - 6); h.setAttribute("y", c.y + off.y - 6);
+      h.setAttribute("width", 12); h.setAttribute("height", 12); h.setAttribute("rx", 2);
+      h.setAttribute("fill", surf); h.setAttribute("stroke", acc); h.setAttribute("stroke-width", 3);
+      h.setAttribute("class", "tb-handle tb-resize");
+      h.addEventListener("pointerdown", function (e) { beginResizeDrag(h, sel, sx, sy, e); });
+      plane.appendChild(h);
+    });
+  }
+
+  function beginResizeDrag(handle, sel, sx, sy, e) {
+    if (!cfg.editable || sel.locked) return;
+    e.preventDefault(); e.stopPropagation();
+    var inv = planeInverseCTM(); if (!inv) return;
+    var th = sel.rotation || 0;
+    // the OPPOSITE corner (fixed anchor) in pitch space; rotation-aware
+    var oppRot = rotVec(-sx * sel.w / 2, -sy * sel.h / 2, th);
+    var O = { x: sel.x + oppRot.x, y: sel.y + oppRot.y };
+    try { handle.setPointerCapture(e.pointerId); } catch (x) {}
+    var NS = "http://www.w3.org/2000/svg", acc = cfg.colors.accent || "#2f7bd6";
+    var preview = document.createElementNS(NS, "rect");   // dashed live bounding box
+    preview.setAttribute("fill", "none"); preview.setAttribute("stroke", acc);
+    preview.setAttribute("stroke-width", 2); preview.setAttribute("stroke-dasharray", "6 5");
+    preview.style.pointerEvents = "none"; plane.appendChild(preview);
+    function compute(loc) {
+      var P = toPitch(loc);                                // pointer, pitch, snapped/clamped
+      var dl = rotVec(P.x - O.x, P.y - O.y, -th);          // diagonal in the object's local (un-rotated) frame
+      var w = Math.max(Math.abs(dl.x), DRAW_MIN), h = Math.max(Math.abs(dl.y), DRAW_MIN);
+      var D = rotVec(dl.x < 0 ? -w : w, dl.y < 0 ? -h : h, th);   // clamped dragged corner back to screen
+      var Dx = O.x + D.x, Dy = O.y + D.y;
+      return { x: Math.round((O.x + Dx) / 2 * 100) / 100, y: Math.round((O.y + Dy) / 2 * 100) / 100,
+               w: Math.round(w * 100) / 100, h: Math.round(h * 100) / 100 };
+    }
+    var pending = null, raf = 0;
+    function paint() {
+      raf = 0; if (!pending) return;
+      var b = compute(pending), lc = pitchToLocal(b.x, b.y);
+      var pw = b.w / 100 * PLANE_W, ph = b.h / 100 * PLANE_H;
+      preview.setAttribute("x", lc.x - pw / 2); preview.setAttribute("y", lc.y - ph / 2);
+      preview.setAttribute("width", pw); preview.setAttribute("height", ph);
+      preview.setAttribute("transform", th ? "rotate(" + th + " " + lc.x + " " + lc.y + ")" : "");
+      var dOff = rotVec(sx * pw / 2, sy * ph / 2, th);     // keep the grabbed handle under the pointer
+      handle.setAttribute("x", lc.x + dOff.x - 6); handle.setAttribute("y", lc.y + dOff.y - 6);
+    }
+    function move(ev) { pending = toPlaneWith(inv, ev.clientX, ev.clientY); if (!raf) raf = requestAnimationFrame(paint); }
+    function up(ev) {
+      handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up);
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (preview.parentNode) preview.parentNode.removeChild(preview);   // ALWAYS remove preview
+      var b = compute(toPlaneWith(inv, ev.clientX, ev.clientY));
+      emit({ ts: nextTs(), select: sel.id,
+             commands: [{ op: "update_object", id: sel.id, x: b.x, y: b.y, props: { w: b.w, h: b.h } }] });
+    }
+    handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", up);
+  }
+
   function makeHandle(lx, ly, id, which, control) {
     var NS = "http://www.w3.org/2000/svg";
     var surf = cfg.colors.surface || "#12151c", acc = cfg.colors.accent || "#2f7bd6";
@@ -405,7 +536,10 @@
       g.style.touchAction = "none";
       g.addEventListener("pointerdown", function (e) { beginObjectDrag(g, id, kind, e); });
     });
-    // endpoint handles only for the currently-selected vector object (keeps it clean)
+    // handles for the currently-selected object. Vector types keep ONLY their endpoint/curve
+    // handles (mutually exclusive - no rotate/resize on arrows). Everything else gets a rotate
+    // handle; zone/highlight/shape additionally get corner resize handles. New handles are
+    // gated on editable + not locked (endpoint handles already gate the drag in beginHandleDrag).
     var sel = cfg.selectedId && metaOf(cfg.selectedId);
     if (sel && VECTOR[sel.type]) {
       addHandle(sel.x, sel.y, sel.id, "start");
@@ -419,6 +553,9 @@
         var cp = curveControlPoint(s, en, k);
         makeHandle(cp.x, cp.y, sel.id, "control", true);
       }
+    } else if (sel && cfg.editable && !sel.locked) {
+      addRotateHandle(sel);
+      if (sel.type === "zone" || sel.type === "highlight" || sel.type === "shape") addResizeHandles(sel);
     }
   }
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import html as _html
 from typing import Any, Callable
 
-from fap.tactical.models import Board, Frame, TacticalObject
+from fap.tactical.models import Board, Frame, TacticalObject, resolve_position
 
 # a professional default palette (overridden by the page with live theme tokens)
 DEFAULT_COLORS: dict[str, str] = {
@@ -121,8 +121,11 @@ def _player(o: TacticalObject, colors: dict[str, str]) -> str:
             f'stroke="{_c(colors,"line")}" stroke-width="2"/>{num_t}{cap}{name_t}')
 
 
-def _ball(o: TacticalObject, colors: dict[str, str]) -> str:
-    x, y = _px(o.x, o.y); r = 9 * o.scale
+def _ball(o: TacticalObject, colors: dict[str, str], px: float | None = None,
+          py: float | None = None) -> str:
+    # px/py override the ball's own coords when it is "sticky" on a player (resolved by the
+    # caller via resolve_position); default = the ball's stored position (byte-identical to before)
+    x, y = (px, py) if px is not None else _px(o.x, o.y); r = 9 * o.scale
     return (f'<circle cx="{x}" cy="{y}" r="{r}" fill="{_c(colors,"ball")}" '
             f'stroke="{_c(colors,"ball_line")}" stroke-width="1.5"/>'
             f'<circle cx="{x}" cy="{y}" r="{r*0.32}" fill="{_c(colors,"ball_line")}"/>')
@@ -246,9 +249,12 @@ _OBJ: dict[str, Callable[[TacticalObject, dict], str]] = {
 }
 
 
-def _object_svg(o: TacticalObject, colors: dict[str, str], *, selected: bool) -> str:
-    body = _OBJ.get(o.type, lambda *_: "")(o, colors)
-    cx, cy = _px(o.x, o.y)
+def _object_svg(o: TacticalObject, colors: dict[str, str], fr: Frame, *, selected: bool) -> str:
+    # resolve_position is a no-op (returns o.x/o.y) for every object EXCEPT a sticky ball, so
+    # cx/cy — and the rotation centre + selection ring below — follow the ball to its player.
+    rx, ry = resolve_position(fr, o)
+    cx, cy = _px(rx, ry)
+    body = _ball(o, colors, cx, cy) if o.type == "ball" else _OBJ.get(o.type, lambda *_: "")(o, colors)
     transform = f' transform="rotate({o.rotation} {cx} {cy})"' if o.rotation else ""
     sel = ""
     if selected:
@@ -269,7 +275,7 @@ def board_svg(board: Board, frame_index: int = 0, *, colors: dict[str, str] | No
     defs = (f'<defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" '
             f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
     pitch = _pitch_svg(board, colors, grid)
-    objs = "".join(_object_svg(o, colors, selected=(o.id == selected_id))
+    objs = "".join(_object_svg(o, colors, fr, selected=(o.id == selected_id))
                    for o in sorted(fr.objects, key=lambda o: o.z))
     extra = "".join(overlays or [])
     inner = f'{defs}{pitch}{extra}{objs}'

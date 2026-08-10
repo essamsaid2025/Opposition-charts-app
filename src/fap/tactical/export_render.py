@@ -17,7 +17,7 @@ import io
 import math
 from typing import Any
 
-from fap.tactical.models import Board, Frame, TacticalObject
+from fap.tactical.models import Board, Frame, TacticalObject, resolve_position
 from fap.tactical.render import DEFAULT_COLORS
 
 # same authoring plane as render.py (10 px per pitch unit)
@@ -83,11 +83,13 @@ def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------- objects
-def _draw_object(ax, o: TacticalObject, colors: dict[str, str]) -> None:
+def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) -> None:
     import matplotlib.patches as mp
 
     z = 2 + o.z * 0.001
-    x, y = _px(o.x, o.y)
+    # resolve_position is the SAME helper render.py uses; a no-op (returns o.x/o.y) for every
+    # object except a sticky ball, keeping the export pixel-identical for everything else.
+    x, y = _px(*resolve_position(frame, o))
     p = o.props
     t = o.type
 
@@ -204,7 +206,7 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
         _draw_pitch(ax, board, colors)
         for o in sorted(fr.objects, key=lambda o: o.z):
-            _draw_object(ax, o, colors)
+            _draw_object(ax, o, colors, fr)
 
         buf = io.BytesIO()
         fig.savefig(buf, format="pdf" if fmt == "pdf" else "png", dpi=dpi,

@@ -109,6 +109,45 @@ class Frame:
                      objects=[o.clone(fresh_id=False) for o in self.objects])
 
 
+#: how far (in 0-100 pitch units) a "sticky" ball sits from its player's centre, so it renders
+#: at the player's feet (down-right, dribbling pose) rather than on top of the marker. The x/y
+#: split roughly matches an equal on-screen pixel offset on the 1050x680 plane (_H/_W ~ 0.65).
+BALL_ATTACH_OFFSET: tuple[float, float] = (1.8, 2.6)
+
+
+def resolve_position(frame: "Frame", obj: "TacticalObject") -> tuple[float, float]:
+    """The (x, y) an object should DRAW at, in 0-100 pitch space. This is the SINGLE source of
+    truth both renderers (``render.py`` and ``export_render.py``) call for balls, so the live
+    board and every export stay in lockstep.
+
+    Identical to ``obj.x``/``obj.y`` for everything EXCEPT a ball whose ``props['attached_to']``
+    holds the id of a player STILL present in ``frame`` - then it returns that player's current
+    position plus ``BALL_ATTACH_OFFSET`` (clamped to the pitch), so the ball sticks to the player
+    and moves with them across frames. A ball with no ``attached_to`` (every existing board) hits
+    the fallback and is a pure no-op. Never raises."""
+    if obj.type == "ball":
+        pid = str((obj.props or {}).get("attached_to") or "")
+        if pid:
+            player = frame.object(pid)
+            if player is not None and player.type == "player":
+                dx, dy = BALL_ATTACH_OFFSET
+                return (min(100.0, max(0.0, player.x + dx)),
+                        min(100.0, max(0.0, player.y + dy)))
+    return (obj.x, obj.y)
+
+
+def nearest_player(x: float, y: float, players: "list[TacticalObject]") -> "TacticalObject | None":
+    """The player nearest to (x, y) by straight-line pitch distance (0-100 space), or ``None``
+    if ``players`` is empty. Pure - used to pick which player a ball sticks to."""
+    best: "TacticalObject | None" = None
+    best_d: float | None = None
+    for p in players:
+        d = (p.x - x) ** 2 + (p.y - y) ** 2          # squared distance is fine for comparison
+        if best_d is None or d < best_d:
+            best, best_d = p, d
+    return best
+
+
 @dataclass
 class PitchSpec:
     kind: str = "full"                 # full|half|thirds|blank|futsal|custom

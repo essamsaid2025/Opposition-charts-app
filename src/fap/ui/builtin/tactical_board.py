@@ -46,7 +46,7 @@ _PROP_VALUE_KEYS: tuple[str, ...] = (
     "tb_x", "tb_y", "tb_rot", "tb_sca", "tb_pnum", "tb_pteam", "tb_pname", "tb_pcap", "tb_pgk",
     "tb_ptext", "tb_psize", "tb_px2", "tb_py2", "tb_pcurv", "tb_pw", "tb_ph", "tb_pop",
     "tb_pcolor", "tb_zcolor",
-    "tb_pshape", "tb_pfilled", "tb_psw", "tb_psstyle", "tb_zstroke",
+    "tb_pshape", "tb_pfilled", "tb_psw", "tb_psstyle", "tb_zstroke", "tb_battach",
 )
 
 
@@ -221,7 +221,9 @@ def _canvas_objects(board: Board) -> list[dict]:
     fr = board.frame(_frame_index())
     meta = []
     for o in fr.objects:
-        m = {"id": o.id, "type": o.type, "x": o.x, "y": o.y, "locked": o.locked}
+        # rotation (every type) lets the canvas place a rotate handle + orient resize handles
+        m = {"id": o.id, "type": o.type, "x": o.x, "y": o.y, "locked": o.locked,
+             "rotation": float(o.rotation)}
         if o.type in ("arrow", "curved_arrow", "dashed_arrow", "line"):
             m["x2"] = float(o.props.get("x2", o.x + 12))
             m["y2"] = float(o.props.get("y2", o.y))
@@ -229,8 +231,27 @@ def _canvas_objects(board: Board) -> list[dict]:
             # lets the canvas place the draggable curve handle exactly on the current
             # control point (same default as render.py's _vector)
             m["curvature"] = float(o.props.get("curvature", 0.3))
+        if o.type in ("zone", "highlight", "shape"):
+            # bounding-box size (same 0-100 units as x/y) so the canvas can place corner
+            # resize handles without guessing (matches render.py's _zone box)
+            m["w"] = float(o.props.get("w", 20))
+            m["h"] = float(o.props.get("h", 16))
         meta.append(m)
     return meta
+
+
+def _detach_ball_on_manual_move(board: Board, cmd: dict) -> None:
+    """A sticky ball dragged directly on the canvas should FREE itself (the user wants manual
+    control) — otherwise ``resolve_position`` would keep snapping it back to the player on the
+    next render. So when an ``update_object`` sets a sticky ball's x/y, fold ``attached_to=""``
+    into the SAME command (Python-only, no new op, no JS change). Silent no-op otherwise."""
+    if cmd.get("op") != "update_object" or (cmd.get("x") is None and cmd.get("y") is None):
+        return
+    obj = board.frame(int(cmd.get("frame", 0))).object(str(cmd.get("id", "")))
+    if obj is not None and obj.type == "ball" and str((obj.props or {}).get("attached_to") or ""):
+        props = dict(cmd.get("props") or {})
+        props.setdefault("attached_to", "")
+        cmd["props"] = props
 
 
 def _commit_canvas(result: dict, can_edit: bool) -> bool:
@@ -259,6 +280,7 @@ def _commit_canvas(result: dict, can_edit: bool) -> bool:
         last_id = None
         for cmd in commands:
             cmd.setdefault("frame", f)
+            _detach_ball_on_manual_move(board, cmd)   # dragging a sticky ball frees it (stays put)
             res = _apply_command(board, cmd)
             if cmd.get("op") in ("add_object", "duplicate_object") and res.get("id"):
                 last_id = res["id"]
@@ -591,7 +613,7 @@ class TacticalBoardPage(Page):
         if can_edit and (rot != int(obj.rotation) or sca != int(obj.scale * 100)):
             upd(rotation=float(rot), scale=sca / 100.0)
 
-        self._type_props(obj, upd, can_edit, colors)
+        self._type_props(obj, upd, can_edit, colors, fr)
 
         # Position is driven by dragging on the canvas; the X/Y sliders are an internal
         # fallback only (kept collapsed) for precise nudges or when the canvas is off.
@@ -608,9 +630,34 @@ class TacticalBoardPage(Page):
         b2.button("Delete", key="tb_p_del", use_container_width=True, disabled=not can_edit,
                   on_click=lambda: _apply({"op": "delete_object", "frame": f, "id": sel}))
 
-    def _type_props(self, obj, upd, can_edit, colors) -> None:
+    def _type_props(self, obj, upd, can_edit, colors, fr) -> None:
         p = obj.props
-        if obj.type == "player":
+        if obj.type == "ball":
+            from fap.tactical.models import nearest_player, resolve_position
+            players = [o for o in fr.objects if o.type == "player"]
+            attached = str(p.get("attached_to") or "")
+            if not players:
+                st.checkbox("Sticky on Player", value=bool(attached), key="tb_battach",
+                            disabled=True)
+                st.caption("No players in this frame to attach to.")
+            else:
+                sticky = st.checkbox("Sticky on Player", value=bool(attached), key="tb_battach",
+                                     disabled=not can_edit,
+                                     help="Attach the ball to the nearest player so it moves with "
+                                          "them (across frames too). Dragging the ball frees it.")
+                if can_edit and sticky != bool(attached):
+                    if sticky:                       # attach to the CURRENT nearest player
+                        near = nearest_player(obj.x, obj.y, players)
+                        if near is not None:
+                            upd(props={"attached_to": near.id})
+                    else:                            # detach: freeze at last on-screen spot first
+                        rx, ry = resolve_position(fr, obj)
+                        upd(x=float(rx), y=float(ry), props={"attached_to": ""})
+                if attached:
+                    ap = fr.object(attached)
+                    st.caption(f"Stuck to {ap.label()}." if ap is not None
+                               else "Attached player was removed — the ball is free.")
+        elif obj.type == "player":
             prev_team = p.get("team", "home")
             c1, c2 = st.columns(2)
             num = c1.number_input("Number", 0, 99, int(p.get("number", 0) or 0), key="tb_pnum",
@@ -679,6 +726,26 @@ class TacticalBoardPage(Page):
             # per-zone BORDER colour override (falls back to the resolved fill colour)
             self._stroke_color_override(obj, upd, can_edit, colors)
 
+    def _swatch_row(self, colors, can_edit, upd, prop_key: str, pkey: str) -> None:
+        """A compact row of quick-pick colour squares — the resolved theme home/away/ball/zone/
+        accent colours plus black & white — that write the SAME ``props[prop_key]`` override the
+        picker below does (via ``upd``). Purely additive convenience; the picker + Reset are
+        untouched. Works for both the fill (``prop_key='color'``) and stroke overrides."""
+        swatches = [("home", colors.get("home")), ("away", colors.get("away")),
+                    ("ball", colors.get("ball")), ("zone", colors.get("zone")),
+                    ("accent", colors.get("accent")), ("black", "#000000"), ("white", "#ffffff")]
+        swatches = [(n, c) for n, c in swatches if c]     # drop any theme colour that's missing
+        cols = st.columns(len(swatches))
+        css = []
+        for col, (name, hexc) in zip(cols, swatches):
+            k = f"{pkey}_sw_{name}"
+            css.append(f".st-key-{k} button{{background:{hexc} !important;color:transparent "
+                       f"!important;min-height:26px;padding:0 !important;"
+                       f"border:1px solid rgba(128,128,128,.55) !important}}")
+            col.button(" ", key=k, help=name.title(), disabled=not can_edit,
+                       on_click=lambda h=hexc, pk=prop_key: upd(props={pk: h}))
+        st.markdown("<style>" + "".join(css) + "</style>", unsafe_allow_html=True)
+
     def _color_override(self, obj, upd, can_edit, colors, *, default_key, pkey,
                         reseed: bool = False) -> None:
         """A per-object colour override layered ON TOP of the theme/team colour system.
@@ -694,6 +761,7 @@ class TacticalBoardPage(Page):
         resolved = override or default_col
         if reseed:
             st.session_state.pop(pkey, None)          # re-seed to the new default next run
+        self._swatch_row(colors, can_edit, upd, "color", pkey)
         ca, cb = st.columns([3, 2])
         picked = ca.color_picker("Colour", value=resolved, key=pkey, disabled=not can_edit)
         reset = cb.button("Reset to theme", key=pkey + "_reset", use_container_width=True,
@@ -715,6 +783,7 @@ class TacticalBoardPage(Page):
             or colors.get("zone") or DEFAULT_COLORS.get("zone", "#888888")
         override = str(obj.props.get("stroke_color") or "").strip()
         resolved = override or fill
+        self._swatch_row(colors, can_edit, upd, "stroke_color", "tb_zstroke")
         ca, cb = st.columns([3, 2])
         picked = ca.color_picker("Border colour", value=resolved, key="tb_zstroke",
                                  disabled=not can_edit)
