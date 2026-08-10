@@ -79,6 +79,14 @@ _DRAW_TOOLS: list[tuple[str, str]] = [
     ("curved_arrow", "Curved arrow"), ("dashed_arrow", "Dashed arrow"), ("line", "Line"),
 ]
 
+# real backing icon for each tool button in the merged rail (all resolve in fap.theme.icons).
+# "select" has no cursor glyph in the set, so it uses the crosshair "target" (the pick/aim tool);
+# the draw tools reuse the same purpose-built icons as their matching library categories.
+_TOOL_ICONS: dict[str, str] = {
+    "select": "target", "zone": "zone-marker", "shape": "square", "arrow": "arrow-straight",
+    "curved_arrow": "arrow-curved", "dashed_arrow": "arrow-dashed", "line": "line-straight",
+}
+
 
 # ---------------------------------------------------------------- session state
 def _state() -> tuple[Board, History]:
@@ -198,7 +206,13 @@ def _resolve_board_colors(shell, board) -> dict[str, str]:
 
 def _canvas_palette(colors: dict[str, str]) -> list[dict]:
     """Flatten the object Library into draggable chips (data only - the drag simply
-    emits an ``add_object`` command at the drop point)."""
+    emits an ``add_object`` command at the drop point).
+
+    RETIRED from the default board wiring: ``_board_view`` now passes ``palette=[]`` so the
+    JS ``renderPalette()`` hides the old always-on drag-chip strip (its ``display:none``
+    fallback). The builder is KEPT (its output is still exercised by the unit tests, and it is
+    the one place that maps a library item to its colour) so re-enabling an opt-in drag palette
+    later is a one-line change; nothing else consumes it today."""
     out: list[dict] = []
     for _title, _ic, items in _LIBRARY:
         for label, otype, extra in items:
@@ -344,8 +358,7 @@ class TacticalBoardPage(Page):
 
         left, center, right = st.columns([2.3, 6.2, 2.6], gap="small")
         with left:
-            self._draw_tool_control(can_edit)
-            self._library(can_edit)
+            self._rail(can_edit)
             self._templates_and_saved(shell, svc, board, can_edit)
         with right:
             self._properties(shell, board, can_edit)
@@ -440,52 +453,51 @@ class TacticalBoardPage(Page):
             st.session_state["_tb_gif_cache"] = cache
         return cache["data"], cache["mime"], cache["fname"]
 
-    # ------------------------------------------------------------ draw tool
-    def _draw_tool_control(self, can_edit) -> None:
-        """A row of STICKY mode-toggle buttons: Select/Move (default) + the draw tools. Picking a
-        tool arms click-drag drawing on empty pitch and STAYS armed across multiple draws until
-        the user picks another tool or presses Escape. A THIRD way to add objects, alongside the
-        Library popovers (click-to-add) and palette chips (drag-to-add), both unchanged. The
-        active tool lives in ``TB_DRAW_TOOL`` (a plain session var; these are st.buttons, not a
-        keyed widget) and the active one is highlighted with ``type="primary"``."""
-        st.markdown('<div class="tb-panel-title">Tools</div>', unsafe_allow_html=True)
-        cur = st.session_state.get(TB_DRAW_TOOL, "select")
-        with st.container(key="tb_tools"):
-            for i in range(0, len(_DRAW_TOOLS), 2):        # 2-wide grid of toggle buttons
-                cols = st.columns(2)
-                for col, (key, label) in zip(cols, _DRAW_TOOLS[i:i + 2]):
-                    col.button(label, key=f"tbtool_{key}", use_container_width=True,
-                               type="primary" if key == cur else "secondary",
-                               disabled=not can_edit, on_click=_set_draw_tool, args=(key,))
-        if can_edit and cur != "select":
-            st.caption("✎ Draw mode — click-drag on empty pitch. Press Esc to exit.")
+    # ------------------------------------------------------------ rail (tools + library)
+    def _rail(self, can_edit) -> None:
+        """ONE compact vertical icon rail — the single surface for adding & drawing objects.
 
-    # ------------------------------------------------------------ library
-    def _library(self, can_edit) -> None:
-        """Compact vertical icon rail: one icon per _LIBRARY category (its own icon_name),
-        each opening a popover of that category's items. The items call the SAME
-        ``on_click=_add`` as before, so click-to-add is unchanged; drag-to-canvas
-        (``_canvas_palette`` -> ``tactical_canvas``) is a separate surface, untouched."""
-        st.markdown('<div class="tb-panel-title">Object Library</div>', unsafe_allow_html=True)
+        Top: the Select/Move pointer + the sticky click-drag DRAW tools (Zone, Shape, Arrow,
+        Curved/Dashed arrow, Line). Below a divider: the object LIBRARY, one icon per _LIBRARY
+        category, each opening a popover of click-to-add items. This merges what used to be two
+        stacked blocks (the separate ``_draw_tool_control`` grid + the ``_library`` rail), and
+        the old always-on drag-chip palette strip above the pitch is retired (see ``_board_view``
+        passing ``palette=[]``). So there is now exactly ONE place to add pieces: click a category
+        item (adds at centre) or arm a tool and click-drag on the pitch. Read-only keeps the rail
+        browsable with add actions disabled, as before. Active-tool highlight is the same sticky
+        ``type="primary"`` on ``TB_DRAW_TOOL`` as before — only the layout changed, not behaviour."""
         if not can_edit:
             C.render_alert("Read-only: you can view but not edit this board.", "info")
+        cur = st.session_state.get(TB_DRAW_TOOL, "select")
         with st.container(key="tb_rail"):
+            # -- TOOLS: Select/Move + sticky draw tools, icon-only, one column ----------
+            for key, label in _DRAW_TOOLS:
+                st.button("", key=f"tbtool_{key}", help=label, use_container_width=True,
+                          type="primary" if key == cur else "secondary",
+                          disabled=not can_edit, on_click=_set_draw_tool, args=(key,))
+            st.markdown('<div class="tb-rail-sep"></div>', unsafe_allow_html=True)
+            # -- LIBRARY: one popover trigger per category (click-to-add items) ---------
             for title, ic, items in _LIBRARY:
-                # divider between the OBJECTS group and the drawing TOOLS group, matching the
-                # reference rail (Players/Ball/Cones/Goals/Mannequins · Arrows/Lines/Zones/Text/Shapes)
+                # sub-divider between placement objects and drawing objects (reference grouping)
                 if title == "Arrows":
                     st.markdown('<div class="tb-rail-sep"></div>', unsafe_allow_html=True)
                 with st.container(key=f"tbrail_{title}"):
-                    # trigger is NOT disabled read-only (items stay browsable, exactly like the
-                    # old expanders); only the add buttons inside are gated, as before.
+                    # trigger is NOT disabled read-only (items stay browsable, like the old
+                    # expanders); only the add buttons inside are gated, as before.
                     with st.popover("", help=title, use_container_width=True):
                         for label, otype, extra in items:
-                            st.button(label, key=f"tblib_{title}_{label}", use_container_width=True,
-                                      disabled=not can_edit, on_click=_add, args=(otype, extra))
-        # wire each rail trigger's real icon (its _LIBRARY icon_name) via the same mask-image
-        # mechanism the toolbar uses; the base ::before box comes from _inject_css's tb_rail rule.
-        st.markdown(icon_css([(f"tbrail_{title}", ic) for title, ic, _ in _LIBRARY]),
-                    unsafe_allow_html=True)
+                            st.button(label, key=f"tblib_{title}_{label}",
+                                      use_container_width=True, disabled=not can_edit,
+                                      on_click=_add, args=(otype, extra))
+        # wire every glyph in ONE icon_css call: the tool buttons (each ``st-key-tbtool_*``) and
+        # each category popover trigger (``st-key-tbrail_*``). The ::before boxes that paint them
+        # come from _inject_css's tb_rail rules (tool box re-enabled there; trigger box as before).
+        st.markdown(icon_css(
+            [(f"tbtool_{k}", _TOOL_ICONS[k]) for k, _ in _DRAW_TOOLS]
+            + [(f"tbrail_{title}", ic) for title, ic, _ in _LIBRARY]),
+            unsafe_allow_html=True)
+        if can_edit and cur != "select":
+            st.caption("Draw mode — click-drag on empty pitch. Press Esc to exit.")
 
     def _templates_and_saved(self, shell, svc, board, can_edit) -> None:
         with st.expander("Templates", expanded=False):
@@ -555,9 +567,12 @@ class TacticalBoardPage(Page):
         # render (post-commit SVG settles a dropped piece; the new draw_tool reaches the JS).
         nonce = (f"{board.updated_at}|{_frame_index()}|{sel}|{int(grid)}|{int(bool(snap))}"
                  f"|{st.session_state.get(TB_CANVAS_TS)}|{tool}")
+        # palette=[] retires the old always-on drag-chip strip (option a): adding pieces now
+        # lives solely in the left rail (click a category item, or arm a draw tool). The JS
+        # renderPalette() hides the strip when the palette is empty — no JS change needed.
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
-            palette=_canvas_palette(colors) if can_edit else [], selected_id=sel,
+            palette=[], selected_id=sel,
             snap=snap, editable=can_edit, nonce=nonce, draw_tool=draw_tool)
         if not rendered:
             # true fallback: the component could not mount, so draw the static SVG. The
@@ -571,8 +586,9 @@ class TacticalBoardPage(Page):
             # where the value wasn't in session_state yet — a graceful catch-up.
             if result is not None and _commit_canvas(result, can_edit):
                 st.rerun()
-            st.caption("Drag pieces to move · drag a chip onto the pitch to add · click to "
-                       "select · Delete removes. Fine-tune anything in Properties.")
+            st.caption("Drag pieces to move · click to select · Delete removes. Add pieces "
+                       "from the left rail (click a category, or arm a draw tool to click-drag "
+                       "shapes). Fine-tune anything in Properties.")
 
     # ------------------------------------------------------------ properties
     def _properties(self, shell, board, can_edit) -> None:
@@ -875,7 +891,24 @@ class TacticalBoardPage(Page):
   border: 1px solid var(--fap-border); }
 .st-key-tb_rail [data-testid="stPopoverButton"]:hover {
   color: var(--fap-primary); border-color: var(--fap-primary); }
-.tb-rail-sep { height: 1px; background: var(--fap-border); margin: 8px 4px; }
+/* the Select/Move + draw TOOL buttons at the TOP of the same rail: re-enable the masked-icon
+   ::before box (the blanket rail rule above hides every rail button's box), and give the
+   SECONDARY (inactive) variant the same surface look as the category triggers. The ACTIVE tool
+   is type="primary", so we deliberately DON'T set its background here — Streamlit's primary fill
+   is the active highlight, exactly as before the merge. */
+.st-key-tb_rail [class*="st-key-tbtool_"] button::before {
+  content: ""; display: inline-block; width: 20px; height: 20px; background-color: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain; }
+.st-key-tb_rail [class*="st-key-tbtool_"] button { min-height: 40px; }
+.st-key-tb_rail [class*="st-key-tbtool_"] [data-testid="stBaseButton-secondary"] {
+  color: var(--fap-text); background: var(--fap-surface); border: 1px solid var(--fap-border); }
+.st-key-tb_rail [class*="st-key-tbtool_"] [data-testid="stBaseButton-secondary"]:hover {
+  color: var(--fap-primary); border-color: var(--fap-primary); }
+/* tighten the vertical gaps so tools + library read as ONE cohesive panel, not stacked blocks */
+.st-key-tb_rail [data-testid="stVerticalBlock"] { gap: .35rem; }
+.tb-rail-sep { height: 1px; background: var(--fap-border); margin: 7px 4px; }
 .tb-board { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 14px; padding: 10px; box-shadow: var(--fap-shadow-sm); }
 .tb-timeline-wrap { background: var(--fap-surface); border: 1px solid var(--fap-border);

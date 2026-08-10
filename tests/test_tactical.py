@@ -388,8 +388,11 @@ def test_library_items_all_reachable_and_addable():
 
 
 def test_canvas_palette_output_unchanged():
-    """The drag-to-canvas chips must be byte-for-byte identical after the rail refactor —
-    ``_canvas_palette`` still derives the SAME {label,type,props,color} shape from _LIBRARY."""
+    """``_canvas_palette`` is retired from the canvas wiring (the board now passes ``palette=[]``,
+    see ``test_drag_chip_palette_retired_from_canvas_wiring``), but the BUILDER is kept and its
+    output must stay byte-for-byte the SAME {label,type,props,color} shape derived from _LIBRARY —
+    so re-enabling an opt-in drag palette later is a one-line change. This tests the function's
+    output directly, not what gets passed to ``tactical_canvas``."""
     from fap.ui.builtin.tactical_board import _canvas_palette
     colors = {"home": "#111111", "away": "#222222", "ball": "#333333",
               "cone": "#444444", "zone": "#555555", "accent": "#666666"}
@@ -412,6 +415,31 @@ def test_canvas_palette_output_unchanged():
         {"label": "Text", "type": "text", "props": {"text": "Text"}, "color": "#666666"},
         {"label": "Shape", "type": "shape", "props": {}, "color": "#555555"},
     ]
+
+
+def test_drag_chip_palette_retired_from_canvas_wiring():
+    """Consolidation to ONE surface (option a): the old always-on drag-chip palette strip is
+    retired by passing ``palette=[]`` to ``tactical_canvas`` (the JS ``renderPalette`` then hides
+    it via its existing ``display:none`` fallback). ``_board_view`` must no longer wire
+    ``_canvas_palette`` into the canvas — adding pieces lives solely in the left rail now."""
+    import inspect
+    from fap.ui.builtin.tactical_board import TacticalBoardPage
+    src = inspect.getsource(TacticalBoardPage._board_view)
+    assert "palette=[]" in src.replace(" ", "")          # the strip is switched off by default
+    assert "_canvas_palette(" not in src                 # ...and no longer built for the canvas
+
+
+def test_rail_merges_tools_and_library_into_one_surface():
+    """The Select/Move + draw TOOLS and the object LIBRARY are ONE merged rail now, not two
+    stacked blocks. ``_rail`` exists; the old separate ``_draw_tool_control`` is gone; and every
+    tool (Select + each draw tool) has a real backing icon so the rail can render icon-only."""
+    from fap.theme.icons import has_icon
+    from fap.ui.builtin.tactical_board import TacticalBoardPage, _DRAW_TOOLS, _TOOL_ICONS
+    assert hasattr(TacticalBoardPage, "_rail")
+    assert not hasattr(TacticalBoardPage, "_draw_tool_control")     # merged, not a 2nd surface
+    assert set(_TOOL_ICONS) == {k for k, _ in _DRAW_TOOLS}          # every tool has an icon
+    for k, _ in _DRAW_TOOLS:
+        assert has_icon(_TOOL_ICONS[k]), f"tool {k!r} -> missing icon {_TOOL_ICONS[k]!r}"
 
 
 def test_canvas_wrapper_never_raises():
