@@ -34,7 +34,7 @@ TB_GRID = "_tb_grid"
 TB_SNAP = "_tb_snap"
 TB_CANVAS_TS = "_tb_canvas_ts"    # last processed canvas action (dedups Streamlit reruns)
 TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are currently synced to
-TB_DRAW_TOOL = "_tb_draw_tool"    # armed click-drag draw tool ("none" = off); single-shot
+TB_DRAW_TOOL = "_tb_draw_tool"    # armed click-drag draw tool ("select" = off); persistent/sticky
 
 # Every Properties widget that follows the "read the widget, write it back to the model if
 # it differs" pattern. Those widgets keep their OWN value in session_state, so after the
@@ -71,10 +71,11 @@ _LIBRARY = [
     ("Shapes", "shapes", [("Shape", "shape", {})]),
 ]
 
-# click-drag "draw" tools (key, label). "none" = off (default); single-shot (resets after
-# one draw). Vectors/zones/shapes only — the drawn geometry maps onto the SAME add_object.
+# click-drag "draw" tools (key, label). "select" = Select/Move (default, no drawing). The
+# mode is PERSISTENT (sticky): the armed tool stays active across multiple draws until the user
+# clicks another tool or presses Escape. Drawn geometry maps onto the SAME add_object command.
 _DRAW_TOOLS: list[tuple[str, str]] = [
-    ("none", "None"), ("zone", "Zone"), ("shape", "Shape"), ("arrow", "Arrow"),
+    ("select", "Select / Move"), ("zone", "Zone"), ("shape", "Shape"), ("arrow", "Arrow"),
     ("curved_arrow", "Curved arrow"), ("dashed_arrow", "Dashed arrow"), ("line", "Line"),
 ]
 
@@ -88,7 +89,7 @@ def _state() -> tuple[Board, History]:
         st.session_state[TB_SEL] = None
     st.session_state.setdefault(TB_GRID, False)
     st.session_state.setdefault(TB_SNAP, False)
-    st.session_state.setdefault(TB_DRAW_TOOL, "none")
+    st.session_state.setdefault(TB_DRAW_TOOL, "select")
     return st.session_state[TB_BOARD], st.session_state[TB_HIST]
 
 
@@ -147,6 +148,12 @@ def _load(board: Board) -> None:
 
 def _toggle(flag: str) -> None:
     st.session_state[flag] = not st.session_state.get(flag, False)
+
+
+def _set_draw_tool(tool: str) -> None:
+    """Arm a draw tool (sticky). ``TB_DRAW_TOOL`` is a plain session var, so it can be set
+    from a button callback here or reset from the Escape handler in ``_commit_canvas``."""
+    st.session_state[TB_DRAW_TOOL] = tool
 
 
 def _set_frame(i: int) -> None:
@@ -239,6 +246,12 @@ def _commit_canvas(result: dict, can_edit: bool) -> bool:
     sel = result.get("select", "__keep__")
 
     changed = False
+    # Escape in draw mode: the canvas sent a UI-only ``draw_reset`` (not a board command) —
+    # return to Select/Move. Safe from either caller: TB_DRAW_TOOL is a plain session var
+    # (the mode buttons are st.buttons, not a keyed widget), and this runs once per ts.
+    if result.get("draw_reset"):
+        st.session_state[TB_DRAW_TOOL] = "select"
+        changed = True
     if commands and can_edit:
         board, hist = st.session_state[TB_BOARD], st.session_state[TB_HIST]
         hist.record(board)                       # one undo step for the whole interaction
@@ -275,16 +288,11 @@ def _consume_canvas_intent(can_edit: bool) -> None:
     raw = st.session_state.get("tb_canvas")
     result = parse_result(raw) if raw is not None else None
     if result is not None:
-        armed = st.session_state.get(TB_DRAW_TOOL, "none") != "none"
-        changed = _commit_canvas(result, can_edit)
-        # SINGLE-SHOT: after a canvas-committed add_object while a draw tool was armed, disarm
-        # the tool so the mode never silently persists. Done HERE (top of the page run, before
-        # the selector widget is instantiated) so resetting its widget key is always safe —
-        # never in the catch-up _commit_canvas() inside _board_view, which runs AFTER the widget.
-        # Only canvas adds reach this path; popover-click adds go through _apply (a separate
-        # callback) and correctly leave the armed tool untouched.
-        if changed and armed and any(c.get("op") == "add_object" for c in result.get("commands", [])):
-            st.session_state[TB_DRAW_TOOL] = "none"
+        # PERSISTENT draw mode: a completed draw does NOT disarm the tool - it stays sticky so
+        # the user can draw several of the same object in a row. The tool only changes when the
+        # user clicks a different mode button or presses Escape (which emits ``draw_reset`` ->
+        # handled in _commit_canvas). So there is nothing to reset here.
+        _commit_canvas(result, can_edit)
 
 
 @page_registry.register
@@ -412,20 +420,23 @@ class TacticalBoardPage(Page):
 
     # ------------------------------------------------------------ draw tool
     def _draw_tool_control(self, can_edit) -> None:
-        """Arm a click-drag 'draw' tool (single-shot). A THIRD way to add objects alongside
-        click-to-add (Library popovers) and drag-from-palette (chips), both unchanged. The
-        widget key IS ``TB_DRAW_TOOL`` so ``_consume_canvas_intent`` can disarm it after one
-        draw (safe because that runs before this widget is instantiated)."""
-        st.markdown('<div class="tb-panel-title">Draw on pitch</div>', unsafe_allow_html=True)
-        keys = [k for k, _ in _DRAW_TOOLS]
-        labels = dict(_DRAW_TOOLS)
-        st.selectbox("Draw tool", keys, format_func=lambda k: labels[k], key=TB_DRAW_TOOL,
-                     disabled=not can_edit, label_visibility="collapsed",
-                     help="Pick a shape/arrow, then click-drag on empty pitch to draw it at "
-                          "that size/direction. Resets to None after one draw. Clicking without "
-                          "dragging places a default-sized object.")
-        if can_edit and st.session_state.get(TB_DRAW_TOOL, "none") != "none":
-            st.caption("✎ Draw mode on — click-drag on empty pitch.")
+        """A row of STICKY mode-toggle buttons: Select/Move (default) + the draw tools. Picking a
+        tool arms click-drag drawing on empty pitch and STAYS armed across multiple draws until
+        the user picks another tool or presses Escape. A THIRD way to add objects, alongside the
+        Library popovers (click-to-add) and palette chips (drag-to-add), both unchanged. The
+        active tool lives in ``TB_DRAW_TOOL`` (a plain session var; these are st.buttons, not a
+        keyed widget) and the active one is highlighted with ``type="primary"``."""
+        st.markdown('<div class="tb-panel-title">Tools</div>', unsafe_allow_html=True)
+        cur = st.session_state.get(TB_DRAW_TOOL, "select")
+        with st.container(key="tb_tools"):
+            for i in range(0, len(_DRAW_TOOLS), 2):        # 2-wide grid of toggle buttons
+                cols = st.columns(2)
+                for col, (key, label) in zip(cols, _DRAW_TOOLS[i:i + 2]):
+                    col.button(label, key=f"tbtool_{key}", use_container_width=True,
+                               type="primary" if key == cur else "secondary",
+                               disabled=not can_edit, on_click=_set_draw_tool, args=(key,))
+        if can_edit and cur != "select":
+            st.caption("✎ Draw mode — click-drag on empty pitch. Press Esc to exit.")
 
     # ------------------------------------------------------------ library
     def _library(self, can_edit) -> None:
@@ -514,9 +525,9 @@ class TacticalBoardPage(Page):
         # It reuses the Python SVG above and only reports intent (JSON commands); if it
         # cannot initialise it returns None and we fall back to the static SVG + sliders.
         snap = 5.0 if st.session_state.get(TB_SNAP, False) else 0.0
-        # the armed draw tool (single-shot). None (default) => unchanged canvas behaviour.
-        tool = st.session_state.get(TB_DRAW_TOOL, "none")
-        draw_tool = {"type": tool, "props": default_props(tool)} if (can_edit and tool != "none") else None
+        # the armed draw tool (persistent). "select" (default) => None => unchanged behaviour.
+        tool = st.session_state.get(TB_DRAW_TOOL, "select")
+        draw_tool = {"type": tool, "props": default_props(tool)} if (can_edit and tool != "select") else None
         # include the last processed action stamp AND the draw tool so the nonce ALWAYS changes
         # after a commit or when the tool is armed/disarmed — guarantees the canvas gets a fresh
         # render (post-commit SVG settles a dropped piece; the new draw_tool reaches the JS).

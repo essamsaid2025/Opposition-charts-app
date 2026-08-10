@@ -443,15 +443,29 @@ def test_every_library_icon_has_a_real_path():
 
 
 # ---------------------------------------------------------- click-drag draw tool
-def test_draw_tool_defaults_to_none_and_covers_real_types():
+def test_draw_tool_defaults_to_select_and_covers_real_types():
     from fap.ui.builtin.tactical_board import _DRAW_TOOLS
-    assert _DRAW_TOOLS[0] == ("none", "None")               # default = off
+    assert _DRAW_TOOLS[0] == ("select", "Select / Move")    # persistent default = Select/Move (off)
+    assert [k for k, _ in _DRAW_TOOLS[1:]] == [
+        "zone", "shape", "arrow", "curved_arrow", "dashed_arrow", "line"]
     for key, _label in _DRAW_TOOLS[1:]:                     # each arms a real, addable type
-        props = default_props(key)
-        assert isinstance(props, dict)
+        assert isinstance(default_props(key), dict)
     # the props the JS falls back to for a near-zero drag exist for each type
     assert {"w", "h"} <= set(default_props("zone")) and {"w", "h"} <= set(default_props("shape"))
     assert {"x2", "y2", "curvature"} <= set(default_props("curved_arrow"))
+
+
+def test_escape_draw_reset_intent_round_trips_but_is_not_a_command():
+    """Escape emits a UI-only ``draw_reset`` (like ``select``) - it must survive parse_result
+    WITHOUT being turned into a board command, so the tool can be disarmed without mutating
+    the board."""
+    from fap.ui.builtin.tactical_canvas import parse_result
+    r = parse_result({"ts": 9, "select": "__keep__", "commands": [], "draw_reset": True})
+    assert r is not None and r.get("draw_reset") is True
+    assert r["commands"] == [] and r["select"] == "__keep__"   # no board command produced
+    # a plain empty payload is still nothing-actionable (draw_reset only when truthy)
+    assert parse_result({"ts": 9, "select": "__keep__", "commands": []}) is None
+    assert parse_result({"ts": 9, "commands": [], "draw_reset": False}) is None
 
 
 def test_drawn_zone_command_round_trips_through_trust_boundary():

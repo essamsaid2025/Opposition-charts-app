@@ -66,10 +66,12 @@ def _clean_command(cmd: Any) -> dict[str, Any] | None:
 
 
 def parse_result(value: Any) -> dict[str, Any] | None:
-    """Normalise the raw component value into ``{"ts", "commands", "select"}`` or
-    ``None``. ``ts`` is the browser's monotonic action counter used by the caller to
-    ignore stale values Streamlit re-delivers on unrelated reruns. Only allow-listed,
-    well-formed commands survive; everything else is dropped. Never raises."""
+    """Normalise the raw component value into ``{"ts", "commands", "select"[, "draw_reset"]}``
+    or ``None``. ``ts`` is the browser's monotonic action counter used by the caller to ignore
+    stale values Streamlit re-delivers on unrelated reruns. Only allow-listed, well-formed
+    commands survive; everything else is dropped. ``draw_reset`` is a UI-only intent (like
+    ``select`` - NOT a board command / not an ``ops.py`` op) the canvas sets when the user
+    presses Escape to leave draw mode; the caller resets the armed tool. Never raises."""
     if not isinstance(value, dict):
         return None
     ts = value.get("ts")
@@ -83,9 +85,13 @@ def parse_result(value: Any) -> dict[str, Any] | None:
     sel = value.get("select", "__keep__")
     if sel is not None and sel != "__keep__" and not isinstance(sel, str):
         sel = "__keep__"
-    if not commands and sel == "__keep__":
+    draw_reset = value.get("draw_reset") is True
+    if not commands and sel == "__keep__" and not draw_reset:
         return None                       # nothing actionable
-    return {"ts": float(ts), "commands": commands, "select": sel}
+    out: dict[str, Any] = {"ts": float(ts), "commands": commands, "select": sel}
+    if draw_reset:
+        out["draw_reset"] = True
+    return out
 
 
 def tactical_canvas(svg: str, objects: list[dict[str, Any]], *, key: str,

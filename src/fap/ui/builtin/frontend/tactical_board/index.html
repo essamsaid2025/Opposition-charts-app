@@ -438,12 +438,18 @@
     setHeight();
   }
 
-  // Delete / Backspace removes the current selection (edit only)
+  // Delete/Backspace removes the current selection; Escape leaves an armed draw tool (edit only)
   window.addEventListener("keydown", function (e) {
     if ((e.key === "Delete" || e.key === "Backspace") && cfg.editable && cfg.selectedId) {
       e.preventDefault();
       var id = cfg.selectedId; cfg.selectedId = null;
       emit({ ts: nextTs(), select: null, commands: [{ op: "delete_object", id: id }] });
+    } else if (e.key === "Escape" && cfg.editable && cfg.drawTool) {
+      // exit persistent draw mode. Disarm locally for instant effect, and report a UI-only
+      // draw_reset intent (NOT a board command) so Python resets the tool to Select/Move.
+      e.preventDefault();
+      cfg.drawTool = null;
+      emit({ ts: nextTs(), select: "__keep__", commands: [], draw_reset: true });
     }
   });
 
