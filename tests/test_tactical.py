@@ -172,6 +172,32 @@ def test_canvas_commands_round_trip_through_model():
     assert b.frames[0].object(oid) is None
 
 
+def test_rotate_handle_rotation_survives_the_whitelist():
+    """Regression: the on-canvas rotate handle emits {op:'update_object', id, rotation: deg}, but
+    the ``_clean_command`` whitelist used to copy only id/type/x/y/props — silently dropping
+    ``rotation`` so the angle never reached the model (the real "snap-back"). Pin that the cleaned
+    command keeps ``rotation`` as a float, exactly what the handle sends."""
+    from fap.ui.builtin.tactical_canvas import parse_result
+    r = parse_result({"ts": 1, "commands": [{"op": "update_object", "id": "x", "rotation": 90}]})
+    assert r is not None and r["commands"] == [{"op": "update_object", "id": "x", "rotation": 90.0}]
+
+
+def test_rotate_handle_full_browser_to_model_path_applies_the_angle():
+    """The FULL path the browser takes — parse_result (the trust boundary) then apply_command —
+    must now actually rotate the object, not just the model-side half that always worked. This is
+    the end-to-end proof that the whitelist fix closes the loop."""
+    from fap.ui.builtin.tactical_canvas import parse_result
+    b = new_board("t")
+    props = default_props("player"); props.update({"name": "Messi", "number": 10})
+    oid = apply_command(b, {"op": "add_object", "frame": 0, "type": "player",
+                            "x": 50.0, "y": 50.0, "props": props})["id"]
+    assert b.frames[0].object(oid).rotation == 0.0
+    r = parse_result({"ts": 7, "commands": [{"op": "update_object", "id": oid, "rotation": 90}]})
+    apply_command(b, {**r["commands"][0], "frame": 0})
+    assert b.frames[0].object(oid).rotation == 90.0        # angle reached the model via the canvas path
+    assert 'transform="rotate(90.0' in board_svg(b, 0)     # ...and the render reflects it
+
+
 # ---------------------------------------------------------- Phase 15b (curve handle + colour)
 def test_curve_control_point_roundtrips():
     """The JS curve handle derives ``curvature`` from a dragged control point by inverting

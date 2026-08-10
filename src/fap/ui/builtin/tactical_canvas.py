@@ -51,7 +51,13 @@ def _clean_command(cmd: Any) -> dict[str, Any] | None:
         out["id"] = cmd["id"]
     if "type" in cmd and isinstance(cmd["type"], str):
         out["type"] = cmd["type"]
-    for k in ("x", "y"):
+    # object-level numeric fields the canvas may set directly (NOT via props). The rotate
+    # handle emits {op:"update_object", id, rotation: deg} — without ``rotation`` here it was
+    # silently dropped and the angle never reached ops.py (the "snap-back" bug). ``scale`` is
+    # deliberately NOT included: no canvas interaction emits it (the resize handle sends w/h in
+    # props, not the object-level scale field), and this whitelist is a trust boundary we keep
+    # as tight as what's actually used. Add it here only if/when a scale handle emits it.
+    for k in ("x", "y", "rotation"):
         if isinstance(cmd.get(k), (int, float)):
             out[k] = float(cmd[k])
     props = cmd.get("props")
