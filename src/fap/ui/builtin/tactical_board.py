@@ -56,19 +56,19 @@ def _resync_properties() -> None:
         st.session_state.pop(k, None)
 
 _LIBRARY = [
-    ("Players", "players", [("Home player", "player", {"team": "home"}),
-                            ("Away player", "player", {"team": "away"}),
-                            ("Goalkeeper", "player", {"team": "home", "goalkeeper": True})]),
+    ("Players", "jersey", [("Home player", "player", {"team": "home"}),
+                           ("Away player", "player", {"team": "away"}),
+                           ("Goalkeeper", "player", {"team": "home", "goalkeeper": True})]),
     ("Balls", "ball", [("Ball", "ball", {})]),
     ("Cones", "cone", [("Cone", "cone", {})]),
     ("Goals", "goal", [("Goal", "goal", {})]),
     ("Mannequins", "mannequin", [("Mannequin", "mannequin", {})]),
-    ("Arrows", "arrow-right", [("Arrow", "arrow", {}), ("Curved arrow", "curved_arrow", {}),
-                               ("Dashed arrow", "dashed_arrow", {})]),
+    ("Arrows", "arrow-straight", [("Arrow", "arrow", {}), ("Curved arrow", "curved_arrow", {}),
+                                  ("Dashed arrow", "dashed_arrow", {})]),
     ("Lines", "line-straight", [("Line", "line", {})]),
     ("Zones", "zone-marker", [("Zone", "zone", {}), ("Highlight", "highlight", {"shape": "ellipse"})]),
-    ("Text", "edit", [("Text", "text", {"text": "Text"})]),
-    ("Shapes", "shapes", [("Shape", "shape", {})]),
+    ("Text", "text", [("Text", "text", {"text": "Text"})]),
+    ("Shapes", "square", [("Shape", "shape", {})]),
 ]
 
 # click-drag "draw" tools (key, label). "select" = Select/Move (default, no drawing). The

@@ -428,7 +428,8 @@ def test_canvas_wrapper_never_raises():
 def test_new_rail_icons_resolve():
     from fap.theme.icons import has_icon, icon
     for name in ("ball", "cone", "goal", "mannequin", "line-straight", "arrow-curved",
-                 "arrow-dashed", "zone-marker", "shapes"):
+                 "arrow-dashed", "zone-marker", "shapes",
+                 "arrow-straight", "circle", "square", "text"):   # reference-order additions
         assert has_icon(name), name
         svg = icon(name)
         assert svg.startswith("<svg") and svg.rstrip().endswith("</svg>") and len(svg) > 40
