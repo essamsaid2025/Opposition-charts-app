@@ -90,7 +90,11 @@ _PATHS: dict[str, str] = {
     "shapes": '<circle cx="7" cy="8" r="3.4"/><path d="M15.5 4l4 7h-8z"/><rect x="12" y="13" width="8" height="8" rx="1.5"/>',
     "arrow-straight": '<path d="M4 20L20 4"/><path d="M12 4h8v8"/>',
     "circle": '<circle cx="12" cy="12" r="8.5"/>',
-    "square": '<rect x="4.5" y="4.5" width="15" height="15" rx="2"/>',
+    # subtle fill (like zone-marker) so this reads clearly when rendered as a small CSS
+    # mask-image in the tactical rail — a pure 2px outline nearly vanishes at ~20px. Used only
+    # in the Tactical Board rail (Shapes category + shape tool), so the light fill is consistent.
+    "square": '<rect x="4.5" y="4.5" width="15" height="15" rx="2" '
+              'fill="currentColor" fill-opacity="0.18"/>',
     "text": '<path d="M5 5h14"/><path d="M12 5v14"/><path d="M9 19h6"/>',
 }
 

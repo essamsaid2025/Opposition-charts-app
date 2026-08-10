@@ -316,6 +316,43 @@ def test_zone_shape_no_new_props_render_identical_to_before():
             export_render.board_image(b_new, 0, fmt="png")
 
 
+def test_player_rotation_is_visible_and_moves_the_facing_indicator():
+    """Rotating a player must produce a VISIBLY different render — the whole regression report was
+    "rotation looks like it does nothing", which is really that a plain player (symmetric circle +
+    centred number) barely changes. The added facing wedge lives inside the rotated <g>, so a
+    rotated player's SVG differs from an unrotated one, proving the indicator swings with rotation.
+    Also asserts the wedge polygon is actually present in the player glyph."""
+    p0 = TacticalObject(id="p", type="player", x=50.0, y=50.0, rotation=0.0,
+                        props=default_props("player"))
+    p90 = TacticalObject(id="p", type="player", x=50.0, y=50.0, rotation=90.0,
+                         props=default_props("player"))
+    _, svg0, el0 = _one_obj_svg(p0)
+    _, svg90, _ = _one_obj_svg(p90)
+    assert "<polygon" in el0                              # the facing wedge is drawn on the glyph
+    assert svg0 != svg90                                 # rotation genuinely changes the render
+    assert 'transform="rotate(90.0' in svg90             # ...via the group transform
+
+
+def test_rotated_player_exports_without_raising():
+    """``board_image`` must not raise for a rotated player, and the export must render the facing
+    wedge rotated (export doesn't group-rotate, so the wedge vertices are rotated in-place) — so a
+    rotated player exports to DIFFERENT bytes than an unrotated one (rotation is now visible in
+    PNG too, not silently dropped)."""
+    from fap.tactical import export_render
+    if not export_render.available():
+        return
+    b0 = new_board("t", pitch_kind="blank")
+    b0.frames[0].objects = [TacticalObject(id="p", type="player", x=50.0, y=50.0, rotation=0.0,
+                                           props={"number": 7, "team": "home"})]
+    b90 = new_board("t", pitch_kind="blank")
+    b90.frames[0].objects = [TacticalObject(id="p", type="player", x=50.0, y=50.0, rotation=90.0,
+                                            props={"number": 7, "team": "home"})]
+    png0 = export_render.board_image(b0, 0, fmt="png")
+    png90 = export_render.board_image(b90, 0, fmt="png")
+    assert png0[:8] == b"\x89PNG\r\n\x1a\n" and png90[:8] == b"\x89PNG\r\n\x1a\n"
+    assert png0 != png90                                 # the facing wedge visibly rotates in export
+
+
 def test_zone_unfilled_has_no_fill_and_exports():
     from fap.tactical import export_render
     o = TacticalObject(id="u", type="zone", x=40.0, y=30.0,

@@ -117,7 +117,16 @@ def _player(o: TacticalObject, colors: dict[str, str]) -> str:
     name_t = (f'<text x="{x}" y="{y+r+15}" text-anchor="middle" font-size="13" '
               f'fill="{_c(colors,"text")}" font-family="Inter,Arial">{_esc(name)}</text>'
               if name else "")
-    return (f'{ring}<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" '
+    # facing-direction indicator: a small wedge on the top edge pointing "up" (0deg). It is
+    # drawn FIRST so the circle overdraws its base, leaving a clean nub poking out the top; and
+    # it lives inside the object's <g>, which _object_svg rotates by o.rotation — so it always
+    # points where the player faces and agrees with the rotate handle (which also uses 0deg = up).
+    # This makes rotation VISIBLE for a plain player (a symmetric circle + centred number alone
+    # barely changes when rotated). Additive: a player at rotation 0 just gains this small nub.
+    wr = r * 0.34
+    wedge = (f'<polygon points="{x},{y-r-r*0.48} {x-wr},{y-r*0.62} {x+wr},{y-r*0.62}" '
+             f'fill="{_c(colors,"line")}"/>')
+    return (f'{wedge}{ring}<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" '
             f'stroke="{_c(colors,"line")}" stroke-width="2"/>{num_t}{cap}{name_t}')
 
 

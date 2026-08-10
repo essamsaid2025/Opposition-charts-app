@@ -879,7 +879,7 @@ class TacticalBoardPage(Page):
    on the trigger — items keep their plain text labels. */
 .st-key-tb_rail button::before { display: none; }
 .st-key-tb_rail [data-testid="stPopoverButton"]::before {
-  content: ""; display: inline-block; width: 20px; height: 20px; background-color: currentColor;
+  content: ""; display: inline-block; width: 22px; height: 22px; background-color: currentColor;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
   -webkit-mask-size: contain; mask-size: contain; }
@@ -897,7 +897,7 @@ class TacticalBoardPage(Page):
    is type="primary", so we deliberately DON'T set its background here — Streamlit's primary fill
    is the active highlight, exactly as before the merge. */
 .st-key-tb_rail [class*="st-key-tbtool_"] button::before {
-  content: ""; display: inline-block; width: 20px; height: 20px; background-color: currentColor;
+  content: ""; display: inline-block; width: 22px; height: 22px; background-color: currentColor;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center;
   -webkit-mask-size: contain; mask-size: contain; }

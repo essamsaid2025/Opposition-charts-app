@@ -99,6 +99,19 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         if p.get("goalkeeper"):
             ax.add_patch(mp.Circle((x, y), r + 3, fill=False, edgecolor=_c(colors, "line"),
                                    linewidth=2, zorder=z))
+        # facing-direction wedge (lockstep with render.py's _player). The SVG rotates the whole
+        # <g>; the export doesn't group-rotate, so rotate the three wedge vertices ourselves about
+        # (x,y) by o.rotation — same clockwise sense (y-down: set_ylim(_H,0)) and same 0deg=up as
+        # the SVG and the rotate handle. Drawn just under the circle (zorder z-0.005) so the circle
+        # covers the base and only the nub shows. Additive: at rotation 0 it points straight up.
+        import math
+        th = math.radians(o.rotation or 0.0)
+        ct, st_ = math.cos(th), math.sin(th)
+        wr = r * 0.34
+        local = ((0.0, -r - r * 0.48), (-wr, -r * 0.62), (wr, -r * 0.62))
+        wpts = [(x + lx * ct - ly * st_, y + lx * st_ + ly * ct) for lx, ly in local]
+        ax.add_patch(mp.Polygon(wpts, closed=True, facecolor=_c(colors, "line"),
+                                edgecolor="none", zorder=z - 0.005))
         ax.add_patch(mp.Circle((x, y), r, facecolor=fill, edgecolor=_c(colors, "line"),
                                linewidth=2, zorder=z))
         num = p.get("number", "")
