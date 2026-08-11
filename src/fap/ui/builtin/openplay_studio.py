@@ -893,22 +893,46 @@ def _match_viz(engine, hint: str, event_types: tuple[str, ...]) -> str | None:
     return next(iter(reg), None)
 
 
+def _evidence_selections(sel: dict, sv, frame) -> dict:
+    """Return the filter selections that scope the existing visualization to an
+    insight's evidence — reusing the Open Play filter fields (``event_types`` and
+    ``players``), never a second filtering system. EVERY other active filter (team,
+    opponent, match, minute range, phase, …) is preserved.
+
+    Player-level insights carry ``sv.players`` and are narrowed to exactly that
+    player; team-level insights carry none and CLEAR any inherited player filter so
+    the whole team is shown. Player identity is matched on the canonical ``player``
+    value — the same field the ``players`` filter uses — scoped to players actually
+    present in the frame (so a duplicate/blank name can never widen the scope)."""
+    new = dict(sel)
+    cols = getattr(frame, "columns", [])
+    if sv and sv.event_types and frame is not None and "event_type" in cols:
+        present = {str(v).lower() for v in frame["event_type"].astype(str)}
+        wanted = [e.lower() for e in sv.event_types if e.lower() in present]
+        if wanted:
+            new["event_types"] = wanted
+    players = tuple(getattr(sv, "players", ()) or ()) if sv else ()
+    present_p = set(frame["player"].astype(str)) if (frame is not None and "player" in cols) else set()
+    wanted_p = [p for p in players if p in present_p]
+    if wanted_p:
+        new["players"] = wanted_p
+    else:
+        new.pop("players", None)          # team-level (or unknown player): show the whole team
+    return new
+
+
 def _open_evidence(w: Studio, ins) -> None:
     """Deep-link an insight to its supporting evidence: select the matching existing
-    visualization, narrow the shared event-type filter, and auto-render — no new chart
-    system, and the same filter engine the whole Studio uses."""
+    visualization, scope the shared filters (event type + player) to the insight, and
+    auto-render — no new chart system, and the same filter engine the whole Studio uses."""
     sv = ins.supporting_viz
     viz = _match_viz(w.engine, sv.viz_hint if sv else "", sv.event_types if sv else ())
     if viz:
         st.session_state[VIZ] = viz
         st.session_state[CAT] = "All"
-    if sv and sv.event_types and w.frame is not None and "event_type" in w.frame.columns:
-        present = {str(v).lower() for v in w.frame["event_type"].astype(str)}
-        wanted = [e.lower() for e in sv.event_types if e.lower() in present]
-        if wanted:
-            _selections()["event_types"] = wanted
+    st.session_state[SEL] = _evidence_selections(_selections(), sv, w.frame)
     # clear the affected widget states so the panels re-read the new values
-    for wk in ("ops_viz", "ops_cat", "ops_f_event_types"):
+    for wk in ("ops_viz", "ops_cat", "ops_f_event_types", "ops_f_players"):
         st.session_state.pop(wk, None)
     st.session_state[AUTOR] = True
     _log(f"Opened supporting evidence: {ins.title}")

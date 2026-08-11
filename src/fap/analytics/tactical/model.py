@@ -52,16 +52,26 @@ class Evidence:
 class SupportingViz:
     """A reference (not a figure) to the existing visualization that shows an
     insight's evidence. The UI maps ``viz_hint`` to a registry chart and applies
-    ``event_types`` / ``zone`` as filters — no second chart system is created."""
+    ``event_types`` / ``players`` / ``zone`` through the EXISTING filter engine —
+    no second chart or filter system is created.
+
+    ``players`` carries the exact player identity a player-level insight was built
+    from, so the supporting evidence is scoped to that player (and only that
+    player). It is empty for team-level insights — the evidence then shows the whole
+    team. The identity is the canonical ``player`` value (the field the Open Play
+    ``players`` filter matches on); a stable player id would be used here instead if
+    the canonical event schema carried one."""
     description: str
     viz_hint: str = ""                     # keyword mapped to an existing registry viz
     event_types: tuple[str, ...] = ()      # event-type filter to apply
+    players: tuple[str, ...] = ()          # player-scope filter (empty => team-level)
     lane: str | None = None                # "Left Lane" / "Central Lane" / "Right Lane"
     third: str | None = None               # "Defensive Third" / "Middle Third" / "Final Third"
 
     def to_dict(self) -> dict:
         return {"description": self.description, "viz_hint": self.viz_hint,
-                "event_types": list(self.event_types), "lane": self.lane, "third": self.third}
+                "event_types": list(self.event_types), "players": list(self.players),
+                "lane": self.lane, "third": self.third}
 
 
 @dataclass(frozen=True)

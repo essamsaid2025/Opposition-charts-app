@@ -178,7 +178,7 @@ def rule_progression_player(ctx: InsightContext, th: InsightThresholds) -> Insig
         priority=_priority(level, strong), subject=name, event_ids=event_ids(prog[prog["player"] == name]),
         supporting_viz=SupportingViz(
             description=f"Progressive passes & carries by {name}",
-            viz_hint="progress", event_types=("pass", "carry")),
+            viz_hint="progress", event_types=("pass", "carry"), players=(name,)),
         meta={"player": name, "share": share})
 
 
@@ -379,7 +379,8 @@ def rule_primary_final_third_progressor(ctx: InsightContext, th: InsightThreshol
         event_ids=event_ids(entries[entries["player"] == name]),
         supporting_viz=SupportingViz(
             description=f"Final-third entries by {name}",
-            viz_hint="final third", event_types=("pass", "carry"), third="Final Third"),
+            viz_hint="final third", event_types=("pass", "carry"), players=(name,),
+            third="Final Third"),
         meta={"player": name, "share": share})
 
 
@@ -421,7 +422,7 @@ def rule_primary_attacking_involvement(ctx: InsightContext, th: InsightThreshold
         event_ids=event_ids(attacking[attacking["player"] == name]),
         supporting_viz=SupportingViz(
             description=f"Attacking actions by {name} in the final third",
-            viz_hint="touch", event_types=(), third="Final Third"),
+            viz_hint="touch", event_types=(), players=(name,), third="Final Third"),
         meta={"player": name, "share": share})
 
 

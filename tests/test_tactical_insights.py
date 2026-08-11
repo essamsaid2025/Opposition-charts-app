@@ -279,3 +279,79 @@ def test_ui_panel_wired_and_evidence_maps_to_real_visualizations():
                       ("box", ("cross",)), ("final third", ("pass",)), ("touch", ())]:
         name = S._match_viz(eng, hint, ets)
         assert name in eng.viz_registry
+
+
+# ---- P0 bug fix: player-insight supporting evidence must be scoped to the player ----
+def _derive(df):
+    return add_derived_columns(coerce_schema(df))
+
+
+def _two_player_frame():
+    # Player A dominates progression (left), Player B progresses on the right, plus filler.
+    rows = _rows("pass", 40, x=30.0, y=15.0, end_x=58.0, end_y=15.0, player="A")
+    rows += _rows("pass", 30, x=30.0, y=85.0, end_x=58.0, end_y=85.0, player="B")
+    rows += _rows("pass", 20, x=30.0, y=50.0, end_x=58.0, end_y=50.0, player=lambda i: f"C{i%3}")
+    return _frame(rows)
+
+
+def test_player_evidence_scopes_to_that_player():
+    """Test 1 — a player insight's supporting evidence carries the player and the
+    existing filter yields ONLY that player's events (excludes Player B)."""
+    from fap.ui.builtin import openplay_studio as S
+    frame = _derive(_two_player_frame())
+    ins = next(i for i in analyze(frame).insights if i.id == "progression.primary_player")
+    assert ins.subject == "A"
+    assert ins.supporting_viz.players == ("A",)
+    sel = S._evidence_selections({}, ins.supporting_viz, frame)
+    assert sel["players"] == ["A"] and "B" not in sel["players"]
+    # end-to-end through the EXISTING Open Play filter
+    filtered = apply_filters(frame, sel)
+    assert set(filtered["player"].astype(str)) == {"A"}
+
+
+def test_team_insight_evidence_shows_whole_team():
+    """Test 2 — a team-level insight is not player-scoped; evidence shows the team."""
+    from fap.ui.builtin import openplay_studio as S
+    frame = _derive(progression_frame())
+    ins = next(i for i in analyze(frame).insights if i.id == "progression.left_dominance")
+    assert ins.supporting_viz.players == ()
+    sel = S._evidence_selections({}, ins.supporting_viz, frame)
+    assert "players" not in sel
+    assert apply_filters(frame, sel)["player"].astype(str).nunique() > 1
+
+
+def test_player_evidence_preserves_existing_filters():
+    """Test 3 — existing filters (e.g. second half + team) are preserved and the
+    player + event filters are added on top."""
+    from fap.ui.builtin import openplay_studio as S
+    frame = _derive(_two_player_frame())
+    ins = next(i for i in analyze(frame).insights if i.id == "progression.primary_player")
+    base = {"team": "Opp", "minute_range": (45, 90)}
+    sel = S._evidence_selections(base, ins.supporting_viz, frame)
+    assert sel["team"] == "Opp"
+    assert sel["minute_range"] == (45, 90)
+    assert sel["players"] == ["A"]
+    assert sel.get("event_types")                # relevant event filter applied too
+
+
+def test_team_insight_does_not_inherit_player_filter():
+    """Test 4 — a team-level insight must NOT inherit a previously selected player."""
+    from fap.ui.builtin import openplay_studio as S
+    frame = _derive(progression_frame())
+    ins = next(i for i in analyze(frame).insights if i.id == "progression.left_dominance")
+    base = {"players": ["Someone Else"], "team": "Opp"}
+    sel = S._evidence_selections(base, ins.supporting_viz, frame)
+    assert "players" not in sel                  # stale player filter cleared
+    assert sel["team"] == "Opp"                  # other filters preserved
+
+
+def test_player_evidence_ignores_unknown_player_names():
+    """Robustness — a player not present in the frame never widens scope to nothing;
+    it falls back to the whole team rather than an empty/foreign filter."""
+    from fap.ui.builtin import openplay_studio as S
+    from fap.analytics.tactical.model import SupportingViz
+    frame = _derive(_two_player_frame())
+    sv = SupportingViz(description="x", viz_hint="progress", event_types=("pass",),
+                       players=("Ghost",))
+    sel = S._evidence_selections({}, sv, frame)
+    assert "players" not in sel
