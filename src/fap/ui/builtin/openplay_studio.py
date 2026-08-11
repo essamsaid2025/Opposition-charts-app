@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 import streamlit as st
 
+from fap.analytics.tactical import Confidence, TacticalInsightEngine
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.openplay.engine import get_engine
@@ -49,6 +50,9 @@ COLLAPSE = K + "collapse"    # {"left": bool, "right": bool, "bottom": bool}
 RATIO = K + "ratio"          # layout ratio preset
 FULL = K + "full"            # fullscreen (hide side panels)
 VIEW = K + "active_view"     # active saved-view id (for status)
+TAC_CAT = K + "tac_cat"      # selected Tactical Insights category filter
+TAC_CACHE = K + "tac_cache"  # {key: InsightReport} — cache per filtered selection
+AUTOR = K + "autorender"     # one-shot: render the stage immediately (evidence deep-link)
 
 VIEW_KIND = "openplay_view"      # WorkspaceManager preset kind (metadata only)
 FAV_SCOPE = "openplay_favorites"  # WorkspaceManager autosave scope
@@ -443,6 +447,9 @@ def _panel_stage(w: Studio) -> None:
     cache = _ss(CACHE, dict)
     sig = w.signature
     rendered = st.session_state.get(REQ) == sig and sig in cache
+    if st.session_state.pop(AUTOR, False) and not rendered:   # evidence deep-link auto-render
+        _render_current(w)
+        rendered = True
     left, right = st.columns([6, 1], vertical_alignment="center")
     left.markdown(f'<div class="ops-stage-title">{_html.escape(str(viz))}</div>', unsafe_allow_html=True)
     if right.button("Render", key="ops_render", type="primary", use_container_width=True):
@@ -851,6 +858,136 @@ def _panel_insights(w: Studio) -> None:
         C.render_alert("Insights unavailable for this selection.", "info")
 
 
+# ---- Tactical Insights (P0 Tactical Insight Engine, filter-aware) -----------------
+def _tac_report(w: Studio):
+    """Run the Tactical Insight Engine over the CURRENT filtered analytical context.
+    Cached per selection so it does not recompute on plain reruns (theme/label tweaks)."""
+    if w.filtered is None or getattr(w.filtered, "empty", True):
+        return None
+    cache = _ss(TAC_CACHE, dict)
+    key = json.dumps({"sel": _selections(), "n": int(len(w.filtered)),
+                      "ds": st.session_state.get(K + "ds_name", "")}, sort_keys=True, default=str)
+    if key not in cache:
+        cache[key] = TacticalInsightEngine().analyze(w.filtered)
+        for k in list(cache)[:-6]:                       # keep the last few
+            cache.pop(k, None)
+    return cache[key]
+
+
+def _match_viz(engine, hint: str, event_types: tuple[str, ...]) -> str | None:
+    """Map a supporting-viz hint to an EXISTING registry visualization — reuse the
+    visualization system, never build a second one. Falls back to an overview/heatmap."""
+    reg = engine.viz_registry
+    tokens = [t for t in (hint or "").lower().split() if t]
+    if tokens:
+        for name in reg:
+            if all(t in name.lower() for t in tokens):
+                return name
+    for et in event_types:
+        for name in reg:
+            if et.lower() in name.lower():
+                return name
+    for name in reg:                                     # sensible default
+        if "heat" in name.lower() or "overview" in name.lower():
+            return name
+    return next(iter(reg), None)
+
+
+def _open_evidence(w: Studio, ins) -> None:
+    """Deep-link an insight to its supporting evidence: select the matching existing
+    visualization, narrow the shared event-type filter, and auto-render — no new chart
+    system, and the same filter engine the whole Studio uses."""
+    sv = ins.supporting_viz
+    viz = _match_viz(w.engine, sv.viz_hint if sv else "", sv.event_types if sv else ())
+    if viz:
+        st.session_state[VIZ] = viz
+        st.session_state[CAT] = "All"
+    if sv and sv.event_types and w.frame is not None and "event_type" in w.frame.columns:
+        present = {str(v).lower() for v in w.frame["event_type"].astype(str)}
+        wanted = [e.lower() for e in sv.event_types if e.lower() in present]
+        if wanted:
+            _selections()["event_types"] = wanted
+    # clear the affected widget states so the panels re-read the new values
+    for wk in ("ops_viz", "ops_cat", "ops_f_event_types"):
+        st.session_state.pop(wk, None)
+    st.session_state[AUTOR] = True
+    _log(f"Opened supporting evidence: {ins.title}")
+
+
+def _tac_badge(conf: Confidence) -> str:
+    return f'<span class="tac-badge tac-{conf.value.lower()}">{conf.value} confidence</span>'
+
+
+def _tac_card(w: Studio, ins) -> None:
+    ev = "".join(f'<li><span>{_html.escape(e.label)}</span><b>{_html.escape(e.value)}</b></li>'
+                 for e in ins.evidence)
+    prio = f'<span class="tac-prio tac-p-{ins.priority.value.lower()}">{ins.priority.value} priority</span>'
+    html = (
+        f'<div class="tac-card">'
+        f'<div class="tac-top">{_tac_badge(ins.confidence)}{prio}</div>'
+        f'<div class="tac-title">{_html.escape(ins.title)}</div>'
+        f'<div class="tac-sub">{_html.escape(ins.short_explanation)}</div>'
+        f'<div class="tac-sec"><div class="k">Evidence</div><ul class="tac-ev">{ev}</ul></div>'
+        f'<div class="tac-sec"><div class="k">Observation</div><p>{_html.escape(ins.observation)}</p></div>'
+        f'<div class="tac-sec"><div class="k">Tactical implication</div>'
+        f'<p>{_html.escape(ins.interpretation)}</p></div>'
+        f'<div class="tac-sec"><div class="k">Recommended investigation</div>'
+        f'<p>{_html.escape(ins.recommendation)}</p></div>'
+        f'</div>')
+    with st.container(key=f"tac_card_{ins.id}"):
+        st.markdown(html, unsafe_allow_html=True)
+        if ins.supporting_viz is not None:
+            st.button("View supporting evidence", key=f"tac_ev_{ins.id}", on_click=_open_evidence,
+                      args=(w, ins), use_container_width=True,
+                      help=ins.supporting_viz.description)
+
+
+def _panel_tactical(w: Studio) -> None:
+    if w.filtered is None or getattr(w.filtered, "empty", True):
+        C.render_empty_state("No tactical insights", "Insights appear once events match the current "
+                             "filters.", icon_name="target"); return
+    report = _tac_report(w)
+    if report is None:
+        C.render_empty_state("No tactical insights", "Adjust the filters to analyse a set of events.",
+                             icon_name="target"); return
+
+    # ---- header: counts + subject + data quality ----
+    st.markdown(
+        f'<div class="tac-head"><div class="tac-h-title">Tactical Insights</div>'
+        f'<div class="tac-h-sub">{_html.escape(report.subject)} · {report.n_events:,} events · '
+        f'data quality {report.quality:.0f}/100</div>'
+        f'<div class="tac-stats">'
+        f'<span class="tac-stat"><b>{report.count}</b> insights</span>'
+        f'<span class="tac-stat tac-good"><b>{report.high_confidence}</b> high confidence</span>'
+        f'<span class="tac-stat tac-warn"><b>{report.high_priority}</b> high priority</span>'
+        f'</div></div>', unsafe_allow_html=True)
+
+    for note in report.notices:                          # honest data-quality notices
+        C.render_alert(note, "info")
+    if not report.insights:
+        C.render_empty_state("No confident insights", "No pattern cleared the sample-size and effect "
+                             "thresholds for this selection — no insight is preferred over a misleading "
+                             "one.", icon_name="shield")
+        return
+
+    # ---- category filter chips (reuse the report's own categories) ----
+    cats = ["All", *report.categories()]
+    cur = st.session_state.get(TAC_CAT, "All")
+    if cur not in cats:
+        cur = "All"
+    chip_cols = st.columns(len(cats))
+    for c, name in zip(chip_cols, cats):
+        label = name if name == "All" else f"{name} ({len(report.by_category().get(name, []))})"
+        if c.button(label, key=f"tac_cat_{name}", use_container_width=True,
+                    type="primary" if name == cur else "secondary"):
+            st.session_state[TAC_CAT] = name
+            st.rerun()
+
+    shown = [i for i in report.insights if cur == "All" or i.category.value == cur]
+    for ins in shown:
+        _tac_card(w, ins)
+
+
 def _panel_selection(w: Studio) -> None:
     C.render_empty_state("No selection", "Selected chart elements will show here (Phase 16B).",
                          icon_name="target")
@@ -973,8 +1110,9 @@ PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
     "center": [("stage", "Stage", _panel_stage, "view")],
     "right": [("inspector", "Inspector", _panel_inspector, "input"),
               ("export", "Export", _panel_export, "view")],
-    "bottom": [("history", "History", _panel_history, "view"),
-               ("insights", "Insights", _panel_insights, "view"),
+    "bottom": [("tactical", "Tactical Insights", _panel_tactical, "view"),
+               ("history", "History", _panel_history, "view"),
+               ("insights", "Quick Insights", _panel_insights, "view"),
                ("selection", "Selection", _panel_selection, "view"),
                ("messages", "Messages", _panel_messages, "view")],
 }
@@ -1402,5 +1540,37 @@ class OpenPlayStudioPage(Page):
 .ops-dash-card .dot.good { background: #2ecc71; }
 .ops-dash-card .dot.warn { background: #f1c40f; }
 .ops-dash-card .dot.bad { background: #e74c3c; }
+/* ---- Tactical Insights ---- */
+.tac-head { margin: 2px 2px 12px; }
+.tac-h-title { font-size: 1.15rem; font-weight: 850; letter-spacing: -.01em; }
+.tac-h-sub { font-size: 12px; color: var(--fap-text-muted); margin-top: 1px; }
+.tac-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; }
+.tac-stat { font-size: 12px; color: var(--fap-text-muted); background: var(--fap-hover);
+  border: 1px solid var(--fap-border); border-radius: 999px; padding: 3px 11px; }
+.tac-stat b { color: var(--fap-text); font-weight: 800; margin-right: 3px; }
+.tac-stat.tac-good b { color: #2ecc71; }
+.tac-stat.tac-warn b { color: #e0a417; }
+[class*="st-key-tac_card_"] { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-left: 3px solid var(--fap-primary); border-radius: 12px; padding: 12px 14px 6px;
+  margin-bottom: 10px; }
+.tac-card .tac-top { display: flex; gap: 8px; margin-bottom: 6px; }
+.tac-badge, .tac-prio { font-size: 10.5px; font-weight: 800; letter-spacing: .04em;
+  text-transform: uppercase; border-radius: 999px; padding: 2px 9px; }
+.tac-badge.tac-high { background: rgba(46,204,113,.16); color: #1e9e5a; }
+.tac-badge.tac-medium { background: rgba(224,164,23,.16); color: #b9820c; }
+.tac-badge.tac-low { background: var(--fap-hover); color: var(--fap-text-muted); }
+.tac-prio { background: var(--fap-hover); color: var(--fap-text-muted); }
+.tac-prio.tac-p-high { background: rgba(231,76,60,.14); color: #d0432f; }
+.tac-title { font-size: 1.02rem; font-weight: 800; line-height: 1.2; margin: 2px 0; }
+.tac-sub { font-size: 13px; color: var(--fap-text-muted); margin-bottom: 8px; }
+.tac-sec { margin-top: 8px; }
+.tac-sec .k { font-size: 10.5px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin-bottom: 3px; }
+.tac-sec p { font-size: 13px; color: var(--fap-text); margin: 0; line-height: 1.4; }
+.tac-ev { list-style: none; margin: 0; padding: 0; }
+.tac-ev li { display: flex; justify-content: space-between; align-items: baseline;
+  font-size: 12.5px; color: var(--fap-text-muted); padding: 2px 0;
+  border-bottom: 1px dashed var(--fap-border); }
+.tac-ev li b { color: var(--fap-text); font-weight: 700; font-variant-numeric: tabular-nums; }
 </style>
 """, unsafe_allow_html=True)
