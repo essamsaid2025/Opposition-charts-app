@@ -25,6 +25,10 @@
   #stage { position: relative; border-radius: 14px; overflow: hidden;
     border: 1px solid var(--border); background: var(--surface);
     box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+  /* #stage is made focusable (tabindex=0 in JS) so the iframe gains keyboard focus on click and
+     the window keydown handler (Delete/Backspace/Escape) actually receives events — without a
+     visible focus ring, which would look wrong around the pitch. */
+  #stage:focus, #stage:focus-visible { outline: none; }
   #stage svg.tb-board-svg { display: block; width: 100%; height: auto; }
   #stage [data-oid] { cursor: grab; }
   #stage [data-oid].locked { cursor: not-allowed; }
@@ -64,6 +68,19 @@
   var stage = document.getElementById("stage");
   var paletteEl = document.getElementById("palette");
   var ghost = document.getElementById("ghost");
+
+  // Keyboard focus: the Delete/Backspace/Escape handler is a `window` keydown listener, which only
+  // fires while THIS iframe is the browser's focused frame. Clicking a piece never focused the
+  // frame (every pointerdown handler calls preventDefault, which also suppresses the default
+  // focus-shift to the clicked frame), so the shortcuts silently did nothing. Making #stage a
+  // focus target (tabindex 0) and explicitly focusing it on any pointerdown fixes that. focus()
+  // is programmatic, so it is NOT affected by the existing preventDefault calls (those stay).
+  // preventScroll:true so grabbing focus never scrolls the surrounding Streamlit page.
+  stage.tabIndex = 0;
+  function focusStage() { try { stage.focus({ preventScroll: true }); } catch (_) {} }
+  // Capture phase = runs before the piece/handle/empty-pitch pointerdown handlers, covering every
+  // interaction inside the pitch (select, drag, rotate, resize, draw) in ONE place.
+  stage.addEventListener("pointerdown", focusStage, true);
 
   var svg = null, plane = null;          // <svg> and the element whose local space == pitch plane
   var objects = [];                       // [{id,type,x,y,x2,y2,locked}] — metadata only, for handles
@@ -139,6 +156,7 @@
   // ---- selection (UI-only intent; never a board mutation) -----------------------
   function select(id) {
     cfg.selectedId = id;
+    focusStage();                       // ensure Delete/Backspace reach the keydown handler
     emit({ ts: nextTs(), select: id === undefined ? null : id, commands: [] });
   }
 
