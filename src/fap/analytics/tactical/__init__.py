@@ -23,6 +23,12 @@ from fap.analytics.tactical.profile import (
     CoverageItem, KeyPlayer, ProfileItem, ProfileSection, SummaryLine, TacticalProfile,
     TacticalProfileBuilder, build_profile,
 )
+from fap.analytics.tactical.report import (
+    DEFAULT_SECTIONS, EvidenceLink, FocusPoint, OppositionReport, OppositionReportBuilder,
+    ReportItem, ReportMetadata, ReportPlayer, ReportSection, ReportTrend, Takeaway,
+    build_report, build_report_from_frame,
+)
+from fap.analytics.tactical.report_export import render_report, to_report_document
 from fap.analytics.tactical.thresholds import DEFAULT_THRESHOLDS, InsightThresholds
 
 
@@ -40,4 +46,8 @@ __all__ = [
     "ProfileSection", "KeyPlayer", "ProfileItem", "SummaryLine", "CoverageItem",
     "MultiMatchContext", "MatchInsights", "EvidenceRef", "PatternTrend", "TacticalEvolution",
     "build_multimatch", "analyze_evolution", "build_evolution",
+    "OppositionReport", "OppositionReportBuilder", "ReportMetadata", "ReportSection",
+    "ReportItem", "ReportPlayer", "ReportTrend", "Takeaway", "FocusPoint", "EvidenceLink",
+    "DEFAULT_SECTIONS", "build_report", "build_report_from_frame",
+    "to_report_document", "render_report",
 ]

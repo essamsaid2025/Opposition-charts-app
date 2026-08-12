@@ -27,8 +27,8 @@ from typing import Any, Callable
 import streamlit as st
 
 from fap.analytics.tactical import (
-    Confidence, SupportingViz, TacticalInsightEngine, analyze_evolution, build_multimatch,
-    build_profile,
+    Confidence, ReportMetadata, SupportingViz, TacticalInsightEngine, analyze_evolution,
+    build_multimatch, build_profile, build_report, render_report,
 )
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
@@ -58,6 +58,8 @@ TAC_CACHE = K + "tac_cache"  # {key: InsightReport} — cache per filtered selec
 AUTOR = K + "autorender"     # one-shot: render the stage immediately (evidence deep-link)
 EVO_WIN = K + "evo_window"   # Tactical Evolution baseline window
 EVO_CACHE = K + "evo_cache"  # {key: TacticalEvolution}
+REP_INC = K + "report_include"   # set of included report section ids
+REP_META = K + "report_meta"     # report metadata inputs
 
 VIEW_KIND = "openplay_view"      # WorkspaceManager preset kind (metadata only)
 FAV_SCOPE = "openplay_favorites"  # WorkspaceManager autosave scope
@@ -1280,6 +1282,267 @@ def _panel_evolution(w: Studio) -> None:
             _evo_row(w, evo, p, "evo_cvb")
 
 
+# ---- Scouting Report Builder (P3: orchestrates P0/P1/P2 into a deliverable) --------
+_REPORT_TOGGLES = (
+    ("executive_summary", "Executive Summary"), ("key_takeaways", "Key Takeaways"),
+    ("tactical_dna", "Tactical DNA"), ("vulnerabilities", "Vulnerabilities"),
+    ("tactical_evolution", "Tactical Evolution"), ("key_players", "Key Players"),
+    ("strengths", "Strengths"), ("focus_points", "Focus Points"),
+    ("set_pieces", "Set Pieces"), ("data_quality", "Data Quality"),
+)
+_DNA_SUB = ("tactical_dna", "build_up", "progression", "final_third", "transitions", "recoveries")
+
+
+def _conf_enum(name: str) -> Confidence:
+    return {"High": Confidence.HIGH, "Medium": Confidence.MEDIUM}.get(name, Confidence.LOW)
+
+
+def _open_report_evidence(w: Studio, by_id: dict, link) -> None:
+    """Dispatch a report claim to the EXISTING evidence pathway — a match-scoped ref
+    goes through _open_match_evidence (player scope preserved), otherwise resolve the
+    first insight id and use _open_evidence. No second evidence viewer."""
+    if link.ref is not None:
+        _open_match_evidence(w, link.ref)
+        return
+    for iid in link.insight_ids:
+        ins = by_id.get(iid)
+        if ins is not None:
+            _open_evidence(w, ins)
+            return
+
+
+def _report_include(w: Studio) -> set[str]:
+    inc = st.session_state.get(REP_INC)
+    if inc is None:
+        inc = {tid for tid, _ in _REPORT_TOGGLES}
+        st.session_state[REP_INC] = inc
+    return inc
+
+
+def _report_metadata(w: Studio) -> ReportMetadata:
+    meta = st.session_state.get(REP_META) or {}
+    subject = getattr(w.dataset, "name", "") or "the opponent"
+    return ReportMetadata(
+        title=meta.get("title") or "Opposition Scouting Report",
+        opponent=meta.get("opponent") or "", team=meta.get("team") or "",
+        competition=meta.get("competition") or "", match=meta.get("match") or "",
+        analyst=meta.get("analyst") or "", analysis_window=meta.get("window") or "")
+
+
+def _build_opposition_report(w: Studio, include: tuple[str, ...]):
+    rep = _tac_report(w)
+    if rep is None:
+        return None, {}
+    profile = build_profile(rep)
+    try:
+        evo = _evo_report(w)
+    except Exception:
+        evo = None
+    report = build_report(rep, profile, evo, metadata=_report_metadata(w), include=include)
+    return report, {i.id: i for i in rep.insights}
+
+
+def _report_evidence_button(w: Studio, by_id: dict, key: str, link) -> None:
+    ids = link.insight_ids if link else ()
+    if link is not None and (link.ref is not None or ids):
+        st.button("View evidence", key=key, on_click=_open_report_evidence, args=(w, by_id, link),
+                  use_container_width=True)
+
+
+def _panel_report(w: Studio) -> None:
+    if w.filtered is None or getattr(w.filtered, "empty", True):
+        C.render_empty_state("No report", "The scouting report appears once events match the current "
+                             "filters.", icon_name="reports" if False else "analysis"); return
+
+    # ---- report metadata + section selection ----
+    meta = st.session_state.setdefault(REP_META, {})
+    with st.expander("Report details & sections", expanded=False):
+        c1, c2 = st.columns(2)
+        meta["title"] = c1.text_input("Report title", value=meta.get("title", "Opposition Scouting Report"),
+                                      key="rep_title")
+        meta["opponent"] = c2.text_input("Opponent", value=meta.get("opponent", ""), key="rep_opp",
+                                         placeholder=getattr(w.dataset, "name", ""))
+        meta["team"] = c1.text_input("Your team", value=meta.get("team", ""), key="rep_team")
+        meta["competition"] = c2.text_input("Competition", value=meta.get("competition", ""), key="rep_comp")
+        meta["match"] = c1.text_input("Match", value=meta.get("match", ""), key="rep_match")
+        meta["analyst"] = c2.text_input("Analyst", value=meta.get("analyst", ""), key="rep_analyst")
+        st.caption("Sections to include")
+        inc = _report_include(w)
+        cols = st.columns(2)
+        for i, (tid, label) in enumerate(_REPORT_TOGGLES):
+            on = cols[i % 2].checkbox(label, value=tid in inc, key=f"rep_inc_{tid}")
+            inc.discard(tid) if not on else inc.add(tid)
+
+    include_ids = set(_report_include(w))
+    if "tactical_dna" in include_ids:
+        include_ids.update(_DNA_SUB)
+    report, by_id = _build_opposition_report(w, tuple(sorted(include_ids)))
+    if report is None:
+        C.render_empty_state("No report", "Adjust the filters to analyse a set of events.",
+                             icon_name="analysis"); return
+    inc = _report_include(w)
+
+    # ---- header ----
+    limited = ' · <span class="prof-limited">Limited evidence</span>' if report.limited_evidence else ""
+    st.markdown(
+        f'<div class="rep-head"><div class="rep-h-title">{_html.escape(report.metadata.title)}</div>'
+        f'<div class="rep-h-sub">Opponent: {_html.escape(report.subject)} · '
+        f'{_html.escape(report.metadata.competition or "—")} · generated {_html.escape(report.metadata.generated_at)}</div>'
+        f'<div class="prof-stats"><span class="prof-stat">{_tac_badge(_conf_enum(report.overall_confidence))}</span>'
+        f'<span class="prof-stat">Sections <b>{len(report.included)}</b></span>{limited}</div></div>',
+        unsafe_allow_html=True)
+
+    for note in report.notices:
+        C.render_alert(note, "info")
+
+    # ---- Executive Summary ----
+    if "executive_summary" in inc and report.executive_summary:
+        rows = "".join(f'<div class="prof-dna-row"><div class="k">{_html.escape(s.heading)}</div>'
+                       f'<div class="v">{_html.escape(s.text)}</div></div>'
+                       for s in report.executive_summary)
+        st.markdown(f'<div class="prof-dna"><div class="prof-block-h">Executive Summary</div>{rows}</div>',
+                    unsafe_allow_html=True)
+
+    # ---- Key Takeaways ----
+    if "key_takeaways" in inc and report.key_takeaways:
+        st.markdown('<div class="rep-block-h">Key Takeaways</div>', unsafe_allow_html=True)
+        for n, t in enumerate(report.key_takeaways):
+            with st.container(key=f"rep_tk_{n}"):
+                st.markdown(
+                    f'<div class="rep-item"><div class="rep-item-top">{_tac_badge(_conf_enum(t.confidence))}</div>'
+                    f'<div class="rep-item-text">{_html.escape(t.title)}</div>'
+                    f'<div class="rep-item-detail">{_html.escape(t.observation)}</div>'
+                    f'<div class="rep-why">Why it matters: {_html.escape(t.why_it_matters)}</div></div>',
+                    unsafe_allow_html=True)
+                _report_evidence_button(w, by_id, f"rep_tk_ev_{n}", t.evidence)
+
+    # ---- Tactical DNA ----
+    if "tactical_dna" in inc:
+        st.markdown('<div class="rep-block-h">Tactical DNA</div>', unsafe_allow_html=True)
+        for s in report.sections:
+            with st.container(key=f"rep_sec_{s.id}"):
+                if s.available:
+                    lines = "".join(f"<li>{_html.escape(l)}</li>" for l in s.lines)
+                    q = (f'<div class="rep-chart-q">Supporting visual — {_html.escape(s.chart_question)}</div>'
+                         if s.chart_question else "")
+                    st.markdown(f'<div class="rep-sec-title">{_html.escape(s.title)}</div>'
+                                f'<div class="prof-headline">{_html.escape(s.headline)}</div>'
+                                f'<ul class="prof-lines">{lines}</ul>{q}', unsafe_allow_html=True)
+                    _report_evidence_button(w, by_id, f"rep_sec_ev_{s.id}", s.evidence)
+                else:
+                    st.markdown(f'<div class="rep-sec-title">{_html.escape(s.title)}</div>'
+                                f'<div class="prof-unavail">{_html.escape(s.reason)}</div>',
+                                unsafe_allow_html=True)
+
+    # ---- Vulnerabilities ----
+    if "vulnerabilities" in inc:
+        st.markdown('<div class="rep-block-h">Potential Vulnerabilities</div>', unsafe_allow_html=True)
+        if not report.vulnerabilities:
+            C.render_alert("No high-confidence vulnerability identified from the available evidence.", "info")
+        for n, v in enumerate(report.vulnerabilities):
+            with st.container(key=f"rep_vul_{n}"):
+                impl = (f'<div class="rep-impl"><b>Tactical implication:</b> {_html.escape(v.implication)}</div>'
+                        if v.implication else "")
+                st.markdown(
+                    f'<div class="rep-item rep-vuln"><div class="rep-item-top">{_tac_badge(_conf_enum(v.confidence))}</div>'
+                    f'<div class="rep-item-text">{_html.escape(v.heading)}</div>'
+                    f'<div class="rep-obs"><b>Observation:</b> {_html.escape(v.observation)}</div>{impl}</div>',
+                    unsafe_allow_html=True)
+                _report_evidence_button(w, by_id, f"rep_vul_ev_{n}", v.evidence)
+
+    # ---- Tactical Evolution ----
+    if "tactical_evolution" in inc and report.evolution:
+        st.markdown('<div class="rep-block-h">Tactical Evolution</div>', unsafe_allow_html=True)
+        for n, t in enumerate(report.evolution):
+            bits = [f"{t.classification}", f"{t.recurrence} observed matches"]
+            if t.trend != "—":
+                bits.append(f"trend {t.trend}")
+            if t.delta_pp is not None:
+                bits.append(f"current {t.current_display} vs baseline {t.baseline_display} ({t.delta_pp:+g} pp)")
+            with st.container(key=f"rep_evo_{n}"):
+                st.markdown(f'<div class="rep-item"><div class="rep-item-top">{_tac_badge(_conf_enum(t.confidence))}'
+                            f'<span class="evo-cat">{_html.escape(t.category)}</span></div>'
+                            f'<div class="rep-item-text">{_html.escape(t.label)}</div>'
+                            f'<div class="rep-item-detail">{_html.escape(" · ".join(bits))}</div></div>',
+                            unsafe_allow_html=True)
+                _report_evidence_button(w, by_id, f"rep_evo_ev_{n}", t.evidence)
+
+    # ---- Key Players ----
+    if "key_players" in inc and report.key_players:
+        st.markdown('<div class="rep-block-h">Key Players</div>', unsafe_allow_html=True)
+        for p in report.key_players:
+            with st.container(key=f"rep_kp_{p.name}"):
+                st.markdown(
+                    f'<div class="rep-item"><div class="rep-item-top">{_tac_badge(_conf_enum(p.confidence))}</div>'
+                    f'<div class="rep-item-text">{_html.escape(p.name)}</div>'
+                    f'<div class="rep-item-detail">{_html.escape(p.role)}</div>'
+                    f'<div class="prof-kp-metrics">{_html.escape(" · ".join(p.metrics))}</div></div>',
+                    unsafe_allow_html=True)
+                _report_evidence_button(w, by_id, f"rep_kp_ev_{p.name}", p.evidence)
+
+    # ---- Strengths ----
+    if "strengths" in inc and report.strengths:
+        st.markdown('<div class="rep-block-h">Key Strengths</div>', unsafe_allow_html=True)
+        for n, s in enumerate(report.strengths):
+            st.markdown(f'<div class="rep-line">• <b>{_html.escape(s.heading)}</b> — '
+                        f'{_html.escape(s.observation)}</div>', unsafe_allow_html=True)
+
+    # ---- Focus Points ----
+    if "focus_points" in inc and report.focus_points:
+        st.markdown('<div class="rep-block-h">Match-specific Focus Points</div>', unsafe_allow_html=True)
+        for n, f in enumerate(report.focus_points):
+            cons = f'<div class="rep-fp-meta">Consistency: {_html.escape(f.consistency)}</div>' if f.consistency else ""
+            impl = f'<div class="rep-fp-meta">Implication: {_html.escape(f.implication)}</div>' if f.implication else ""
+            with st.container(key=f"rep_fp_{n}"):
+                st.markdown(f'<div class="rep-item"><div class="rep-item-text">Focus {n+1:02d}: '
+                            f'{_html.escape(f.title)}</div>'
+                            f'<div class="rep-item-detail">Evidence: {_html.escape(f.evidence_text)}</div>'
+                            f'{cons}{impl}</div>', unsafe_allow_html=True)
+                _report_evidence_button(w, by_id, f"rep_fp_ev_{n}", f.evidence)
+
+    # ---- Set Pieces ----
+    if "set_pieces" in inc and report.set_pieces is not None:
+        st.markdown('<div class="rep-block-h">Set Pieces</div>', unsafe_allow_html=True)
+        sp = report.set_pieces
+        if sp.available:
+            lines = "".join(f"<li>{_html.escape(l)}</li>" for l in sp.lines)
+            st.markdown(f'<div class="prof-headline">{_html.escape(sp.headline)}</div>'
+                        f'<ul class="prof-lines">{lines}</ul>', unsafe_allow_html=True)
+        else:
+            C.render_alert(sp.reason, "info")
+
+    # ---- Data Quality ----
+    if "data_quality" in inc and report.data_quality:
+        dots = "".join(
+            f'<div class="prof-cov-row"><span class="dot {_COV_DOT.get(c.status, "bad")}"></span>'
+            f'<span class="l">{_html.escape(c.label)}</span><b>{_html.escape(c.status)}</b></div>'
+            for c in report.data_quality)
+        exc = ""
+        if report.excluded_matches:
+            exc = ('<div class="rep-fp-meta">Excluded: '
+                   + _html.escape("; ".join(f"{m} ({r})" for m, r in report.excluded_matches)) + "</div>")
+        st.markdown(f'<div class="prof-cov"><div class="prof-block-h">Data Quality & Coverage</div>'
+                    f'{dots}{exc}</div>', unsafe_allow_html=True)
+
+    # ---- export (reuses the existing report exporters) ----
+    st.markdown('<div class="rep-block-h">Export</div>', unsafe_allow_html=True)
+    safe = _slug_report(report.metadata.title)
+    cols = st.columns(3)
+    for col, (label, fmt, mime) in zip(cols, [("Markdown", "markdown", "text/markdown"),
+                                              ("HTML", "html", "text/html"),
+                                              ("PDF", "pdf", "application/pdf")]):
+        try:
+            out = render_report(report, fmt)
+            col.download_button(label, data=out.content, file_name=out.filename, mime=out.mime,
+                                key=f"rep_exp_{fmt}", use_container_width=True)
+        except Exception as exc:
+            col.caption(f"{label}: {type(exc).__name__}")
+
+
+def _slug_report(s: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in (s or "").lower()).strip("_") or "report"
+
+
 def _panel_selection(w: Studio) -> None:
     C.render_empty_state("No selection", "Selected chart elements will show here (Phase 16B).",
                          icon_name="target")
@@ -1402,7 +1665,8 @@ PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
     "center": [("stage", "Stage", _panel_stage, "view")],
     "right": [("inspector", "Inspector", _panel_inspector, "input"),
               ("export", "Export", _panel_export, "view")],
-    "bottom": [("profile", "Opponent Profile", _panel_profile, "view"),
+    "bottom": [("report", "Scouting Report", _panel_report, "view"),
+               ("profile", "Opponent Profile", _panel_profile, "view"),
                ("tactical", "Tactical Insights", _panel_tactical, "view"),
                ("evolution", "Tactical Evolution", _panel_evolution, "view"),
                ("history", "History", _panel_history, "view"),
@@ -1932,5 +2196,28 @@ class OpenPlayStudioPage(Page):
 .evo-label { font-size: 1.0rem; font-weight: 800; line-height: 1.2; }
 .evo-meta { font-size: 12.5px; color: var(--fap-text-muted); margin-top: 2px;
   font-variant-numeric: tabular-nums; }
+/* ---- Scouting Report (P3) ---- */
+.rep-head { margin: 2px 2px 12px; }
+.rep-h-title { font-size: 1.3rem; font-weight: 850; letter-spacing: -.01em; }
+.rep-h-sub { font-size: 12px; color: var(--fap-text-muted); margin-top: 1px; }
+.rep-block-h { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin: 16px 2px 8px; border-bottom: 1px solid var(--fap-border);
+  padding-bottom: 4px; }
+[class*="st-key-rep_tk_"], [class*="st-key-rep_sec_"], [class*="st-key-rep_vul_"],
+[class*="st-key-rep_evo_"], [class*="st-key-rep_kp_"], [class*="st-key-rep_fp_"] {
+  background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-left: 3px solid var(--fap-primary); border-radius: 12px; padding: 11px 14px 6px; margin-bottom: 8px; }
+[class*="st-key-rep_vul_"] { border-left-color: #e0a417; }
+.rep-item-top { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.rep-item-text { font-size: 1.0rem; font-weight: 800; line-height: 1.2; }
+.rep-item-detail { font-size: 12.5px; color: var(--fap-text-muted); margin-top: 2px; line-height: 1.35; }
+.rep-why { font-size: 12px; color: var(--fap-text-subtle); margin-top: 4px; font-style: italic; }
+.rep-obs, .rep-impl { font-size: 12.5px; color: var(--fap-text); margin-top: 4px; line-height: 1.35; }
+.rep-impl { color: var(--fap-text-muted); }
+.rep-sec-title { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin-bottom: 4px; }
+.rep-chart-q { font-size: 11.5px; color: var(--fap-text-subtle); font-style: italic; margin-top: 4px; }
+.rep-fp-meta { font-size: 12px; color: var(--fap-text-muted); margin-top: 3px; }
+.rep-line { font-size: 13px; color: var(--fap-text); padding: 3px 2px; }
 </style>
 """, unsafe_allow_html=True)
