@@ -26,6 +26,39 @@ from fap.analytics.tactical.thresholds import DEFAULT_THRESHOLDS, InsightThresho
 
 _CONF_RANK = {"High": 0, "Medium": 1, "Low": 2}
 
+# per-(match, insight) observation status — the fix for 0-padding: a match where an
+# insight did not fire is NOT the same as a value of 0.
+OBSERVED = "observed"              # the insight fired -> we have a measured value
+OBSERVED_ABSENT = "observed_absent"  # family had enough data, pattern just wasn't dominant
+INSUFFICIENT = "insufficient"     # family present but sample below the P0 minimum -> unknown
+UNAVAILABLE = "unavailable"       # the family's required data is missing this match
+
+# insight id -> analysis family (denominator that gates it)
+_FAMILY_OF = {
+    "progression.left_dominance": "progression", "progression.right_dominance": "progression",
+    "progression.central_dominance": "progression", "progression.dominant_corridor": "progression",
+    "progression.primary_player": "progression",
+    "final_third.entry_concentration": "final_third", "final_third.preferred_corridor": "final_third",
+    "final_third.box_entry_concentration": "box",
+    "players.primary_final_third_progressor": "final_third",
+    "players.primary_attacking_involvement": "final_third",
+    "recoveries.dominant_zone": "recoveries", "recoveries.high_concentration": "recoveries",
+    "transitions.recovery_to_progression": "transitions",
+    "transitions.recovery_to_final_third": "transitions",
+    "transitions.recovery_to_shot": "transitions", "transitions.direction": "transitions",
+    "vulnerability.turnover_zone": "turnovers", "vulnerability.route_failure": "turnovers",
+    "vulnerability.final_third_inefficiency": "final_third",
+}
+_FAMILY_FALLBACK = {"progression": "progression", "final_third": "final_third", "box": "final_third",
+                    "recoveries": "recoveries", "transitions": "transitions",
+                    "vulnerability": "turnovers", "players": "final_third"}
+
+
+def _family_of(insight_id: str) -> str:
+    if insight_id in _FAMILY_OF:
+        return _FAMILY_OF[insight_id]
+    return _FAMILY_FALLBACK.get(insight_id.split(".", 1)[0], "progression")
+
 # stable, match-independent labels for the ids that vary in title (player names etc.)
 _ID_LABELS = {
     "progression.left_dominance": "Left-sided progression",
@@ -92,11 +125,25 @@ class MatchInsights:
     shares: dict[str, float] = field(default_factory=dict)          # insight_id -> effect (0-1)
     confidences: dict[str, str] = field(default_factory=dict)       # insight_id -> "High"/…
     evidence: dict[str, EvidenceRef] = field(default_factory=dict)
+    families: dict[str, dict] = field(default_factory=dict)         # family -> {available,n,min}
+
+    def status_for(self, insight_id: str) -> str:
+        """OBSERVED / OBSERVED_ABSENT / INSUFFICIENT / UNAVAILABLE for this insight in
+        this match — the semantic that replaces 0-padding."""
+        if insight_id in self.shares:
+            return OBSERVED
+        fam = self.families.get(_family_of(insight_id))
+        if not fam or not fam.get("available", False):
+            return UNAVAILABLE
+        if int(fam.get("n", 0)) < int(fam.get("min", 0)):
+            return INSUFFICIENT
+        return OBSERVED_ABSENT               # enough data, pattern simply wasn't dominant here
 
     def to_dict(self) -> dict:
         return {"match_id": self.match_id, "n_events": self.n_events, "quality": self.quality,
                 "usable": self.usable, "reason": self.reason, "subject": self.subject,
-                "shares": dict(self.shares), "confidences": dict(self.confidences)}
+                "shares": dict(self.shares), "confidences": dict(self.confidences),
+                "families": {k: dict(v) for k, v in self.families.items()}}
 
 
 @dataclass(frozen=True)
@@ -113,6 +160,26 @@ class MultiMatchContext:
         return [(m.match_id, m.reason) for m in self.matches if not m.usable]
 
 
+def _ordered_match_ids(frame: pd.DataFrame) -> list[str]:
+    """Chronological match order. Uses the canonical ``date`` field when every match
+    carries a parseable date; otherwise falls back to first-appearance order (the
+    only deterministic option) — never arbitrary match-id sorting."""
+    ids = list(dict.fromkeys(frame["match_id"].astype(str)))
+    if "date" not in frame.columns:
+        return ids
+    dates: dict[str, object] = {}
+    mid_col = frame["match_id"].astype(str)
+    for mid in ids:
+        raw = frame.loc[mid_col == mid, "date"].astype(str)
+        raw = raw[raw.str.strip().ne("")]
+        d = pd.to_datetime(raw, errors="coerce").min() if len(raw) else pd.NaT
+        dates[mid] = d
+    if all(pd.notna(d) for d in dates.values()) and len(dates) == len(ids):
+        appearance = {mid: k for k, mid in enumerate(ids)}         # stable tiebreak
+        return sorted(ids, key=lambda m: (dates[m], appearance[m]))
+    return ids
+
+
 def build_multimatch(frame: pd.DataFrame | None, *, current_match: str | None = None,
                      thresholds: InsightThresholds | None = None) -> MultiMatchContext:
     """Run P0 once per match_id in ``frame`` (already filtered by the caller) and
@@ -123,7 +190,7 @@ def build_multimatch(frame: pd.DataFrame | None, *, current_match: str | None = 
         return MultiMatchContext("the selected events", (), current_match or "", th)
 
     engine = TacticalInsightEngine(th)
-    ids = list(dict.fromkeys(frame["match_id"].astype(str)))       # preserve appearance order
+    ids = _ordered_match_ids(frame)                                # chronological when dated
     matches: list[MatchInsights] = []
     for mid in ids:
         mframe = frame[frame["match_id"].astype(str) == mid]
@@ -146,7 +213,7 @@ def build_multimatch(frame: pd.DataFrame | None, *, current_match: str | None = 
                 players=sv.players if sv else (), lane=sv.lane if sv else None,
                 third=sv.third if sv else None)
         matches.append(MatchInsights(mid, rep.n_events, rep.quality, usable, reason, rep.subject,
-                                     shares, confs, evid))
+                                     shares, confs, evid, {k: dict(v) for k, v in rep.families.items()}))
 
     usable_ids = [m.match_id for m in matches if m.usable]
     if current_match and current_match in {m.match_id for m in matches}:
@@ -166,28 +233,44 @@ class PatternTrend:
     category: str
     classification: str            # Consistent / Emerging / Declining / Match-specific / Mixed / Insufficient
     trend: str                     # Increasing / Decreasing / Stable / Volatile / —
-    present_count: int
-    usable_count: int
-    current_share: float
-    baseline_share: float
-    delta: float                   # current - baseline (share fraction)
+    present_count: int             # matches where the insight was OBSERVED (fired)
+    observable_count: int          # matches where the family had enough data to judge (denominator)
+    insufficient_count: int        # usable matches with insufficient family sample for this pattern
+    unavailable_count: int         # usable matches where the family was unavailable
+    usable_count: int              # all usable (data-quality-passing) matches
+    current_status: str            # Observed / Absent / Insufficient / Unavailable
+    current_share: float | None    # None unless the current match is observable
+    baseline_status: str           # Observed / Insufficient
+    baseline_share: float | None   # None when the baseline has no observable match
+    delta: float | None            # None when a reliable delta cannot be computed
     confidence: str
-    match_ids: tuple[str, ...]     # usable match order
-    shares: tuple[float, ...]      # per usable match (0 when the pattern didn't fire)
+    match_ids: tuple[str, ...]     # usable matches, chronological
+    shares: tuple[float, ...]      # per OBSERVABLE match (0 for genuine absence; insufficient excluded)
+    observable_match_ids: tuple[str, ...]
     present_match_ids: tuple[str, ...]
     evidence: tuple[EvidenceRef, ...]
 
     @property
-    def delta_pp(self) -> float:
-        return round(self.delta * 100, 1)
+    def delta_pp(self) -> float | None:
+        return None if self.delta is None else round(self.delta * 100, 1)
+
+    @property
+    def recurrence(self) -> str:
+        return f"{self.present_count} / {self.observable_count}"
 
     def to_dict(self) -> dict:
         return {"insight_id": self.insight_id, "label": self.label, "category": self.category,
                 "classification": self.classification, "trend": self.trend,
-                "present_count": self.present_count, "usable_count": self.usable_count,
-                "current_share": round(self.current_share, 4), "baseline_share": round(self.baseline_share, 4),
-                "delta": round(self.delta, 4), "delta_pp": self.delta_pp, "confidence": self.confidence,
-                "match_ids": list(self.match_ids), "shares": [round(s, 4) for s in self.shares],
+                "present_count": self.present_count, "observable_count": self.observable_count,
+                "insufficient_count": self.insufficient_count, "unavailable_count": self.unavailable_count,
+                "usable_count": self.usable_count, "current_status": self.current_status,
+                "current_share": None if self.current_share is None else round(self.current_share, 4),
+                "baseline_status": self.baseline_status,
+                "baseline_share": None if self.baseline_share is None else round(self.baseline_share, 4),
+                "delta": None if self.delta is None else round(self.delta, 4), "delta_pp": self.delta_pp,
+                "confidence": self.confidence, "match_ids": list(self.match_ids),
+                "shares": [round(s, 4) for s in self.shares],
+                "observable_match_ids": list(self.observable_match_ids),
                 "present_match_ids": list(self.present_match_ids),
                 "evidence": [e.to_dict() for e in self.evidence]}
 
@@ -218,7 +301,7 @@ class TacticalEvolution:
         return [p for p in self.patterns if p.classification == "Match-specific"]
 
     def current_vs_baseline(self, *, min_delta: float = 0.08) -> list[PatternTrend]:
-        out = [p for p in self.patterns if abs(p.delta) >= min_delta]
+        out = [p for p in self.patterns if p.delta is not None and abs(p.delta) >= min_delta]
         return sorted(out, key=lambda p: -abs(p.delta))
 
     def to_dict(self) -> dict:
@@ -232,65 +315,102 @@ def _category_of(insight_id: str) -> str:
     return insight_id.split(".", 1)[0]
 
 
+# (analyze_evolution below classifies each usable match per pattern rather than 0-padding
+#  non-firing matches — see status_for / _classify.)
+
+
+_STATUS_LABEL = {OBSERVED: "Observed", OBSERVED_ABSENT: "Absent",
+                 INSUFFICIENT: "Insufficient", UNAVAILABLE: "Unavailable"}
+
+
 def analyze_evolution(context: MultiMatchContext,
                       thresholds: InsightThresholds | None = None) -> TacticalEvolution:
+    """Aggregate per-match P0 results into trends WITHOUT 0-padding. Every usable match
+    is classified per pattern (observed / genuinely-absent / insufficient / unavailable);
+    recurrence, trend and baseline use only the matches where the pattern could actually
+    be judged, so an insufficient-sample match is never read as a value of 0."""
     th = thresholds or context.thresholds
-    usable = context.usable()
+    usable = context.usable()                        # data-quality-passing matches, chronological
     U = len(usable)
     excluded = tuple(context.excluded())
-    insufficient = U < th.min_matches
     if U == 0:
         return TacticalEvolution(context.subject, len(context.matches), 0, excluded,
                                  context.current_id, (), True)
 
     order_ids = [m.match_id for m in usable]
     current = context.current_id if context.current_id in order_ids else order_ids[-1]
+    cur_m = next((m for m in usable if m.match_id == current), None)
     all_ids = sorted({iid for m in usable for iid in m.shares})
 
     patterns: list[PatternTrend] = []
     for iid in all_ids:
-        shares = [float(m.shares.get(iid, 0.0)) for m in usable]
-        present_idx = [k for k, m in enumerate(usable) if iid in m.shares]
-        present_ids = tuple(order_ids[k] for k in present_idx)
-        present_count = len(present_idx)
-        # confidence = best across present matches
-        confs = [m.confidences.get(iid, "Low") for m in usable if iid in m.shares]
+        statuses = [(m, m.status_for(iid)) for m in usable]
+        observable = [m for m, s in statuses if s in (OBSERVED, OBSERVED_ABSENT)]
+        present = [m for m, s in statuses if s is OBSERVED]
+        insufficient_n = sum(1 for _, s in statuses if s is INSUFFICIENT)
+        unavailable_n = sum(1 for _, s in statuses if s is UNAVAILABLE)
+        obs_count, present_count = len(observable), len(present)
+
+        # trend series over OBSERVABLE matches only: measured share when observed, 0 for a
+        # genuine (data-backed) absence; insufficient/unavailable matches are NOT included.
+        series = [float(m.shares.get(iid, 0.0)) for m in observable]
+        present_ids = tuple(m.match_id for m in present)
+        obs_ids = tuple(m.match_id for m in observable)
+
+        confs = [m.confidences.get(iid, "Low") for m in present]
         confidence = min(confs, key=lambda c: _CONF_RANK.get(c, 2)) if confs else "Low"
 
-        cur_m = next((m for m in usable if m.match_id == current), None)
-        current_share = float(cur_m.shares.get(iid, 0.0)) if cur_m else 0.0
-        baseline_matches = [m for m in usable if m.match_id != current]
-        baseline_share = (statistics.fmean(m.shares.get(iid, 0.0) for m in baseline_matches)
-                          if baseline_matches else statistics.fmean(shares))
-        delta = current_share - baseline_share
+        classification = _classify(observable, present_ids, current, th)
+        trend = _trend(series, obs_count, th)
 
-        classification = _classify(present_idx, present_count, U, current in present_ids, th)
-        trend = _trend(shares, present_count, U, th)
-        evidence = tuple(m.evidence[iid] for m in usable if iid in m.evidence)
+        cur_status = cur_m.status_for(iid) if cur_m else UNAVAILABLE
+        current_share = (float(cur_m.shares.get(iid, 0.0))
+                         if cur_m and cur_status in (OBSERVED, OBSERVED_ABSENT) else None)
+        baseline_obs = [m for m in observable if m.match_id != current]
+        if baseline_obs:
+            baseline_share = statistics.fmean(m.shares.get(iid, 0.0) for m in baseline_obs)
+            baseline_status = "Observed"
+        else:
+            baseline_share, baseline_status = None, "Insufficient"
+        delta = (current_share - baseline_share
+                 if current_share is not None and baseline_share is not None else None)
+
+        evidence = tuple(m.evidence[iid] for m in present if iid in m.evidence)
         patterns.append(PatternTrend(
             insight_id=iid, label=_label(iid), category=_category_of(iid),
-            classification=classification, trend=trend, present_count=present_count, usable_count=U,
-            current_share=current_share, baseline_share=baseline_share, delta=delta,
-            confidence=confidence, match_ids=tuple(order_ids), shares=tuple(shares),
-            present_match_ids=present_ids, evidence=evidence))
+            classification=classification, trend=trend, present_count=present_count,
+            observable_count=obs_count, insufficient_count=insufficient_n,
+            unavailable_count=unavailable_n, usable_count=U,
+            current_status=_STATUS_LABEL[cur_status], current_share=current_share,
+            baseline_status=baseline_status, baseline_share=baseline_share, delta=delta,
+            confidence=confidence, match_ids=tuple(order_ids), shares=tuple(series),
+            observable_match_ids=obs_ids, present_match_ids=present_ids, evidence=evidence))
 
     # most tactically significant first: recurrence x strength
-    patterns.sort(key=lambda p: (-(p.present_count * max(p.shares) if p.shares else 0), p.insight_id))
+    patterns.sort(key=lambda p: (-(p.present_count * (max(p.shares) if p.shares else 0)), p.insight_id))
+    insufficient = U < th.min_matches
     return TacticalEvolution(context.subject, len(context.matches), U, excluded, current,
                              tuple(patterns), insufficient)
 
 
-def _classify(present_idx: list[int], present_count: int, U: int, current_present: bool,
+def _classify(observable: list[MatchInsights], present_ids: tuple[str, ...], current: str,
               th: InsightThresholds) -> str:
-    if U < th.min_matches:
+    """Recurrence over OBSERVABLE matches only (family had enough data to judge the
+    pattern). An insufficient-sample match is neither a presence nor an absence — it is
+    simply not in the denominator."""
+    obs_count = len(observable)
+    if obs_count < th.min_matches:
         return "Insufficient"
+    present_count = len(present_ids)
     if present_count == 0:
         return "Mixed"
-    if present_count / U >= th.consistent_fraction:
+    if present_count / obs_count >= th.consistent_fraction:
         return "Consistent"
-    if present_count == 1 and current_present:
+    if present_count == 1 and current in present_ids:
         return "Match-specific"
-    half = U / 2
+    order = [m.match_id for m in observable]         # chronological among observable
+    present_idx = [order.index(mid) for mid in present_ids]
+    half = obs_count / 2
     early = any(k < half for k in present_idx)
     late = any(k >= half for k in present_idx)
     if late and not early:
@@ -300,11 +420,11 @@ def _classify(present_idx: list[int], present_count: int, U: int, current_presen
     return "Mixed"
 
 
-def _trend(shares: list[float], present_count: int, U: int, th: InsightThresholds) -> str:
+def _trend(shares: list[float], obs_count: int, th: InsightThresholds) -> str:
     """Direction of the per-match effect. 'Volatile' means genuine oscillation (up AND
     down), not merely a large one-off step — so a monotonic emergence/decline reads as
     Increasing/Decreasing, while a saw-tooth series reads as Volatile."""
-    if U < th.min_matches or present_count < 2:
+    if obs_count < th.min_matches or len(shares) < 2:
         return "—"
     band = th.trend_stable_band
     small = band / 2

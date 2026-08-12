@@ -1186,13 +1186,24 @@ def _evo_report(w: Studio):
 
 def _evo_row(w: Studio, evo, p, keyprefix: str) -> None:
     conf = {"High": Confidence.HIGH, "Medium": Confidence.MEDIUM}.get(p.confidence, Confidence.LOW)
-    delta = f"{p.delta_pp:+g} pp" if p.usable_count > 1 else ""
-    meta_bits = [f"{p.present_count}/{p.usable_count} matches"]
+    # recurrence uses OBSERVABLE matches (family had enough data), never usable-count 0-padding
+    meta_bits = [f"{p.present_count} / {p.observable_count} observed matches"]
+    cov = []
+    if p.insufficient_count:
+        cov.append(f"{p.insufficient_count} insufficient")
+    if p.unavailable_count:
+        cov.append(f"{p.unavailable_count} unavailable")
+    if cov:
+        meta_bits.append(", ".join(cov))
     if p.trend != "—":
         meta_bits.append(f"trend: {p.trend}")
-    if delta:
+    if p.delta is not None and p.current_share is not None and p.baseline_share is not None:
         meta_bits.append(f"current vs baseline: {p.current_share * 100:.0f}% vs "
-                         f"{p.baseline_share * 100:.0f}% ({delta})")
+                         f"{p.baseline_share * 100:.0f}% ({p.delta_pp:+g} pp)")
+    elif p.current_status != "Observed":
+        meta_bits.append(f"current match: {p.current_status.lower()}")
+    elif p.baseline_status == "Insufficient":
+        meta_bits.append("baseline: insufficient evidence")
     with st.container(key=f"{keyprefix}_{p.insight_id}"):
         st.markdown(
             f'<div class="evo-row"><div class="evo-top">{_tac_badge(conf)}'

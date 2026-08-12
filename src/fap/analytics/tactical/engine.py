@@ -52,7 +52,29 @@ class TacticalInsightEngine:
             insights=tuple(insights),
             notices=tuple(self._notices(ctx)),
             subject=ctx.subject, quality=round(ctx.quality, 1), n_events=ctx.n_events,
-            coverage=dict(ctx.caps))
+            coverage=dict(ctx.caps), families=self._families(ctx))
+
+    def _families(self, ctx: InsightContext) -> dict:
+        """Per-analysis-family denominators + availability. A consumer can tell a
+        non-firing insight (family had enough data, pattern just wasn't dominant) apart
+        from an insufficient/unavailable family — the key to correct multi-match
+        aggregation. Denominators mirror the exact subsets the rules gate on."""
+        th, caps = self.th, ctx.caps
+        return {
+            "progression": {"available": bool(caps["end_coords"] and caps["movement_events"]),
+                            "n": int(len(ctx.progressive)), "min": th.min_progressive_actions},
+            "final_third": {"available": bool(caps["end_coords"]),
+                            "n": int(len(ctx.final_third_entries)), "min": th.min_final_third_entries},
+            "box": {"available": bool(caps["end_coords"]),
+                    "n": int(len(ctx.box_entries)), "min": th.min_box_entries},
+            "recoveries": {"available": bool(caps["recovery_events"]),
+                           "n": int(len(ctx.recoveries)), "min": th.min_recoveries},
+            "transitions": {"available": bool(caps["recovery_events"] and caps["end_coords"]
+                                              and (caps["sequence"] or caps["timestamps"])),
+                            "n": int(len(ctx.rec_transitions)), "min": th.min_transition_recoveries},
+            "turnovers": {"available": bool(caps["coords"]),
+                          "n": int(len(ctx.turnovers)), "min": th.min_turnovers},
+        }
 
     # -- internals -----------------------------------------------------------
     @staticmethod

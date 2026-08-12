@@ -117,6 +117,9 @@ class InsightReport:
     quality: float = 0.0                    # overall data-quality score (0-100)
     n_events: int = 0
     coverage: dict = field(default_factory=dict)   # capability flags (coords/players/…)
+    families: dict = field(default_factory=dict)   # family -> {available, n, min}: lets a
+    #   consumer tell a non-firing insight (below threshold) apart from an insufficient/
+    #   unavailable family, WITHOUT recomputing analytics.
 
     # ---- summary helpers (used by the UI header) ----
     @property
@@ -151,6 +154,7 @@ class InsightReport:
             "quality": self.quality,
             "n_events": self.n_events,
             "coverage": dict(self.coverage),
+            "families": {k: dict(v) for k, v in self.families.items()},
             "summary": {"count": self.count, "high_confidence": self.high_confidence,
                         "high_priority": self.high_priority, "categories": self.categories()},
         }
