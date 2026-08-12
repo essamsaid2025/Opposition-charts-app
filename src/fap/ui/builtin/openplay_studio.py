@@ -26,7 +26,7 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from fap.analytics.tactical import Confidence, TacticalInsightEngine
+from fap.analytics.tactical import Confidence, TacticalInsightEngine, build_profile
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.openplay.engine import get_engine
@@ -1012,6 +1012,120 @@ def _panel_tactical(w: Studio) -> None:
         _tac_card(w, ins)
 
 
+# ---- Opponent Tactical Profile (P1: orchestrates the P0 report, filter-aware) -----
+_COV_DOT = {"ok": "good", "limited": "warn", "missing": "bad"}
+
+
+def _prof_evidence_button(w: Studio, by_id: dict, key: str, insight_id: str | None) -> None:
+    """Reuse the corrected P0 evidence pathway: resolve the underlying insight and
+    call _open_evidence (which scopes team/player/event/zone via the existing filters)."""
+    ins = by_id.get(insight_id) if insight_id else None
+    if ins is not None and ins.supporting_viz is not None:
+        st.button("View evidence", key=key, on_click=_open_evidence, args=(w, ins),
+                  use_container_width=True, help=ins.supporting_viz.description)
+
+
+def _prof_section_card(w: Studio, by_id: dict, sec) -> None:
+    if sec.available:
+        lines = "".join(f"<li>{_html.escape(l)}</li>" for l in sec.lines)
+        body = (f'<div class="prof-headline">{_html.escape(sec.headline)}</div>'
+                f'<ul class="prof-lines">{lines}</ul>')
+    else:
+        body = f'<div class="prof-unavail">{_html.escape(sec.reason)}</div>'
+    with st.container(key=f"prof_sec_{sec.id}"):
+        st.markdown(f'<div class="prof-sec-title">{_html.escape(sec.title)}</div>{body}',
+                    unsafe_allow_html=True)
+        if sec.available:
+            _prof_evidence_button(w, by_id, f"prof_ev_{sec.id}", sec.primary_insight_id)
+
+
+def _panel_profile(w: Studio) -> None:
+    if w.filtered is None or getattr(w.filtered, "empty", True):
+        C.render_empty_state("No opponent profile", "The profile appears once events match the current "
+                             "filters.", icon_name="target"); return
+    report = _tac_report(w)
+    if report is None:
+        C.render_empty_state("No opponent profile", "Adjust the filters to analyse a set of events.",
+                             icon_name="target"); return
+    profile = build_profile(report)
+    by_id = {i.id: i for i in report.insights}
+
+    # ---- header: confidence + data quality + insights used ----
+    limited = ' · <span class="prof-limited">Limited evidence</span>' if profile.limited_evidence else ""
+    st.markdown(
+        f'<div class="prof-head"><div class="prof-h-title">Opponent Tactical Profile</div>'
+        f'<div class="prof-h-sub">{_html.escape(profile.subject)} · {profile.n_events:,} events</div>'
+        f'<div class="prof-stats">'
+        f'<span class="prof-stat">{_tac_badge(profile.confidence)}</span>'
+        f'<span class="prof-stat">Data quality <b>{profile.data_quality:.0f}/100</b></span>'
+        f'<span class="prof-stat">Insights used <b>{profile.insights_used}</b></span>'
+        f'{limited}</div></div>', unsafe_allow_html=True)
+
+    for note in report.notices:
+        C.render_alert(note, "info")
+
+    # ---- Tactical DNA summary ----
+    if profile.summary:
+        dna = "".join(f'<div class="prof-dna-row"><div class="k">{_html.escape(s.heading)}</div>'
+                      f'<div class="v">{_html.escape(s.text)}</div></div>' for s in profile.summary)
+        st.markdown(f'<div class="prof-dna"><div class="prof-block-h">Tactical DNA</div>{dna}</div>',
+                    unsafe_allow_html=True)
+
+    # ---- sections (available + explicit unavailable) ----
+    st.markdown('<div class="prof-block-h">Profile</div>', unsafe_allow_html=True)
+    for sec in profile.sections:
+        _prof_section_card(w, by_id, sec)
+
+    # ---- key players ----
+    if profile.key_players:
+        st.markdown('<div class="prof-block-h">Key Players</div>', unsafe_allow_html=True)
+        for kp in profile.key_players:
+            metrics = " · ".join(kp.metrics[:3])
+            with st.container(key=f"prof_kp_{kp.name}"):
+                st.markdown(
+                    f'<div class="prof-kp"><div class="prof-kp-top">'
+                    f'<span class="prof-kp-name">{_html.escape(kp.name)}</span>{_tac_badge(kp.confidence)}</div>'
+                    f'<div class="prof-kp-role">{_html.escape(kp.role)}</div>'
+                    f'<div class="prof-kp-metrics">{_html.escape(metrics)}</div></div>',
+                    unsafe_allow_html=True)
+                _prof_evidence_button(w, by_id, f"prof_kp_ev_{kp.name}", kp.primary_insight_id)
+
+    # ---- strengths ----
+    st.markdown('<div class="prof-block-h">Key Strengths</div>', unsafe_allow_html=True)
+    if not profile.key_strengths:
+        C.render_empty_state("No high-confidence strengths", "No pattern cleared the confidence bar for "
+                             "this selection.", icon_name="shield")
+    for n, it in enumerate(profile.key_strengths):
+        with st.container(key=f"prof_str_{n}"):
+            st.markdown(
+                f'<div class="prof-item"><div class="prof-item-top">{_tac_badge(it.confidence)}</div>'
+                f'<div class="prof-item-text">{_html.escape(it.text)}</div>'
+                f'<div class="prof-item-detail">{_html.escape(it.detail)}</div></div>',
+                unsafe_allow_html=True)
+            _prof_evidence_button(w, by_id, f"prof_str_ev_{n}", it.primary_insight_id)
+
+    # ---- vulnerabilities (never invented) ----
+    st.markdown('<div class="prof-block-h">Potential Vulnerabilities</div>', unsafe_allow_html=True)
+    if not profile.vulnerabilities:
+        C.render_alert("No high-confidence vulnerability identified from the available data.", "info")
+    for n, it in enumerate(profile.vulnerabilities):
+        with st.container(key=f"prof_vul_{n}"):
+            st.markdown(
+                f'<div class="prof-item prof-vuln"><div class="prof-item-top">{_tac_badge(it.confidence)}</div>'
+                f'<div class="prof-item-text">{_html.escape(it.text)}</div>'
+                f'<div class="prof-item-detail">{_html.escape(it.detail)}</div></div>',
+                unsafe_allow_html=True)
+            _prof_evidence_button(w, by_id, f"prof_vul_ev_{n}", it.primary_insight_id)
+
+    # ---- data coverage ----
+    dots = "".join(
+        f'<div class="prof-cov-row"><span class="dot {_COV_DOT.get(c.status, "bad")}"></span>'
+        f'<span class="l">{_html.escape(c.label)}</span><b>{_html.escape(c.status)}</b></div>'
+        for c in profile.coverage)
+    st.markdown(f'<div class="prof-cov"><div class="prof-block-h">Data Coverage</div>{dots}</div>',
+                unsafe_allow_html=True)
+
+
 def _panel_selection(w: Studio) -> None:
     C.render_empty_state("No selection", "Selected chart elements will show here (Phase 16B).",
                          icon_name="target")
@@ -1134,7 +1248,8 @@ PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
     "center": [("stage", "Stage", _panel_stage, "view")],
     "right": [("inspector", "Inspector", _panel_inspector, "input"),
               ("export", "Export", _panel_export, "view")],
-    "bottom": [("tactical", "Tactical Insights", _panel_tactical, "view"),
+    "bottom": [("profile", "Opponent Profile", _panel_profile, "view"),
+               ("tactical", "Tactical Insights", _panel_tactical, "view"),
                ("history", "History", _panel_history, "view"),
                ("insights", "Quick Insights", _panel_insights, "view"),
                ("selection", "Selection", _panel_selection, "view"),
@@ -1596,5 +1711,56 @@ class OpenPlayStudioPage(Page):
   font-size: 12.5px; color: var(--fap-text-muted); padding: 2px 0;
   border-bottom: 1px dashed var(--fap-border); }
 .tac-ev li b { color: var(--fap-text); font-weight: 700; font-variant-numeric: tabular-nums; }
+/* ---- Opponent Tactical Profile (P1) ---- */
+.prof-head { margin: 2px 2px 12px; }
+.prof-h-title { font-size: 1.2rem; font-weight: 850; letter-spacing: -.01em; }
+.prof-h-sub { font-size: 12px; color: var(--fap-text-muted); margin-top: 1px; }
+.prof-stats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 9px; align-items: center; }
+.prof-stat { font-size: 12px; color: var(--fap-text-muted); }
+.prof-stat b { color: var(--fap-text); font-weight: 800; }
+.prof-limited { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+  color: #b9820c; background: rgba(224,164,23,.16); border-radius: 999px; padding: 2px 9px; }
+.prof-block-h { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin: 14px 2px 8px; }
+.prof-dna { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-radius: 12px; padding: 10px 14px; }
+.prof-dna .prof-block-h { margin-top: 2px; }
+.prof-dna-row { display: flex; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--fap-border); }
+.prof-dna-row:last-child { border-bottom: none; }
+.prof-dna-row .k { flex: 0 0 130px; font-size: 11px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--fap-text-subtle); padding-top: 1px; }
+.prof-dna-row .v { font-size: 13px; color: var(--fap-text); line-height: 1.4; }
+[class*="st-key-prof_sec_"] { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-left: 3px solid var(--fap-primary); border-radius: 12px; padding: 11px 14px 6px; margin-bottom: 10px; }
+.prof-sec-title { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin-bottom: 4px; }
+.prof-headline { font-size: 1.0rem; font-weight: 800; line-height: 1.25; margin-bottom: 5px; }
+.prof-lines { list-style: none; margin: 0; padding: 0; }
+.prof-lines li { font-size: 12.5px; color: var(--fap-text-muted); padding: 2px 0 2px 12px;
+  position: relative; line-height: 1.35; }
+.prof-lines li::before { content: "•"; position: absolute; left: 0; color: var(--fap-primary); }
+.prof-unavail { font-size: 12.5px; color: var(--fap-text-subtle); font-style: italic; padding: 2px 0 6px; }
+[class*="st-key-prof_kp_"], [class*="st-key-prof_str_"], [class*="st-key-prof_vul_"] {
+  background: var(--fap-surface); border: 1px solid var(--fap-border); border-radius: 12px;
+  padding: 10px 14px 6px; margin-bottom: 8px; }
+.prof-kp-top, .prof-item-top { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.prof-kp-name { font-size: 1.0rem; font-weight: 800; }
+.prof-kp-role { font-size: 12.5px; color: var(--fap-text); }
+.prof-kp-metrics { font-size: 12px; color: var(--fap-text-muted); font-variant-numeric: tabular-nums;
+  margin-top: 2px; }
+.prof-item-text { font-size: 0.98rem; font-weight: 750; }
+.prof-item-detail { font-size: 12.5px; color: var(--fap-text-muted); line-height: 1.35; margin-top: 2px; }
+[class*="st-key-prof_vul_"] { border-left: 3px solid #e0a417; }
+.prof-cov { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-radius: 12px; padding: 8px 14px 10px; margin-bottom: 10px; }
+.prof-cov .prof-block-h { margin-top: 2px; }
+.prof-cov-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+  color: var(--fap-text-muted); padding: 3px 0; }
+.prof-cov-row .l { flex: 1; }
+.prof-cov-row b { color: var(--fap-text); font-weight: 700; text-transform: capitalize; }
+.prof-cov-row .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+.prof-cov-row .dot.good { background: #2ecc71; }
+.prof-cov-row .dot.warn { background: #f1c40f; }
+.prof-cov-row .dot.bad { background: #e74c3c; }
 </style>
 """, unsafe_allow_html=True)

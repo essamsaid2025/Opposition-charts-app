@@ -118,6 +118,7 @@ class InsightContext:
             "end_coords": _frac_filled(df, "x2") > 0.3 and _frac_filled(df, "y2") > 0.3,
             "players": _frac_filled(df, "player") > 0.3,
             "timestamps": _frac_filled(df, "minute") > 0.3,
+            "sequence": _frac_filled(df, "sequence_id") > 0.3,
             "recovery_events": len(recoveries) > 0,
             "movement_events": len(movement) > 0,
         }
@@ -127,7 +128,7 @@ class InsightContext:
                    recoveries=recoveries)
 
 
-_CAP_KEYS = ("coords", "end_coords", "players", "timestamps",
+_CAP_KEYS = ("coords", "end_coords", "players", "timestamps", "sequence",
              "recovery_events", "movement_events")
 
 

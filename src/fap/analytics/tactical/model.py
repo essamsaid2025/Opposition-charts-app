@@ -114,6 +114,7 @@ class InsightReport:
     subject: str = ""
     quality: float = 0.0                    # overall data-quality score (0-100)
     n_events: int = 0
+    coverage: dict = field(default_factory=dict)   # capability flags (coords/players/…)
 
     # ---- summary helpers (used by the UI header) ----
     @property
@@ -147,6 +148,7 @@ class InsightReport:
             "subject": self.subject,
             "quality": self.quality,
             "n_events": self.n_events,
+            "coverage": dict(self.coverage),
             "summary": {"count": self.count, "high_confidence": self.high_confidence,
                         "high_priority": self.high_priority, "categories": self.categories()},
         }

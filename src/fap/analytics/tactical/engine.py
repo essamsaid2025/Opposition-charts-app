@@ -51,7 +51,8 @@ class TacticalInsightEngine:
         return InsightReport(
             insights=tuple(insights),
             notices=tuple(self._notices(ctx)),
-            subject=ctx.subject, quality=round(ctx.quality, 1), n_events=ctx.n_events)
+            subject=ctx.subject, quality=round(ctx.quality, 1), n_events=ctx.n_events,
+            coverage=dict(ctx.caps))
 
     # -- internals -----------------------------------------------------------
     @staticmethod

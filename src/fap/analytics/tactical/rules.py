@@ -98,7 +98,7 @@ def _side_dominance(ctx: InsightContext, th: InsightThresholds, target_lane: str
         supporting_viz=SupportingViz(
             description=f"Progressive passes & carries in the {side} corridor",
             viz_hint="progress", event_types=("pass", "carry"), lane=target_lane),
-        meta={"share": share, "margin": margin})
+        meta={"share": share, "margin": margin, "side": side, "lane": target_lane})
 
 
 def rule_left_progression(ctx, th):   # 1
@@ -213,7 +213,7 @@ def rule_final_third_entry_concentration(ctx: InsightContext, th: InsightThresho
         supporting_viz=SupportingViz(
             description=f"Passes & carries entering the final third ({side})",
             viz_hint="final third", event_types=("pass", "carry"), lane=name, third="Final Third"),
-        meta={"share": share, "margin": margin})
+        meta={"share": share, "margin": margin, "side": side, "lane": name})
 
 
 def rule_preferred_attacking_corridor(ctx: InsightContext, th: InsightThresholds) -> Insight | None:  # 7
@@ -277,7 +277,7 @@ def rule_box_entry_concentration(ctx: InsightContext, th: InsightThresholds) -> 
         supporting_viz=SupportingViz(
             description=f"Entries into the penalty area ({side})",
             viz_hint="box", event_types=("pass", "cross", "carry"), lane=name),
-        meta={"share": share, "margin": margin})
+        meta={"share": share, "margin": margin, "side": side, "lane": name})
 
 
 # ================================================================ Recoveries (9-10)

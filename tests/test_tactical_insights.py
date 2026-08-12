@@ -271,8 +271,8 @@ def test_ui_panel_wired_and_evidence_maps_to_real_visualizations():
     # the panel is wired into the Studio's bottom region, and the existing quick
     # insights panel is preserved (additive, not a replacement)
     bottom_ids = [p[0] for p in S.PANELS["bottom"]]
-    assert bottom_ids[0] == "tactical"
-    assert "insights" in bottom_ids
+    assert "tactical" in bottom_ids
+    assert "insights" in bottom_ids            # existing quick-insights panel preserved
 
     # every supporting-viz hint the rules emit resolves to a real registry chart
     for hint, ets in [("progress", ("pass", "carry")), ("recovery", ("recovery",)),
