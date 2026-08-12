@@ -18,15 +18,18 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from fap.analytics.tactical.transitions import (
+    RECOVERY_EVENTS, build_recovery_transitions, build_turnovers,
+)
 from fap.openplay.config import ARROW_EVENTS
 from fap.openplay.transforms import add_derived_columns
 from fap.pipeline.quality import score as quality_score
 from fap.pipeline.schema import coerce_schema
 
-# Ball-recovery family — a defensive regain of possession. Kept narrower than the
-# app's DEF_EVENTS (which also includes clearances/blocks) because "recovery"
-# analysis is specifically about winning the ball back.
-RECOVERY_EVENTS = ("recovery", "ball recovery", "ball_recovery", "interception", "tackle")
+# RECOVERY_EVENTS is defined once in transitions.py and re-exported here so existing
+# imports (and the recovery rules) keep working unchanged.
+__all__ = ["InsightContext", "RECOVERY_EVENTS", "channel_of", "counts_and_total",
+           "event_ids", "CHANNEL_NAMES"]
 
 # 5-channel vertical corridors on the 0-100 width grid (attacking left->right):
 # left wing, left half-space, central, right half-space, right wing.
@@ -86,6 +89,9 @@ class InsightContext:
     final_third_entries: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
     box_entries: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
     recoveries: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
+    turnovers: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
+    rec_transitions: pd.DataFrame = field(default_factory=lambda: pd.DataFrame())
+    speed_available: bool = False
 
     @classmethod
     def build(cls, frame: pd.DataFrame) -> "InsightContext":
@@ -122,10 +128,19 @@ class InsightContext:
             "recovery_events": len(recoveries) > 0,
             "movement_events": len(movement) > 0,
         }
+        turnovers = build_turnovers(df)
+        # transitions need a way to order the follow-up (sequence OR timestamps) plus
+        # recoveries and end coordinates; otherwise they stay unavailable (no fabrication)
+        can_transition = (caps["recovery_events"] and caps["end_coords"]
+                          and (caps["sequence"] or caps["timestamps"]))
+        rec_trans = (build_recovery_transitions(df, use_sequence=caps["sequence"],
+                                                use_time=caps["timestamps"])
+                     if can_transition else pd.DataFrame())
         return cls(df=df, n_events=n, subject=subject, quality=quality, caps=caps,
                    movement=movement, progressive=progressive,
                    final_third_entries=ft_entries, box_entries=box_entries,
-                   recoveries=recoveries)
+                   recoveries=recoveries, turnovers=turnovers, rec_transitions=rec_trans,
+                   speed_available=caps["timestamps"])
 
 
 _CAP_KEYS = ("coords", "end_coords", "players", "timestamps", "sequence",

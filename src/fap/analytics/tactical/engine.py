@@ -81,6 +81,12 @@ class TacticalInsightEngine:
         elif len(ctx.recoveries) < th.min_recoveries:
             out.append(f"Recovery analysis inconclusive: only {len(ctx.recoveries)} recoveries "
                        f"(need {th.min_recoveries}).")
+        if ctx.caps["recovery_events"] and not (ctx.caps["sequence"] or ctx.caps["timestamps"]):
+            out.append("Transition analysis unavailable: sequence or timestamp information is required "
+                       "to order the actions after a recovery.")
+        elif 0 < len(ctx.rec_transitions) < th.min_transition_recoveries:
+            out.append(f"Transition analysis inconclusive: only {len(ctx.rec_transitions)} recoveries "
+                       f"with follow-up (need {th.min_transition_recoveries}).")
         if not ctx.caps["players"]:
             out.append("Player insights unavailable: player names are missing from the data.")
         if ctx.quality < th.min_quality:

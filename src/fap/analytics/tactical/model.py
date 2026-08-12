@@ -21,6 +21,8 @@ class InsightCategory(str, Enum):
     BUILD_UP = "Build-up"
     FINAL_THIRD = "Final Third"
     RECOVERIES = "Recoveries"
+    TRANSITIONS = "Transitions"
+    VULNERABILITY = "Vulnerability"
     PLAYERS = "Players"
 
 

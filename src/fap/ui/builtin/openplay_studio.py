@@ -26,7 +26,10 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from fap.analytics.tactical import Confidence, TacticalInsightEngine, build_profile
+from fap.analytics.tactical import (
+    Confidence, SupportingViz, TacticalInsightEngine, analyze_evolution, build_multimatch,
+    build_profile,
+)
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.openplay.engine import get_engine
@@ -53,6 +56,8 @@ VIEW = K + "active_view"     # active saved-view id (for status)
 TAC_CAT = K + "tac_cat"      # selected Tactical Insights category filter
 TAC_CACHE = K + "tac_cache"  # {key: InsightReport} — cache per filtered selection
 AUTOR = K + "autorender"     # one-shot: render the stage immediately (evidence deep-link)
+EVO_WIN = K + "evo_window"   # Tactical Evolution baseline window
+EVO_CACHE = K + "evo_cache"  # {key: TacticalEvolution}
 
 VIEW_KIND = "openplay_view"      # WorkspaceManager preset kind (metadata only)
 FAV_SCOPE = "openplay_favorites"  # WorkspaceManager autosave scope
@@ -1126,6 +1131,144 @@ def _panel_profile(w: Studio) -> None:
                 unsafe_allow_html=True)
 
 
+# ---- Tactical Evolution (P2: multi-match trends over the P0 per-match reports) -----
+_EVO_WINDOWS = ("All matches", "Last 5", "Last 10")
+
+
+def _open_match_evidence(w: Studio, ref) -> None:
+    """Open the supporting evidence for a specific match + insight. Reuses the same
+    filter engine and the corrected player-scope pathway (via _evidence_selections),
+    then adds the match filter — player evidence stays scoped to the player."""
+    viz = _match_viz(w.engine, ref.viz_hint, ref.event_types)
+    if viz:
+        st.session_state[VIZ] = viz
+        st.session_state[CAT] = "All"
+    sv = SupportingViz(description="", event_types=tuple(ref.event_types), players=tuple(ref.players))
+    new = _evidence_selections(_selections(), sv, w.frame)
+    if ref.match_id:
+        new["match"] = str(ref.match_id)
+    st.session_state[SEL] = new
+    for wk in ("ops_viz", "ops_cat", "ops_f_event_types", "ops_f_players", "ops_f_match"):
+        st.session_state.pop(wk, None)
+    st.session_state[AUTOR] = True
+    _log(f"Opened match evidence: {ref.insight_id} @ {ref.match_id}")
+
+
+def _evo_report(w: Studio):
+    """Build the multi-match evolution over the CURRENT filtered context (all matches,
+    other filters preserved). Cached per selection + window (one P0 pass per match)."""
+    if w.frame is None or getattr(w.frame, "empty", True) or "match_id" not in w.frame.columns:
+        return None
+    sel = _selections()
+    sel_mm = dict(sel)
+    sel_mm["match"] = "All"                       # keep every match; preserve the other filters
+    sample = w.engine.apply_filters(w.frame, sel_mm)
+    if sample is None or getattr(sample, "empty", True):
+        return None
+    win = st.session_state.get(EVO_WIN, "All matches")
+    ids = list(dict.fromkeys(sample["match_id"].astype(str)))
+    current = sel.get("match") if sel.get("match", "All") not in ("All", None) else None
+    if win.startswith("Last"):
+        n = int(win.split()[1])
+        keep = ids[-n:]
+        if current and current not in keep:
+            keep = (keep + [current])[-n:]
+        sample = sample[sample["match_id"].astype(str).isin(keep)]
+    cache = _ss(EVO_CACHE, dict)
+    key = json.dumps({"sel": sel_mm, "win": win, "cur": current, "n": int(len(sample)),
+                      "ds": st.session_state.get(K + "ds_name", "")}, sort_keys=True, default=str)
+    if key not in cache:
+        cache[key] = analyze_evolution(build_multimatch(sample, current_match=current))
+        for k in list(cache)[:-4]:
+            cache.pop(k, None)
+    return cache[key]
+
+
+def _evo_row(w: Studio, evo, p, keyprefix: str) -> None:
+    conf = {"High": Confidence.HIGH, "Medium": Confidence.MEDIUM}.get(p.confidence, Confidence.LOW)
+    delta = f"{p.delta_pp:+g} pp" if p.usable_count > 1 else ""
+    meta_bits = [f"{p.present_count}/{p.usable_count} matches"]
+    if p.trend != "—":
+        meta_bits.append(f"trend: {p.trend}")
+    if delta:
+        meta_bits.append(f"current vs baseline: {p.current_share * 100:.0f}% vs "
+                         f"{p.baseline_share * 100:.0f}% ({delta})")
+    with st.container(key=f"{keyprefix}_{p.insight_id}"):
+        st.markdown(
+            f'<div class="evo-row"><div class="evo-top">{_tac_badge(conf)}'
+            f'<span class="evo-cat">{_html.escape(p.category)}</span></div>'
+            f'<div class="evo-label">{_html.escape(p.label)}</div>'
+            f'<div class="evo-meta">{_html.escape(" · ".join(meta_bits))}</div></div>',
+            unsafe_allow_html=True)
+        ref = next((e for e in p.evidence if e.match_id == evo.current_id),
+                   p.evidence[-1] if p.evidence else None)
+        if ref is not None:
+            st.button(f"View evidence (match {ref.match_id})", key=f"{keyprefix}_ev_{p.insight_id}",
+                      on_click=_open_match_evidence, args=(w, ref), use_container_width=True)
+
+
+def _panel_evolution(w: Studio) -> None:
+    if w.frame is None or getattr(w.frame, "empty", True):
+        C.render_empty_state("No tactical evolution", "Trends appear once a dataset with matches is "
+                             "active.", icon_name="analysis"); return
+    evo = _evo_report(w)
+    if evo is None:
+        C.render_empty_state("No tactical evolution", "Adjust filters to include match events.",
+                             icon_name="analysis"); return
+
+    st.markdown(
+        f'<div class="evo-head"><div class="evo-h-title">Tactical Evolution</div>'
+        f'<div class="evo-h-sub">{_html.escape(evo.subject)} · {evo.usable_count} of {evo.match_count} '
+        f'matches usable · current: {_html.escape(str(evo.current_id) or "—")}</div></div>',
+        unsafe_allow_html=True)
+
+    # ---- baseline window picker ----
+    cur_win = st.session_state.get(EVO_WIN, "All matches")
+    cols = st.columns(len(_EVO_WINDOWS))
+    for c, win in zip(cols, _EVO_WINDOWS):
+        if c.button(win, key=f"evo_win_{win}", use_container_width=True,
+                    type="primary" if win == cur_win else "secondary"):
+            st.session_state[EVO_WIN] = win
+            st.rerun()
+
+    if evo.match_count < 2:
+        C.render_alert("Multi-match analysis needs at least 2 matches in the current selection. "
+                       "Import or include more matches to see trends.", "info")
+    if evo.excluded:                              # data-quality transparency
+        ex = "; ".join(f"{mid} ({reason})" for mid, reason in evo.excluded)
+        C.render_alert(f"Excluded from the baseline: {ex}.", "info")
+    if evo.insufficient and evo.usable_count:
+        C.render_alert(f"Only {evo.usable_count} usable match(es); a trend/consistency claim needs more. "
+                       "Showing available evidence only.", "info")
+
+    consistent = evo.consistent()
+    changing = [p for p in evo.changing() if p.classification != "Consistent"]
+    emerging = evo.emerging()
+    cvb = evo.current_vs_baseline()
+
+    if not (consistent or changing or emerging or cvb):
+        C.render_empty_state("No multi-match patterns", "No pattern recurred or changed enough across the "
+                             "selected matches to report.", icon_name="shield")
+        return
+
+    if consistent:
+        st.markdown('<div class="evo-block-h">Consistent Patterns</div>', unsafe_allow_html=True)
+        for p in consistent:
+            _evo_row(w, evo, p, "evo_con")
+    if changing:
+        st.markdown('<div class="evo-block-h">Key Changes</div>', unsafe_allow_html=True)
+        for p in changing:
+            _evo_row(w, evo, p, "evo_chg")
+    if emerging:
+        st.markdown('<div class="evo-block-h">Emerging</div>', unsafe_allow_html=True)
+        for p in emerging:
+            _evo_row(w, evo, p, "evo_emg")
+    if cvb:
+        st.markdown('<div class="evo-block-h">Current Match vs Baseline</div>', unsafe_allow_html=True)
+        for p in cvb:
+            _evo_row(w, evo, p, "evo_cvb")
+
+
 def _panel_selection(w: Studio) -> None:
     C.render_empty_state("No selection", "Selected chart elements will show here (Phase 16B).",
                          icon_name="target")
@@ -1250,6 +1393,7 @@ PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
               ("export", "Export", _panel_export, "view")],
     "bottom": [("profile", "Opponent Profile", _panel_profile, "view"),
                ("tactical", "Tactical Insights", _panel_tactical, "view"),
+               ("evolution", "Tactical Evolution", _panel_evolution, "view"),
                ("history", "History", _panel_history, "view"),
                ("insights", "Quick Insights", _panel_insights, "view"),
                ("selection", "Selection", _panel_selection, "view"),
@@ -1762,5 +1906,20 @@ class OpenPlayStudioPage(Page):
 .prof-cov-row .dot.good { background: #2ecc71; }
 .prof-cov-row .dot.warn { background: #f1c40f; }
 .prof-cov-row .dot.bad { background: #e74c3c; }
+/* ---- Tactical Evolution (P2) ---- */
+.evo-head { margin: 2px 2px 10px; }
+.evo-h-title { font-size: 1.2rem; font-weight: 850; letter-spacing: -.01em; }
+.evo-h-sub { font-size: 12px; color: var(--fap-text-muted); margin-top: 1px; }
+.evo-block-h { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin: 14px 2px 8px; }
+[class*="st-key-evo_con_"], [class*="st-key-evo_chg_"], [class*="st-key-evo_emg_"],
+[class*="st-key-evo_cvb_"] { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-left: 3px solid var(--fap-primary); border-radius: 12px; padding: 10px 14px 6px; margin-bottom: 8px; }
+.evo-top { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.evo-cat { font-size: 10.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--fap-text-subtle); }
+.evo-label { font-size: 1.0rem; font-weight: 800; line-height: 1.2; }
+.evo-meta { font-size: 12.5px; color: var(--fap-text-muted); margin-top: 2px;
+  font-variant-numeric: tabular-nums; }
 </style>
 """, unsafe_allow_html=True)

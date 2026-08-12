@@ -42,6 +42,30 @@ class InsightThresholds:
     high_score: float = 0.66
     medium_score: float = 0.38
 
+    # ---- P2: transitions ----
+    min_transition_recoveries: int = 12    # recoveries needed to profile transitions
+    transition_share: float = 0.35         # share of recoveries leading to an outcome to be notable
+    strong_transition_share: float = 0.55
+    rapid_transition_seconds: float = 6.0  # recovery -> first attacking action = "rapid"
+    min_transition_shots: int = 3          # absolute floor for a recovery->shot claim
+
+    # ---- P2: turnovers / vulnerabilities ----
+    min_turnovers: int = 20                # turnovers needed for a zone/route vulnerability
+    turnover_zone_share: float = 0.40      # share of turnovers in a zone to concentrate
+    min_route_attempts: int = 25           # movement attempts through a corridor (denominator)
+    high_turnover_rate: float = 0.45       # loss rate along a route to flag failed progression
+    strong_turnover_rate: float = 0.60
+    min_ft_for_efficiency: int = 20        # final-third entries needed to judge efficiency
+    low_box_conversion: float = 0.20       # box entries / final-third entries below => inefficient
+    low_shot_conversion: float = 0.12      # shots / final-third entries below => inefficient
+
+    # ---- P2: multi-match ----
+    min_matches: int = 3                   # matches needed for a trend/consistency claim
+    min_events_per_match: int = 40         # a match below this is excluded (data quality)
+    consistent_fraction: float = 0.6       # present in >= this fraction of usable matches
+    trend_stable_band: float = 0.06        # |slope span| within this => "stable"
+    trend_volatile_std: float = 0.16       # share stdev above this => "volatile"
+
 
 DEFAULT_THRESHOLDS = InsightThresholds()
 

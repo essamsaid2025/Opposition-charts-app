@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from fap.analytics.tactical.model import Confidence, Insight, InsightReport, Priority
+from fap.analytics.tactical.model import (
+    Confidence, Insight, InsightCategory, InsightReport, Priority,
+)
 from fap.analytics.tactical.thresholds import DEFAULT_THRESHOLDS
 
 _PRIORITY_RANK = {Priority.HIGH: 0, Priority.MEDIUM: 1, Priority.LOW: 2}
@@ -144,12 +146,12 @@ class TacticalProfileBuilder:
             self._build_up(ins, subject),
             self._progression(ins, subject),
             self._final_third(ins, subject),
-            self._transitions(report),
+            self._transitions(report, subject),
             self._recoveries(ins, subject, bool((report.coverage or {}).get("recovery_events"))),
         )
         key_players = self._key_players(ins)
         strengths = self._strengths(report)
-        vulns = self._vulnerabilities(ins, subject)
+        vulns = self._vulnerabilities(report, ins, subject)
         summary = self._summary(sections, key_players, subject)
 
         referenced: set[str] = set()
@@ -272,18 +274,23 @@ class TacticalProfileBuilder:
         return ProfileSection("final_third", "Final Third", headline, tuple(lines),
                               tuple(c.id for c in contributors), contributors[0].id)
 
-    def _transitions(self, report: InsightReport) -> ProfileSection:
-        cov = report.coverage or {}
-        if not (cov.get("sequence") and cov.get("timestamps")):
+    def _transitions(self, report: InsightReport, subject: str) -> ProfileSection:
+        trans = [i for i in report.insights if i.category is InsightCategory.TRANSITIONS]
+        if trans:                                     # populated by the P2 transition rules
+            primary = trans[0]                        # report is priority/confidence ordered
             return ProfileSection(
-                "transitions", "Transitions", "", available=False,
-                reason="The current dataset does not contain sufficient sequence/timestamp "
-                       "information to profile transitions.")
-        # sequence + timestamps exist, but the engine models no transition patterns yet
-        return ProfileSection(
-            "transitions", "Transitions", "", available=False,
-            reason="Sequence and timestamp data are present, but transition patterns are not modelled "
-                   "in the current engine — no transition claims are made.")
+                "transitions", "Transitions", primary.short_explanation,
+                lines=tuple(t.short_explanation for t in trans),
+                insight_ids=tuple(t.id for t in trans), primary_insight_id=primary.id)
+        cov = report.coverage or {}
+        if not (cov.get("sequence") or cov.get("timestamps")):
+            reason = ("The current dataset does not contain sufficient sequence/timestamp information "
+                      "to profile transitions.")
+        elif not cov.get("recovery_events"):
+            reason = "No ball-recovery events are present to build transitions from."
+        else:
+            reason = "Not enough post-recovery evidence cleared the thresholds to profile transitions."
+        return ProfileSection("transitions", "Transitions", "", available=False, reason=reason)
 
     def _recoveries(self, ins: dict, subject: str, has_recovery_events: bool) -> ProfileSection:
         zone = ins.get("recoveries.dominant_zone")
@@ -340,26 +347,40 @@ class TacticalProfileBuilder:
         return tuple(out)
 
     # ---- vulnerabilities (only when genuinely evidenced) ----------------------
-    def _vulnerabilities(self, ins: dict, subject: str) -> tuple[ProfileItem, ...]:
+    def _vulnerabilities(self, report: InsightReport, ins: dict, subject: str) -> tuple[ProfileItem, ...]:
+        items: list[ProfileItem] = []
+        # 1) evidence-backed P0 vulnerability insights (turnover zone / route failure /
+        #    final-third inefficiency) — each already sample- and effect-guarded by P0
+        for i in report.insights:
+            if i.category is InsightCategory.VULNERABILITY:
+                items.append(ProfileItem(text=i.title, detail=i.short_explanation, confidence=i.confidence,
+                                         insight_ids=(i.id,), primary_insight_id=i.id))
+        # 2) the interpretive one-sided-progression case (derived from progression evidence)
+        items.extend(self._one_sided_vulnerability(ins))
+        # strongest first; never surface a vulnerability without evidence
+        items.sort(key=lambda it: _CONFIDENCE_RANK[it.confidence])
+        return tuple(items)
+
+    def _one_sided_vulnerability(self, ins: dict) -> list[ProfileItem]:
         prog = self._first(ins, "progression.left_dominance", "progression.right_dominance",
                            "progression.central_dominance")
         if prog is None or prog.confidence is Confidence.LOW:
-            return ()
+            return []
         ranking = self._lane_ranking(prog)
         if len(ranking) < 2:
-            return ()
+            return []
         weak_lane, weak_share = ranking[-1]
         strong_side = prog.meta.get("side", "one side")
         if weak_share > _ONE_SIDED_LANE_SHARE:
-            return ()                        # no genuinely under-used side => no vulnerability
+            return []                        # no genuinely under-used side => no vulnerability
         conf = Confidence.MEDIUM if prog.confidence is Confidence.HIGH else Confidence.LOW
         weak_word = weak_lane.replace(" Lane", "").lower()
-        return (ProfileItem(
+        return [ProfileItem(
             text=f"One-sided progression (little threat down the {weak_word})",
             detail=(f"Only {weak_share * 100:.0f}% of progression comes through the {weak_word}; build-up "
                     f"is heavily {strong_side}-sided, which may make their progression predictable and "
                     f"easier to prepare for."),
-            confidence=conf, insight_ids=(prog.id,), primary_insight_id=prog.id),)
+            confidence=conf, insight_ids=(prog.id,), primary_insight_id=prog.id)]
 
     # ---- DNA summary ----------------------------------------------------------
     def _summary(self, sections: tuple[ProfileSection, ...], players: tuple[KeyPlayer, ...],
@@ -380,6 +401,7 @@ class TacticalProfileBuilder:
                 txt += f" {players[0].name} is the {players[0].role.split(' · ')[0].lower()}."
             lines.append(SummaryLine("Progression", txt))
         add("Final Third", "final_third")
+        add("Transitions", "transitions")
         add("Recoveries", "recoveries")
         if players:
             p = players[0]

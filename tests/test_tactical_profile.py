@@ -144,17 +144,49 @@ def test_profile_is_filter_aware():
 
 
 # ------------------------------------------------------------------ data-quality behaviour
-def test_transitions_unavailable_without_sequence_data():
-    prof = build_profile(analyze(_derive(progression_rows(seq=False))))
-    t = prof.section("transitions")
-    assert not t.available and "sequence" in t.reason.lower()
+def _transition_rows(seq=True, times=True):
+    """Recoveries each followed by a progressive pass into the final third."""
+    rows = []
+    s = 0
+    for k in range(40):
+        s += 1
+        extra = {}
+        if seq:
+            extra["sequence_id"] = str(s)
+        rec = {"event_type": "recovery", "x": 40.0, "y": 15.0, "end_x": 40.0, "end_y": 15.0,
+               "player": "D", "team": "Opp", "opponent": "Us", "period": 1, "match_id": "m1",
+               "outcome": "successful", **extra}
+        prog = {"event_type": "pass", "x": 42.0, "y": 15.0, "end_x": 78.0, "end_y": 15.0,
+                "player": "Star", "team": "Opp", "opponent": "Us", "period": 1, "match_id": "m1",
+                "outcome": "successful", **extra}
+        if times:
+            rec["minute"], rec["second"] = k, 0
+            prog["minute"], prog["second"] = k, 3
+        rows += [rec, prog]
+    return rows
 
 
-def test_transitions_unavailable_but_data_present_reason_differs():
-    prof = build_profile(analyze(_derive(progression_rows(seq=True))))
+def test_transitions_unavailable_without_sequence_or_timestamps():
+    # recovery events present, but neither sequence nor timestamps to order the follow-up
+    prof = build_profile(analyze(_derive(_transition_rows(seq=False, times=False))))
     t = prof.section("transitions")
     assert not t.available
-    assert "not modelled" in t.reason.lower()
+    assert "sequence" in t.reason.lower() or "timestamp" in t.reason.lower()
+
+
+def test_transitions_populated_when_supported():
+    prof = build_profile(analyze(_derive(_transition_rows(seq=True, times=True))))
+    t = prof.section("transitions")
+    assert t.available and t.headline
+    assert any(i.startswith("transitions.") for i in t.insight_ids)
+    assert t.primary_insight_id and t.primary_insight_id.startswith("transitions.")
+
+
+def test_transitions_unavailable_reason_when_no_recovery_events():
+    # sequence + timestamps present, but no ball-recovery events at all
+    prof = build_profile(analyze(_derive(progression_rows(seq=True))))
+    t = prof.section("transitions")
+    assert not t.available and "recovery" in t.reason.lower()
 
 
 # ------------------------------------------------------------------ vulnerabilities

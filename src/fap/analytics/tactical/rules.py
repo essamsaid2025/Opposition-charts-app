@@ -426,7 +426,266 @@ def rule_primary_attacking_involvement(ctx: InsightContext, th: InsightThreshold
         meta={"player": name, "share": share})
 
 
-# ---- ordered registry of the P0 rules ----
+# ================================================================ Transitions (P2)
+def rule_recovery_to_progression(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    rt = ctx.rec_transitions
+    if rt.empty or len(rt) < th.min_transition_recoveries:
+        return None
+    total = len(rt)
+    n_prog = int(rt["led_prog"].sum())
+    share = n_prog / total
+    if share < th.transition_share:
+        return None
+    counts, ptot = counts_and_total(rt.loc[rt["led_prog"], "prog_lane"])
+    dname, _dc, dshare, _dm = _leading(counts, ptot)
+    dir_txt = ""
+    if dname in _LANE_LABELS and dshare >= th.dominance_share:
+        dir_txt = f", most often down the {_LANE_LABELS[dname]}"
+    effect = _clip01((share - th.transition_share) / (th.strong_transition_share - th.transition_share))
+    strong = share >= th.strong_transition_share
+    level, cscore, _ = grade(total, th.min_transition_recoveries, effect, ctx.quality, th)
+    ev = [Evidence("Ball recoveries", f"{total}", float(total)),
+          Evidence("Recoveries → progression", f"{n_prog} ({_pct(share)})", share)]
+    if dname:
+        ev.append(Evidence("Main direction", f"{dname} ({_pct(dshare)})", dshare))
+    return Insight(
+        id="transitions.recovery_to_progression",
+        category=InsightCategory.TRANSITIONS,
+        title="Progresses after regaining possession",
+        short_explanation=f"{_pct(share)} of ball recoveries are followed by progression{dir_txt}.",
+        observation=(f"{n_prog} of {total} ball recoveries ({_pct(share)}) were followed by a "
+                     f"progressive action in the same possession{dir_txt}."),
+        interpretation=f"{ctx.subject} looks to progress the ball soon after regaining it.",
+        recommendation=(f"Investigate {ctx.subject}'s transition progression and whether the first action "
+                        f"after a recovery can be pressed."),
+        evidence=tuple(ev), sample_size=total, confidence=level, confidence_score=cscore,
+        priority=_priority(level, strong), subject=ctx.subject, event_ids=event_ids(ctx.recoveries),
+        supporting_viz=SupportingViz(description="Ball recoveries and the progression that follows",
+                                     viz_hint="recovery",
+                                     event_types=("recovery", "interception", "tackle")),
+        meta={"share": share, "direction": dname})
+
+
+def rule_recovery_to_final_third(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    rt = ctx.rec_transitions
+    if rt.empty:
+        return None
+    eligible = rt[rt["rec_third"] != "Final Third"]      # only recoveries that can ENTER the final third
+    n = len(eligible)
+    if n < th.min_transition_recoveries:
+        return None
+    n_ft = int(eligible["led_ft"].sum())
+    share = n_ft / n
+    if share < th.transition_share:
+        return None
+    rapid_txt = ""
+    if ctx.speed_available:
+        delays = eligible.loc[eligible["led_ft"], "delay_s"].dropna()
+        if len(delays):
+            rapid = float((delays <= th.rapid_transition_seconds).mean())
+            rapid_txt = f" — {_pct(rapid)} within {int(th.rapid_transition_seconds)}s"
+    effect = _clip01((share - th.transition_share) / (th.strong_transition_share - th.transition_share))
+    strong = share >= th.strong_transition_share
+    level, cscore, _ = grade(n, th.min_transition_recoveries, effect, ctx.quality, th)
+    verb = "rapid progression into" if ctx.speed_available else "progression into"
+    return Insight(
+        id="transitions.recovery_to_final_third",
+        category=InsightCategory.TRANSITIONS,
+        title="Recoveries lead to final-third progression",
+        short_explanation=f"{_pct(share)} of recoveries outside the final third are followed by "
+                          f"final-third progression{rapid_txt}.",
+        observation=(f"{n_ft} of {n} recoveries made outside the final third ({_pct(share)}) were "
+                     f"followed by {verb} the final third{rapid_txt}."),
+        interpretation=f"{ctx.subject} turns recoveries into forward progression rather than recycling "
+                       f"possession.",
+        recommendation=f"Investigate {ctx.subject}'s recovery-to-attack transitions and the players who "
+                       f"carry them forward.",
+        evidence=(Evidence("Recoveries (outside final third)", f"{n}", float(n)),
+                  Evidence("→ final-third progression", f"{n_ft} ({_pct(share)})", share)),
+        sample_size=n, confidence=level, confidence_score=cscore, priority=_priority(level, strong),
+        subject=ctx.subject, event_ids=event_ids(ctx.recoveries),
+        supporting_viz=SupportingViz(description="Recoveries that lead into the final third",
+                                     viz_hint="recovery",
+                                     event_types=("recovery", "interception", "tackle")),
+        meta={"share": share, "rapid_available": ctx.speed_available})
+
+
+def rule_recovery_to_shot(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    rt = ctx.rec_transitions
+    if rt.empty or len(rt) < th.min_transition_recoveries:
+        return None
+    total = len(rt)
+    n_shot = int(rt["led_shot"].sum())
+    if n_shot < th.min_transition_shots:            # low-sample guard: no claim from a handful
+        return None
+    share = n_shot / total
+    if share < 0.08:
+        return None
+    effect = _clip01(share / 0.25)
+    level, cscore, _ = grade(total, th.min_transition_recoveries, effect, ctx.quality, th)
+    return Insight(
+        id="transitions.recovery_to_shot",
+        category=InsightCategory.TRANSITIONS,
+        title="Recoveries can lead to shots",
+        short_explanation=f"{n_shot} of {total} recoveries ({_pct(share)}) led to a shot in the same "
+                          f"possession.",
+        observation=f"{n_shot} of {total} ball recoveries ({_pct(share)}) were followed by a shot within "
+                    f"the same possession.",
+        interpretation=f"{ctx.subject} occasionally generates shots directly from transitions.",
+        recommendation="Investigate these recovery-to-shot sequences and the recovery zones that feed them.",
+        evidence=(Evidence("Ball recoveries", f"{total}", float(total)),
+                  Evidence("→ shot", f"{n_shot} ({_pct(share)})", share)),
+        sample_size=total, confidence=level, confidence_score=cscore, priority=Priority.MEDIUM,
+        subject=ctx.subject, event_ids=event_ids(ctx.recoveries),
+        supporting_viz=SupportingViz(description="Recoveries that lead to shots", viz_hint="recovery",
+                                     event_types=("recovery", "interception", "tackle")),
+        meta={"share": share})
+
+
+def rule_transition_direction(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    rt = ctx.rec_transitions
+    prog = rt[rt["led_prog"]] if not rt.empty else rt
+    if prog.empty or len(prog) < th.min_transition_recoveries:
+        return None
+    counts, total = counts_and_total(prog["prog_lane"])
+    name, cnt, share, margin = _leading(counts, total)
+    if name not in _LANE_LABELS or share < th.dominance_share or margin < th.min_effect_margin:
+        return None
+    side = _LANE_LABELS[name]
+    effect, strong = _dominance_effect(share, margin, th)
+    level, cscore, _ = grade(total, th.min_transition_recoveries, effect, ctx.quality, th)
+    return Insight(
+        id="transitions.direction",
+        category=InsightCategory.TRANSITIONS,
+        title=f"Transitions break to the {side}",
+        short_explanation=f"{_pct(share)} of post-recovery progression goes through the {side}.",
+        observation=f"When {ctx.subject} progresses after a recovery, {_pct(share)} of the time it goes "
+                    f"through the {side} ({name}).",
+        interpretation=f"{ctx.subject}'s transitions are channelled to the {side}.",
+        recommendation=f"Investigate the {side}-sided outlet {ctx.subject} uses in transition.",
+        evidence=(Evidence("Post-recovery progressions", f"{total}", float(total)),
+                  Evidence(name, _pct(share), share)),
+        sample_size=total, confidence=level, confidence_score=cscore, priority=_priority(level, strong),
+        subject=ctx.subject, event_ids=event_ids(ctx.recoveries),
+        supporting_viz=SupportingViz(description=f"Post-recovery progression via the {side}",
+                                     viz_hint="recovery",
+                                     event_types=("recovery", "interception", "tackle")),
+        meta={"share": share, "side": side})
+
+
+# ================================================================ Turnovers / Vulnerabilities (P2)
+def rule_turnover_zone(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    to = ctx.turnovers
+    if to.empty or len(to) < th.min_turnovers or not ctx.caps["coords"]:
+        return None
+    zone = to["start_third"].astype(str) + " · " + to["lane"].astype(str)
+    counts, total = counts_and_total(zone)
+    name, cnt, share, margin = _leading(counts, total)
+    if not name or "nan" in name.lower() or share < th.turnover_zone_share or margin < th.min_effect_margin:
+        return None
+    effect = _clip01((share - th.turnover_zone_share) / (0.60 - th.turnover_zone_share))
+    strong = share >= 0.55
+    level, cscore, _ = grade(total, th.min_turnovers, effect, ctx.quality, th)
+    return Insight(
+        id="vulnerability.turnover_zone",
+        category=InsightCategory.VULNERABILITY,
+        title=f"Loses possession most in the {name.lower()}",
+        short_explanation=f"{_pct(share)} of possession losses occur in the {name.lower()}.",
+        observation=f"{cnt} of {total} possession losses ({_pct(share)}) occurred in the {name} zone.",
+        interpretation=(f"This area may represent a potential pressure opportunity against {ctx.subject}. "
+                        f"It reflects where they lose the ball, not a confirmed weakness."),
+        recommendation=f"Investigate the triggers of {ctx.subject}'s losses in the {name.lower()} and "
+                       f"whether this zone can be targeted.",
+        evidence=(Evidence("Possession losses", f"{total}", float(total)),
+                  Evidence(name, _pct(share), share),
+                  Evidence("Lead over next zone", _pct(margin), margin)),
+        sample_size=total, confidence=level, confidence_score=cscore, priority=_priority(level, strong),
+        subject=ctx.subject, event_ids=event_ids(to),
+        supporting_viz=SupportingViz(description=f"Possession losses in the {name.lower()}",
+                                     viz_hint="turnover"),
+        meta={"share": share, "zone": name})
+
+
+def rule_route_failure(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    """A dominant movement route whose loss RATE (turnovers / attempts through it) is
+    high — a corridor they favour but repeatedly give the ball away in. Rate vs a real
+    denominator, never raw turnover count."""
+    mov, to = ctx.movement, ctx.turnovers
+    if mov.empty or to.empty or not ctx.caps["coords"]:
+        return None
+    att_counts, att_total = counts_and_total(mov["lane"])
+    to_counts, _ = counts_and_total(to["lane"])
+    name, attempts, ashare, _m = _leading(att_counts, att_total)
+    if not name or attempts < th.min_route_attempts:
+        return None
+    losses = to_counts.get(name, 0)
+    rate = losses / attempts if attempts else 0.0
+    if rate < th.high_turnover_rate:
+        return None
+    side = _LANE_LABELS.get(name, name.lower())
+    effect = _clip01((rate - th.high_turnover_rate) / (th.strong_turnover_rate - th.high_turnover_rate))
+    strong = rate >= th.strong_turnover_rate
+    level, cscore, _ = grade(attempts, th.min_route_attempts, effect, ctx.quality, th)
+    return Insight(
+        id="vulnerability.route_failure",
+        category=InsightCategory.VULNERABILITY,
+        title=f"High losses along the favoured {side} route",
+        short_explanation=f"{_pct(rate)} of actions through the {side} corridor end in a turnover.",
+        observation=(f"The {side} corridor carries the most actions ({attempts}), but {losses} of them "
+                     f"({_pct(rate)}) end in a possession loss."),
+        interpretation=(f"{ctx.subject} favours the {side} corridor yet gives the ball away there often; "
+                        f"this route may be contestable."),
+        recommendation=f"Investigate whether congesting the {side} corridor forces more {ctx.subject} losses.",
+        evidence=(Evidence(f"Actions through {name}", f"{attempts}", float(attempts)),
+                  Evidence("Losses there", f"{losses} ({_pct(rate)})", rate)),
+        sample_size=attempts, confidence=level, confidence_score=cscore, priority=_priority(level, strong),
+        subject=ctx.subject, event_ids=event_ids(to),
+        supporting_viz=SupportingViz(description=f"Turnovers along the {side} corridor", viz_hint="turnover",
+                                     lane=name),
+        meta={"rate": rate, "lane": name, "side": side})
+
+
+def rule_final_third_inefficiency(ctx: InsightContext, th: InsightThresholds) -> Insight | None:
+    ft = len(ctx.final_third_entries)
+    if ft < th.min_ft_for_efficiency or not ctx.caps["end_coords"]:
+        return None
+    box = len(ctx.box_entries)
+    shots = int(ctx.df["event_type"].astype(str).str.lower().eq("shot").sum())
+    box_conv, shot_conv = box / ft, shots / ft
+    low_box = box_conv < th.low_box_conversion
+    low_shot = shot_conv < th.low_shot_conversion
+    if not (low_box or low_shot):
+        return None
+    if low_box:
+        detail = f"only {box} box entries from {ft} final-third entries ({_pct(box_conv)})"
+        gap, floor = box_conv, th.low_box_conversion
+    else:
+        detail = f"only {shots} shots from {ft} final-third entries ({_pct(shot_conv)})"
+        gap, floor = shot_conv, th.low_shot_conversion
+    effect = _clip01((floor - gap) / max(0.01, floor))
+    level, cscore, _ = grade(ft, th.min_ft_for_efficiency, effect, ctx.quality, th)
+    return Insight(
+        id="vulnerability.final_third_inefficiency",
+        category=InsightCategory.VULNERABILITY,
+        title="Final-third entries rarely become chances",
+        short_explanation=f"Final-third entries convert poorly: {detail}.",
+        observation=f"{ctx.subject} made {ft} final-third entries but {detail}.",
+        interpretation=(f"{ctx.subject} enters the final third without consistently creating box entries or "
+                        f"shots; their final-third play may be containable."),
+        recommendation=f"Investigate whether {ctx.subject} can be forced wide/backwards once they reach the "
+                       f"final third.",
+        evidence=(Evidence("Final-third entries", f"{ft}", float(ft)),
+                  Evidence("Box entries", f"{box} ({_pct(box_conv)})", box_conv),
+                  Evidence("Shots", f"{shots} ({_pct(shot_conv)})", shot_conv)),
+        sample_size=ft, confidence=level, confidence_score=cscore, priority=_priority(level, False),
+        subject=ctx.subject, event_ids=event_ids(ctx.final_third_entries),
+        supporting_viz=SupportingViz(description="Final-third entries vs box entries / shots",
+                                     viz_hint="final third", event_types=("pass", "carry"),
+                                     third="Final Third"),
+        meta={"box_conversion": box_conv, "shot_conversion": shot_conv})
+
+
+# ---- ordered registry of the rules (P0 + P2) ----
 RULES = (
     rule_left_progression, rule_right_progression, rule_central_progression,
     rule_progression_corridor, rule_progression_player,
@@ -434,4 +693,9 @@ RULES = (
     rule_box_entry_concentration,
     rule_recovery_zone, rule_high_recovery_concentration,
     rule_primary_final_third_progressor, rule_primary_attacking_involvement,
+    # P2 — transitions
+    rule_recovery_to_progression, rule_recovery_to_final_third, rule_recovery_to_shot,
+    rule_transition_direction,
+    # P2 — turnovers / vulnerabilities
+    rule_turnover_zone, rule_route_failure, rule_final_third_inefficiency,
 )

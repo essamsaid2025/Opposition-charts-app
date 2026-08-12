@@ -15,6 +15,10 @@ from fap.analytics.tactical.engine import TacticalInsightEngine, analyze
 from fap.analytics.tactical.model import (
     Confidence, Evidence, Insight, InsightCategory, InsightReport, Priority, SupportingViz,
 )
+from fap.analytics.tactical.multimatch import (
+    EvidenceRef, MatchInsights, MultiMatchContext, PatternTrend, TacticalEvolution,
+    analyze_evolution, build_evolution, build_multimatch,
+)
 from fap.analytics.tactical.profile import (
     CoverageItem, KeyPlayer, ProfileItem, ProfileSection, SummaryLine, TacticalProfile,
     TacticalProfileBuilder, build_profile,
@@ -34,4 +38,6 @@ __all__ = [
     "Evidence", "SupportingViz", "InsightThresholds", "DEFAULT_THRESHOLDS",
     "TacticalProfile", "TacticalProfileBuilder", "build_profile",
     "ProfileSection", "KeyPlayer", "ProfileItem", "SummaryLine", "CoverageItem",
+    "MultiMatchContext", "MatchInsights", "EvidenceRef", "PatternTrend", "TacticalEvolution",
+    "build_multimatch", "analyze_evolution", "build_evolution",
 ]
