@@ -28,7 +28,7 @@ _MAX_INLINE_VIDEO_BYTES = 25 * 1024 * 1024
 
 @page_registry.register
 class ScoutingPage(Page):
-    info = PluginInfo(id="scouting", name="Scouting", category="page")
+    info = PluginInfo(id="scouting", name="Recruitment", category="page")
     section = "Squad"
     icon = "scouting"
     order = 20

@@ -19,7 +19,7 @@ from fap.ui.page import Page, get_page, page_registry, visible_pages
 # Modules offered as "Start analysis" launchers — shown only when the page exists
 # and the user's role can see it (no invented modules).
 _ACTIONS = [
-    ("opponent_analysis", "Opponent Analysis", "Build an evidence-backed opponent profile.", "target"),
+    ("opponent_analysis", "Scouting", "Build an evidence-backed opposition profile.", "target"),
     ("open_play_studio", "Open Play Studio", "Explore open-play behaviour and tactical patterns.", "analysis"),
     ("set_piece_analysis", "Set Piece Analysis", "Analyse attacking and defensive set pieces.", "flag"),
     ("tactical_board", "Tactical Board", "Build and review tactical scenarios.", "teams"),
@@ -52,7 +52,17 @@ class DashboardPage(Page):
             context=[("Workspace", ws_name), ("Active dataset", ds_name),
                      ("Today", _dt.date.today().strftime("%A %d %B %Y"))])
 
-        # ---- key metrics (real data only) ----
+        # ---- primary analysis: the module entry points come first (analyst-led) ----
+        actions = [(pid, t, d, ic) for pid, t, d, ic in _ACTIONS if _can_open(shell, pid)]
+        if actions:
+            st.markdown('<div class="fap-dash-h">Primary analysis</div>', unsafe_allow_html=True)
+            cols = st.columns(len(actions), gap="small")
+            for col, (pid, title, desc, ic) in zip(cols, actions):
+                with col:
+                    _action_card(shell, pid, title, desc, ic)
+
+        # ---- workspace snapshot (real figures) ----
+        st.markdown('<div class="fap-dash-h">Workspace snapshot</div>', unsafe_allow_html=True)
         metrics = [
             C.metric_card_html("Datasets", f"{len(datasets)}", icon_name="datasets",
                                accent="primary", hint="in this workspace"),
@@ -66,15 +76,6 @@ class DashboardPage(Page):
                                           accent="warning", hint="you touched lately"))
         C.render_metric_row(metrics)
 
-        # ---- start analysis (clickable module cards) ----
-        actions = [(pid, t, d, ic) for pid, t, d, ic in _ACTIONS if _can_open(shell, pid)]
-        if actions:
-            st.markdown('<div class="fap-dash-h">Start analysis</div>', unsafe_allow_html=True)
-            cols = st.columns(len(actions), gap="small")
-            for col, (pid, title, desc, ic) in zip(cols, actions):
-                with col:
-                    _action_card(shell, pid, title, desc, ic)
-
         # ---- recent analysis + activity ----
         left, right = st.columns([3, 2], gap="medium")
         with left:
@@ -87,7 +88,7 @@ class DashboardPage(Page):
                 for i, (name, meta, ic, target) in enumerate(items):
                     with st.container(key=f"dash_recent_{i}"):
                         st.markdown(C.recent_row_html(name, meta, icon_name=ic), unsafe_allow_html=True)
-                        if st.button("", key=f"rec_open_{i}", use_container_width=True):
+                        if st.button(name, key=f"dashrec_{i}", use_container_width=True):
                             shell.goto(target)
         with right:
             st.markdown('<div class="fap-dash-h">Recent activity</div>', unsafe_allow_html=True)
@@ -149,7 +150,10 @@ def _action_card(shell, page_id: str, title: str, desc: str, icon_name: str) -> 
     button (styled by the theme) so the whole surface navigates in-session."""
     with st.container(key=f"dash_action_{page_id}"):
         st.markdown(C.action_card_html(title, desc, icon_name=icon_name), unsafe_allow_html=True)
-        if st.button("", key=f"open_{page_id}", use_container_width=True, help=title):
+        # the button's element container (st-key-dashbtn_*) is absolutely positioned over
+        # the card by the theme CSS, so the whole card is the click target with no visible
+        # native button surface (see css._dashboard).
+        if st.button(title, key=f"dashbtn_{page_id}", use_container_width=True):
             shell.goto(page_id)
 
 

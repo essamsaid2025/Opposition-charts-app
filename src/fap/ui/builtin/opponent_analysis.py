@@ -16,7 +16,7 @@ from fap.ui.page import Page, get_renderer, page_registry
 
 @page_registry.register
 class OpponentAnalysisPage(Page):
-    info = PluginInfo(id="opponent_analysis", name="Opponent Analysis", category="page")
+    info = PluginInfo(id="opponent_analysis", name="Scouting", category="page")
     section = "Analysis"
     icon = "analysis"
     order = 0

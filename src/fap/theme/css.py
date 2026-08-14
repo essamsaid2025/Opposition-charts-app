@@ -186,18 +186,18 @@ def _sidebar() -> str:
 [data-testid="stSidebar"] .stButton > button:hover {
   background: var(--fap-hover); border-color: var(--fap-border);
   color: var(--fap-text); transform: translateX(2px); }
-/* Active nav item: RESTRAINED — a faint brand wash + a crisp accent bar and
-   strong-but-neutral label. No orange glow, no dominating pill (design brief). */
+/* Active nav item: NEUTRAL surface + a single thin accent bar and an accent icon —
+   the accent guides the eye, it never becomes an orange pill. No wash, no glow. */
 [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-  background: color-mix(in srgb, var(--fap-primary) 8%, var(--fap-surface));
+  background: var(--fap-hover);
   color: var(--fap-text);
-  border-color: color-mix(in srgb, var(--fap-primary) 16%, transparent);
+  border-color: var(--fap-border);
   box-shadow: inset 3px 0 0 var(--fap-primary);
   font-weight: 650;
 }
 [data-testid="stSidebar"] .stButton > button[kind="primary"]::before { color: var(--fap-primary); }
 [data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
-  transform: none; background: color-mix(in srgb, var(--fap-primary) 12%, var(--fap-surface)); }
+  transform: none; background: var(--fap-surface-alt); border-color: var(--fap-border-strong); }
 [data-testid="stSidebar"] [data-testid="stTextInput"],
 [data-testid="stSidebar"] [data-baseweb="select"] { margin-bottom: 4px; }
 /* collapsible section groups (native expander used as a nav group) */
@@ -476,9 +476,13 @@ def _forms() -> str:
   border-radius: var(--fap-radius-md); font-weight: 600;
   border: 1px solid var(--fap-border); transition: all var(--fap-transition-fast);
   box-shadow: var(--fap-shadow-xs);
+  /* explicit themed surface: Streamlit's base theme is light, so a secondary button
+     with no background leaks white in dark mode. Sidebar/rail buttons override this. */
+  background: var(--fap-surface); color: var(--fap-text);
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
-  border-color: var(--fap-primary); color: var(--fap-primary); box-shadow: var(--fap-shadow-sm); }
+  background: var(--fap-hover); border-color: var(--fap-primary);
+  color: var(--fap-primary); box-shadow: var(--fap-shadow-sm); }
 .stButton > button[kind="primary"], [data-testid="stFormSubmitButton"] > button {
   background: var(--fap-primary); border-color: var(--fap-primary); color: var(--fap-on-primary);
 }
@@ -907,18 +911,28 @@ def _dashboard() -> str:
 .fap-action-card .go { position: absolute; top: 14px; right: 14px; color: var(--fap-text-subtle);
   opacity: 0; transform: translateX(-2px); transition: opacity var(--fap-transition-fast),
     transform var(--fap-transition-fast); }
-/* the whole card is one clickable target: an invisible full-cover button (no href/scripts) */
+/* the whole card is one clickable target. The click surface is a real st.button
+   (native, keyboard-accessible) whose ELEMENT CONTAINER (st-key-dashbtn_*) is pulled
+   OUT OF FLOW and stretched over the card — so no native button box reserves space
+   below the card (the previous "white rectangle" defect) and none of its chrome
+   shows. No href, no scripts, no fragile generated-class selectors. */
 [class*="st-key-dash_action_"] { position: relative; }
-[class*="st-key-dash_action_"] .stButton { position: absolute; inset: 0; margin: 0; z-index: 3; }
-[class*="st-key-dash_action_"] .stButton > button { width: 100%; height: 100%; opacity: 0;
-  padding: 0; border: 0; background: transparent; }
+[class*="st-key-dashbtn_"] { position: absolute !important; inset: 0 !important; margin: 0 !important;
+  z-index: 4; width: auto !important; }
+[class*="st-key-dashbtn_"] .stButton, [class*="st-key-dashbtn_"] [data-testid="stButton"] {
+  width: 100%; height: 100%; margin: 0; }
+[class*="st-key-dashbtn_"] button {
+  width: 100% !important; height: 100% !important; min-height: 0 !important; padding: 0 !important;
+  opacity: 0; border: none !important; background: transparent !important; box-shadow: none !important; }
 [class*="st-key-dash_action_"]:hover .fap-action-card { border-color: color-mix(in srgb,
-  var(--fap-primary) 40%, var(--fap-border)); box-shadow: var(--fap-shadow-md); transform: translateY(-1px); }
+  var(--fap-primary) 45%, var(--fap-border)); box-shadow: var(--fap-shadow-md); transform: translateY(-1px); }
+[class*="st-key-dash_action_"]:hover .fap-action-card .chip { color: var(--fap-primary);
+  border-color: color-mix(in srgb, var(--fap-primary) 45%, var(--fap-border)); }
 [class*="st-key-dash_action_"]:hover .fap-action-card .go { opacity: 1; transform: none; }
-[class*="st-key-dash_action_"] .stButton > button:focus-visible + *,
+/* keyboard focus draws the ring on the card, not the invisible button */
 [class*="st-key-dash_action_"]:focus-within .fap-action-card {
   border-color: var(--fap-primary); box-shadow: 0 0 0 2px color-mix(in srgb,
-  var(--fap-primary) 30%, transparent); }
+  var(--fap-primary) 35%, transparent); }
 /* ---- recent-analysis list ---- */
 .fap-recent { display: flex; flex-direction: column; }
 .fap-recent-row { position: relative; display: flex; align-items: center; gap: 12px;
@@ -933,12 +947,49 @@ def _dashboard() -> str:
 .fap-recent-row .mt { font-size: var(--fap-text-xs); color: var(--fap-text-subtle); }
 .fap-recent-row .go { color: var(--fap-text-subtle); flex: 0 0 auto; }
 [class*="st-key-dash_recent_"] { position: relative; }
-[class*="st-key-dash_recent_"] .stButton { position: absolute; inset: 0; margin: 0; z-index: 3; }
-[class*="st-key-dash_recent_"] .stButton > button { width: 100%; height: 100%; opacity: 0; }
+[class*="st-key-dashrec_"] { position: absolute !important; inset: 0 !important; margin: 0 !important;
+  z-index: 4; width: auto !important; }
+[class*="st-key-dashrec_"] button { width: 100% !important; height: 100% !important; min-height: 0 !important;
+  opacity: 0; border: none !important; background: transparent !important; box-shadow: none !important; }
 [class*="st-key-dash_recent_"]:hover .fap-recent-row { background: var(--fap-hover);
   border-radius: var(--fap-radius-sm); }
+[class*="st-key-dash_recent_"]:focus-within .fap-recent-row { background: var(--fap-hover);
+  border-radius: var(--fap-radius-sm); box-shadow: inset 0 0 0 1px color-mix(in srgb,
+  var(--fap-primary) 35%, transparent); }
 [class*="st-key-dash_recent_"]:hover .fap-recent-row .go { color: var(--fap-primary); }
 /* (activity-feed rows reuse the existing .fap-activity styles in _components) */
+"""
+
+
+def _overlays() -> str:
+    """Theme the widgets Streamlit renders in a PORTAL at the <body> root — outside
+    ``.stApp`` — which otherwise fall back to Streamlit's light base theme and leak
+    white surfaces in dark mode (selectbox/multiselect dropdowns, popovers, calendars,
+    tooltips). Uses only stable BaseWeb/testid selectors + FAP tokens (which live on
+    :root, so they resolve at the document root too) — never generated class names."""
+    return """
+/* selectbox / multiselect dropdown menus (portal) */
+[data-baseweb="popover"] [data-baseweb="menu"], ul[role="listbox"], [role="listbox"] {
+  background: var(--fap-surface) !important; border: 1px solid var(--fap-border) !important;
+  border-radius: var(--fap-radius-md) !important; box-shadow: var(--fap-shadow-lg) !important;
+  color: var(--fap-text) !important; }
+[role="option"] { background: transparent !important; color: var(--fap-text) !important; }
+[role="option"]:hover, [role="option"][aria-selected="true"], li[role="option"]:hover {
+  background: var(--fap-hover) !important; color: var(--fap-text) !important; }
+/* the closed select control value text + chevron */
+[data-baseweb="select"] { color: var(--fap-text) !important; }
+[data-baseweb="select"] svg { fill: var(--fap-text-muted) !important; color: var(--fap-text-muted) !important; }
+/* st.popover / dropdown panels (Theme, Account, …) */
+[data-testid="stPopoverBody"], [data-baseweb="popover"] [data-testid="stVerticalBlock"] {
+  background: var(--fap-surface) !important; }
+[data-testid="stPopoverBody"] {
+  border: 1px solid var(--fap-border) !important; border-radius: var(--fap-radius-lg) !important;
+  box-shadow: var(--fap-shadow-lg) !important; }
+/* date picker + tooltips */
+[data-baseweb="calendar"], [data-baseweb="datepicker"] {
+  background: var(--fap-surface) !important; color: var(--fap-text) !important; }
+[data-baseweb="tooltip"], [role="tooltip"] {
+  background: var(--fap-secondary) !important; color: #fff !important; border-radius: var(--fap-radius-sm) !important; }
 """
 
 
@@ -951,8 +1002,8 @@ def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """
     brand = brand or DEFAULT_BRANDING
     body = "".join((_chrome(), _base(brand), _sidebar(), _components(), _forms(),
-                    _tables(), _studio(), _dashboard(), _a11y_and_motion(), _responsive(brand),
-                    _app_shell()))
+                    _tables(), _studio(), _dashboard(), _overlays(), _a11y_and_motion(),
+                    _responsive(brand), _app_shell()))
 
     if mode == "light":
         roots = f":root, :root[data-theme=light] {{{_variables(brand, 'light')}\n}}"
