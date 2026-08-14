@@ -79,6 +79,41 @@ def section_title_html(title: str, *, eyebrow: str = "", subtitle: str = "",
             f'<h2 class="title">{title}</h2>{sub}</div></div>')
 
 
+# ---------------------------------------------------------------- dashboard surfaces
+def hero_html(greeting: str, subtitle: str = "", *, eyebrow: str = "",
+              context: Sequence[tuple[str, str]] = ()) -> str:
+    """The dashboard greeting hero: small eyebrow, a bold time-aware greeting, a
+    muted subtitle and an optional context strip (label/value pairs)."""
+    eye = f'<div class="eyebrow">{eyebrow}</div>' if eyebrow else ""
+    sub = f'<div class="sub">{subtitle}</div>' if subtitle else ""
+    ctx = ""
+    if context:
+        ctx = '<div class="ctx">' + "".join(
+            f'<span><b>{lbl}</b> {val}</span>' for lbl, val in context if val) + "</div>"
+    return (f'<div class="fap-hero">{eye}<div class="greet">{greeting}</div>{sub}{ctx}</div>')
+
+
+def action_card_html(title: str, description: str = "", *, icon_name: str = "") -> str:
+    """A professional module-launcher card: icon chip, title, concise description and
+    a hover-revealed arrow. Pair it with an invisible full-cover ``st.button`` inside a
+    ``st.container(key="dash_action_<id>")`` so the whole card is the click target."""
+    chip = f'<span class="chip">{icon(icon_name, 18)}</span>' if icon_name else ""
+    desc = f'<div class="d">{description}</div>' if description else ""
+    return (f'<div class="fap-action-card">{chip}'
+            f'<div class="t">{title}</div>{desc}'
+            f'<span class="go">{icon("arrow-right", 16)}</span></div>')
+
+
+def recent_row_html(name: str, meta: str = "", *, icon_name: str = "clock") -> str:
+    """One row of the recent-analysis list: a small icon, a title, a muted meta line
+    and a chevron affordance. Pair with an overlay ``st.button`` for navigation."""
+    glyph = icon(icon_name, 15) if icon_name else ""
+    meta_html = f'<div class="mt">{meta}</div>' if meta else ""
+    return (f'<div class="fap-recent-row"><span class="ic">{glyph}</span>'
+            f'<div class="main"><div class="nm">{name}</div>{meta_html}</div>'
+            f'<span class="go">{icon("chevron-right", 16)}</span></div>')
+
+
 # ---------------------------------------------------------------- metric surfaces
 def metric_card_html(label: str, value: str, *, delta: str | None = None,
                      direction: str = "", icon_name: str = "", hint: str = "",
@@ -280,6 +315,10 @@ def render_footer(items: Iterable[tuple[str, str]]) -> None:
 
 def render_section_title(title: str, **kwargs) -> None:
     _write(section_title_html(title, **kwargs))
+
+
+def render_hero(greeting: str, subtitle: str = "", **kwargs) -> None:
+    _write(hero_html(greeting, subtitle, **kwargs))
 
 
 def render_metric_card(label: str, value: str, **kwargs) -> None:

@@ -186,16 +186,18 @@ def _sidebar() -> str:
 [data-testid="stSidebar"] .stButton > button:hover {
   background: var(--fap-hover); border-color: var(--fap-border);
   color: var(--fap-text); transform: translateX(2px); }
+/* Active nav item: RESTRAINED — a faint brand wash + a crisp accent bar and
+   strong-but-neutral label. No orange glow, no dominating pill (design brief). */
 [data-testid="stSidebar"] .stButton > button[kind="primary"] {
-  background: color-mix(in srgb, var(--fap-primary) 16%, transparent);
-  color: var(--fap-primary);
-  border-color: color-mix(in srgb, var(--fap-primary) 22%, transparent);
-  box-shadow: inset 4px 0 0 var(--fap-primary),
-    0 0 0 1px color-mix(in srgb, var(--fap-primary) 12%, transparent),
-    0 2px 12px color-mix(in srgb, var(--fap-primary) 18%, transparent);
+  background: color-mix(in srgb, var(--fap-primary) 8%, var(--fap-surface));
+  color: var(--fap-text);
+  border-color: color-mix(in srgb, var(--fap-primary) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--fap-primary);
   font-weight: 650;
 }
-[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover { transform: none; }
+[data-testid="stSidebar"] .stButton > button[kind="primary"]::before { color: var(--fap-primary); }
+[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+  transform: none; background: color-mix(in srgb, var(--fap-primary) 12%, var(--fap-surface)); }
 [data-testid="stSidebar"] [data-testid="stTextInput"],
 [data-testid="stSidebar"] [data-baseweb="select"] { margin-bottom: 4px; }
 /* collapsible section groups (native expander used as a nav group) */
@@ -869,6 +871,77 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 @media (max-width: 900px) { :root { --fap-rail-width: var(--fap-rail-collapsed) !important; } }
 """
 
+def _dashboard() -> str:
+    """The dashboard 'command center': a greeting hero, clickable action cards, a
+    recent-analysis list and a compact activity feed. Every surface is token-driven
+    (restrained radius, subtle borders, low shadow) so it reads as a premium
+    analytical workspace rather than a generic SaaS dashboard."""
+    return """
+/* ---- greeting hero ---- */
+.fap-hero { display: flex; flex-direction: column; gap: 2px; padding: 2px 2px 6px; }
+.fap-hero .eyebrow { font-size: var(--fap-text-2xs); font-weight: var(--fap-weight-bold);
+  letter-spacing: var(--fap-tracking-wider); text-transform: uppercase; color: var(--fap-text-subtle); }
+.fap-hero .greet { font-size: 1.6rem; font-weight: var(--fap-weight-black);
+  letter-spacing: var(--fap-tracking-tight); line-height: 1.1; color: var(--fap-text); }
+.fap-hero .sub { font-size: var(--fap-text-sm); color: var(--fap-text-muted); margin-top: 2px; }
+.fap-hero .ctx { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px;
+  font-size: var(--fap-text-xs); color: var(--fap-text-subtle); }
+.fap-hero .ctx b { color: var(--fap-text-muted); font-weight: var(--fap-weight-semibold); }
+/* ---- section label (dashboard blocks) ---- */
+.fap-dash-h { display: flex; align-items: center; gap: 8px; font-size: var(--fap-text-2xs);
+  font-weight: var(--fap-weight-bold); letter-spacing: var(--fap-tracking-wider);
+  text-transform: uppercase; color: var(--fap-text-subtle); margin: 6px 2px 8px; }
+.fap-dash-h::after { content: ""; flex: 1; height: 1px; background: var(--fap-border); opacity: .8; }
+/* ---- action cards (clickable module launchers) ---- */
+.fap-action-card { position: relative; display: flex; flex-direction: column; gap: 8px;
+  padding: 14px 16px; min-height: 118px; background: var(--fap-surface);
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-md);
+  box-shadow: var(--fap-shadow-xs); transition: border-color var(--fap-transition-fast),
+    box-shadow var(--fap-transition-fast), transform var(--fap-transition-fast); }
+.fap-action-card .chip { display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: var(--fap-radius-sm); background: var(--fap-surface-alt);
+  color: var(--fap-primary); border: 1px solid var(--fap-border); }
+.fap-action-card .t { font-size: var(--fap-text-base, 0.9375rem); font-weight: var(--fap-weight-bold);
+  color: var(--fap-text); line-height: 1.2; }
+.fap-action-card .d { font-size: var(--fap-text-xs); color: var(--fap-text-muted); line-height: 1.4; }
+.fap-action-card .go { position: absolute; top: 14px; right: 14px; color: var(--fap-text-subtle);
+  opacity: 0; transform: translateX(-2px); transition: opacity var(--fap-transition-fast),
+    transform var(--fap-transition-fast); }
+/* the whole card is one clickable target: an invisible full-cover button (no href/scripts) */
+[class*="st-key-dash_action_"] { position: relative; }
+[class*="st-key-dash_action_"] .stButton { position: absolute; inset: 0; margin: 0; z-index: 3; }
+[class*="st-key-dash_action_"] .stButton > button { width: 100%; height: 100%; opacity: 0;
+  padding: 0; border: 0; background: transparent; }
+[class*="st-key-dash_action_"]:hover .fap-action-card { border-color: color-mix(in srgb,
+  var(--fap-primary) 40%, var(--fap-border)); box-shadow: var(--fap-shadow-md); transform: translateY(-1px); }
+[class*="st-key-dash_action_"]:hover .fap-action-card .go { opacity: 1; transform: none; }
+[class*="st-key-dash_action_"] .stButton > button:focus-visible + *,
+[class*="st-key-dash_action_"]:focus-within .fap-action-card {
+  border-color: var(--fap-primary); box-shadow: 0 0 0 2px color-mix(in srgb,
+  var(--fap-primary) 30%, transparent); }
+/* ---- recent-analysis list ---- */
+.fap-recent { display: flex; flex-direction: column; }
+.fap-recent-row { position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 9px 6px; border-bottom: 1px solid var(--fap-border); }
+.fap-recent-row:last-child { border-bottom: none; }
+.fap-recent-row .ic { display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: var(--fap-radius-sm); background: var(--fap-surface-alt);
+  color: var(--fap-text-muted); flex: 0 0 auto; border: 1px solid var(--fap-border); }
+.fap-recent-row .main { flex: 1; min-width: 0; }
+.fap-recent-row .nm { font-size: var(--fap-text-sm); font-weight: var(--fap-weight-semibold);
+  color: var(--fap-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fap-recent-row .mt { font-size: var(--fap-text-xs); color: var(--fap-text-subtle); }
+.fap-recent-row .go { color: var(--fap-text-subtle); flex: 0 0 auto; }
+[class*="st-key-dash_recent_"] { position: relative; }
+[class*="st-key-dash_recent_"] .stButton { position: absolute; inset: 0; margin: 0; z-index: 3; }
+[class*="st-key-dash_recent_"] .stButton > button { width: 100%; height: 100%; opacity: 0; }
+[class*="st-key-dash_recent_"]:hover .fap-recent-row { background: var(--fap-hover);
+  border-radius: var(--fap-radius-sm); }
+[class*="st-key-dash_recent_"]:hover .fap-recent-row .go { color: var(--fap-primary); }
+/* (activity-feed rows reuse the existing .fap-activity styles in _components) */
+"""
+
+
 def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """The complete application stylesheet for ``mode`` (light|dark|auto).
 
@@ -878,7 +951,7 @@ def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """
     brand = brand or DEFAULT_BRANDING
     body = "".join((_chrome(), _base(brand), _sidebar(), _components(), _forms(),
-                    _tables(), _studio(), _a11y_and_motion(), _responsive(brand),
+                    _tables(), _studio(), _dashboard(), _a11y_and_motion(), _responsive(brand),
                     _app_shell()))
 
     if mode == "light":
