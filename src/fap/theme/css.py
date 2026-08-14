@@ -532,6 +532,58 @@ label, [data-testid="stWidgetLabel"] p { font-weight: 600 !important; color: var
 [data-baseweb="tag"] { background: color-mix(in srgb, var(--fap-primary) 16%, transparent) !important;
   color: var(--fap-primary) !important; border-radius: var(--fap-radius-sm) !important; }
 [data-testid="stToast"] { border-radius: var(--fap-radius-md); border: 1px solid var(--fap-border); }
+
+/* ============================================================================
+   COMPREHENSIVE native-widget theming — every FAP token flips per mode, so ONE
+   set of rules themes BOTH light and dark. !important beats Streamlit's baked
+   base-theme styles. Stable BaseWeb/testid selectors only (no generated classes).
+   ============================================================================ */
+/* every BaseWeb input/select/textarea surface (covers select, multiselect, text,
+   number, date, time, and their inner wrappers) */
+[data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"],
+[data-baseweb="select"] > div, [data-testid="stTextInput"] > div > div,
+[data-testid="stNumberInput"] > div > div, [data-testid="stDateInput"] > div > div,
+[data-testid="stTimeInput"] > div > div {
+  background: var(--fap-surface) !important; border-color: var(--fap-border) !important;
+  color: var(--fap-text) !important; }
+[data-baseweb="input"] input, [data-baseweb="base-input"] input, textarea, [role="spinbutton"] {
+  background: transparent !important; color: var(--fap-text) !important; }
+input::placeholder, textarea::placeholder, [data-baseweb="select"] [class*="placeholder"] {
+  color: var(--fap-text-subtle) !important; }
+/* select value + chevron */
+[data-baseweb="select"] { color: var(--fap-text) !important; }
+[data-baseweb="select"] svg, [data-baseweb="input"] svg { fill: var(--fap-text-muted) !important;
+  color: var(--fap-text-muted) !important; }
+/* number-input +/- steppers */
+[data-testid="stNumberInputStepUp"], [data-testid="stNumberInputStepDown"] {
+  background: var(--fap-surface) !important; color: var(--fap-text-muted) !important;
+  border-color: var(--fap-border) !important; }
+[data-testid="stNumberInputStepUp"]:hover, [data-testid="stNumberInputStepDown"]:hover {
+  background: var(--fap-hover) !important; color: var(--fap-primary) !important; }
+/* radio + checkbox + toggle: labels readable, marks branded */
+[data-testid="stRadio"] label, [data-testid="stCheckbox"] label,
+[data-testid="stRadio"] [role="radiogroup"] div { color: var(--fap-text) !important; }
+[data-baseweb="radio"] [data-checked="true"] div, [data-baseweb="checkbox"] [data-checked="true"] > div,
+[data-baseweb="checkbox"] [aria-checked="true"] { background: var(--fap-primary) !important;
+  border-color: var(--fap-primary) !important; }
+[data-baseweb="radio"] div, [data-baseweb="checkbox"] div { border-color: var(--fap-border-strong) !important; }
+/* slider: rail neutral, filled track + thumb branded */
+[data-baseweb="slider"] [role="slider"] { background: var(--fap-primary) !important; }
+[data-baseweb="slider"] > div > div { background: var(--fap-surface-alt) !important; }
+[data-baseweb="slider"] [data-testid="stThumbValue"] { color: var(--fap-text) !important; }
+/* file uploader: dropzone (kept) + browse button surface */
+[data-testid="stFileUploader"] button, [data-testid="stFileUploaderDropzone"] button {
+  background: var(--fap-surface) !important; color: var(--fap-text) !important;
+  border-color: var(--fap-border) !important; }
+/* expander header surface + code blocks + captions */
+[data-testid="stExpander"] summary { background: var(--fap-surface) !important; color: var(--fap-text) !important; }
+[data-testid="stExpander"] details { background: var(--fap-surface) !important; }
+pre, code, [data-testid="stCode"] { background: var(--fap-surface-alt) !important; color: var(--fap-text) !important; }
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p { color: var(--fap-text-muted) !important; }
+/* the whole widget-baseweb popover trigger (Theme/Account/etc.) uses the button surface */
+[data-testid="stPopover"] > div > button, [data-testid="stPopover"] button[kind="secondary"] {
+  background: var(--fap-surface) !important; color: var(--fap-text) !important;
+  border-color: var(--fap-border) !important; }
 """
 
 
