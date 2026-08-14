@@ -28,7 +28,18 @@ from fap.analytics.tactical.report import (
     ReportItem, ReportMetadata, ReportPlayer, ReportSection, ReportTrend, Takeaway,
     build_report, build_report_from_frame,
 )
-from fap.analytics.tactical.report_export import render_report, to_report_document
+from fap.analytics.tactical.report_export import render_document, render_report, to_report_document
+from fap.analytics.tactical.report_visuals import (
+    VisualPlan, plan_report_visuals, render_report_visuals, report_chart_images,
+)
+from fap.analytics.tactical.setpiece_report import (
+    DEFAULT_SETPIECE_SECTIONS, SetPieceEvidence, SetPieceItem, SetPieceReport,
+    SetPieceReportMetadata, SetPieceSection, build_setpiece_report,
+    build_setpiece_report_from_service,
+)
+from fap.analytics.tactical.setpiece_report_export import (
+    render_setpiece_report, to_setpiece_document,
+)
 from fap.analytics.tactical.thresholds import DEFAULT_THRESHOLDS, InsightThresholds
 
 
@@ -49,5 +60,10 @@ __all__ = [
     "OppositionReport", "OppositionReportBuilder", "ReportMetadata", "ReportSection",
     "ReportItem", "ReportPlayer", "ReportTrend", "Takeaway", "FocusPoint", "EvidenceLink",
     "DEFAULT_SECTIONS", "build_report", "build_report_from_frame",
-    "to_report_document", "render_report",
+    "to_report_document", "render_report", "render_document",
+    "VisualPlan", "plan_report_visuals", "render_report_visuals", "report_chart_images",
+    # set piece report (separate)
+    "SetPieceReport", "SetPieceReportMetadata", "SetPieceSection", "SetPieceItem",
+    "SetPieceEvidence", "DEFAULT_SETPIECE_SECTIONS", "build_setpiece_report",
+    "build_setpiece_report_from_service", "to_setpiece_document", "render_setpiece_report",
 ]

@@ -22,7 +22,7 @@ def _md_lines(title_level: str, lines) -> str:
 
 def to_report_document(report: OppositionReport, *, chart_images: dict[str, bytes] | None = None):
     """Convert an OppositionReport into the existing ``fap.reports.ReportDocument``."""
-    from fap.reports.models import Chart, Cover, Insight, ReportDocument, Section
+    from fap.reports.models import Chart, Cover, Insight, ReportDocument, Section, Table
 
     m = report.metadata
     cover = Cover(title=m.title, subtitle=(f"Opponent: {report.subject}" if report.subject else ""),
@@ -34,14 +34,18 @@ def to_report_document(report: OppositionReport, *, chart_images: dict[str, byte
 
     inc = set(report.included)
 
-    def add(sid: str, title: str, markdown: str = "", insights=None, chart_hint: str = "",
-            chart_q: str = "") -> None:
+    def add(sid: str, title: str, markdown: str = "", insights=None, visual_key: str = "",
+            chart_q: str = "", table=None) -> None:
         charts = []
-        if chart_hint and chart_hint in chart_images:
-            charts.append(Chart(viz_id=chart_hint, title=chart_q,
-                                image_b64=base64.b64encode(chart_images[chart_hint]).decode("ascii")))
+        if visual_key and visual_key in chart_images:      # embed the rendered chart PNG
+            charts.append(Chart(viz_id=visual_key, title=chart_q,
+                                image_b64=base64.b64encode(chart_images[visual_key]).decode("ascii")))
+        tables = []
+        if table is not None:
+            cols, rows = table
+            tables.append(Table(title="", columns=list(cols), rows=[list(r) for r in rows]))
         sections.append(Section(id=sid, title=title, markdown=markdown.strip(),
-                                insights=list(insights or []), charts=charts))
+                                insights=list(insights or []), charts=charts, tables=tables))
 
     # ---- Executive Summary ----
     if "executive_summary" in inc and report.executive_summary:
@@ -61,7 +65,7 @@ def to_report_document(report: OppositionReport, *, chart_images: dict[str, byte
             md = f"**{s.headline}**\n\n" + "\n".join(f"- {ln}" for ln in s.lines)
             if s.chart_question:
                 md += f"\n\n_Supporting visual — {s.chart_question}_"
-            add(s.id, s.title, md, chart_hint=s.chart_hint, chart_q=s.chart_question)
+            add(s.id, s.title, md, visual_key=s.visual_key, chart_q=s.chart_question)
         else:
             add(s.id, s.title, f"_{s.reason}_")
 
@@ -74,7 +78,9 @@ def to_report_document(report: OppositionReport, *, chart_images: dict[str, byte
                 if v.implication:
                     b += f"\n\n**Tactical implication:** {v.implication}"
                 blocks.append(b)
-            add("vulnerabilities", "Potential Vulnerabilities", "\n\n".join(blocks))
+            add("vulnerabilities", "Potential Vulnerabilities", "\n\n".join(blocks),
+                visual_key="vulnerabilities:primary",
+                chart_q="Where does the opponent lose possession?")
         else:
             add("vulnerabilities", "Potential Vulnerabilities",
                 "_No high-confidence vulnerability identified from the available evidence._")
@@ -95,7 +101,8 @@ def to_report_document(report: OppositionReport, *, chart_images: dict[str, byte
     if "key_players" in inc and report.key_players:
         rows = [f"- **{p.name}** — {p.role} _({p.confidence})_"
                 + (f"  \n  {' · '.join(p.metrics)}" if p.metrics else "") for p in report.key_players]
-        add("key_players", "Key Players", "\n".join(rows))
+        add("key_players", "Key Players", "\n".join(rows), visual_key="players:primary",
+            chart_q=f"Player-specific evidence: {report.key_players[0].name}")
 
     # ---- Strengths ----
     if "strengths" in inc and report.strengths:
@@ -114,13 +121,6 @@ def to_report_document(report: OppositionReport, *, chart_images: dict[str, byte
             blocks.append(b)
         add("focus_points", "Match-specific Focus Points", "\n\n".join(blocks))
 
-    # ---- Set Pieces ----
-    if "set_pieces" in inc and report.set_pieces is not None:
-        sp = report.set_pieces
-        add("set_pieces", "Set Pieces",
-            (f"**{sp.headline}**\n\n" + "\n".join(f"- {ln}" for ln in sp.lines)) if sp.available
-            else f"_{sp.reason}_")
-
     # ---- Data Quality ----
     if "data_quality" in inc and report.data_quality:
         cov = "\n".join(f"- {c.label}: **{c.status}**" for c in report.data_quality)
@@ -131,23 +131,37 @@ def to_report_document(report: OppositionReport, *, chart_images: dict[str, byte
                             "as zero.", kind="neutral")]
         add("data_quality", "Data Quality & Coverage", cov, insights=ins)
 
+    # ---- Detailed Evidence Appendix (detailed mode) ----
+    if report.mode == "detailed" and report.appendix:
+        add("appendix_header", "Detailed Evidence Appendix", "_Supporting detail for the analysis above._")
+        for ap in report.appendix:
+            if ap.table_rows:
+                add(ap.id, ap.title, "", table=(ap.table_columns, ap.table_rows))
+            else:
+                add(ap.id, ap.title, "\n".join(f"- {ln}" for ln in ap.lines))
+
     return ReportDocument(id=f"opp_{_slug(m.title)}", title=m.title, template_id="opposition_scouting",
                           cover=cover, sections=sections,
                           meta={"kind": "opposition_scouting", "subject": report.subject})
 
 
-def render_report(report: OppositionReport, fmt: str = "html", *,
-                  chart_images: dict[str, bytes] | None = None, branding=None):
-    """Render via the EXISTING exporter registry. Returns the engine's ``RenderedReport``
-    (content bytes + mime + filename + text). Raises the engine's own error if a format's
-    optional dependency is unavailable — we never fake output."""
+def render_document(doc, fmt: str = "html", branding=None):
+    """Render ANY ``ReportDocument`` via the EXISTING exporter registry — the single
+    render path shared by the Open Play and Set Piece reports. Returns the engine's
+    ``RenderedReport``; raises the engine's own error if a format's optional dependency
+    is unavailable (we never fake output)."""
     from fap.reports.exporters import exporter_registry
 
-    doc = to_report_document(report, chart_images=chart_images)
     exporter = next((e() for e in exporter_registry if getattr(e, "fmt", "") == fmt), None)
     if exporter is None:
         raise ValueError(f"No report exporter registered for format '{fmt}'.")
     return exporter.render(doc, branding)
+
+
+def render_report(report: OppositionReport, fmt: str = "html", *,
+                  chart_images: dict[str, bytes] | None = None, branding=None):
+    """Render the Open Play scouting report."""
+    return render_document(to_report_document(report, chart_images=chart_images), fmt, branding)
 
 
 def _slug(s: str) -> str:

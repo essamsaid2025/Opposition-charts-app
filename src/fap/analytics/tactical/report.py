@@ -42,7 +42,7 @@ _DNA_ORDER = ("attacking_identity", "build_up", "progression", "final_third",
 DEFAULT_SECTIONS = (
     "executive_summary", "key_takeaways", "tactical_dna", "build_up", "progression",
     "final_third", "transitions", "recoveries", "vulnerabilities", "tactical_evolution",
-    "key_players", "strengths", "focus_points", "set_pieces", "data_quality",
+    "key_players", "strengths", "focus_points", "data_quality",
 )
 
 
@@ -52,14 +52,21 @@ class EvidenceLink:
     """Traceability + interactive 'View evidence'. ``insight_ids`` point at the P0
     insights behind a claim; ``ref`` (optional) is a multi-match evidence reference
     carrying the exact team/player/match scope, so the UI opens the corrected,
-    player-scoped evidence pathway without a second viewer."""
+    player-scoped evidence pathway without a second viewer.
+
+    ``kind`` distinguishes tactical-insight evidence from set-piece / visualization
+    evidence; ``source`` names the non-insight source (e.g. the set-piece analysis
+    id) so set-piece claims are traceable WITHOUT inventing fake P0 insight ids."""
     insight_ids: tuple[str, ...] = ()
     match_id: str = ""
     ref: EvidenceRef | None = None
+    kind: str = "insight"                 # insight | setpiece | visual
+    source: str = ""
 
     def to_dict(self) -> dict:
         return {"insight_ids": list(self.insight_ids), "match_id": self.match_id,
-                "ref": self.ref.to_dict() if self.ref else None}
+                "ref": self.ref.to_dict() if self.ref else None, "kind": self.kind,
+                "source": self.source}
 
 
 @dataclass(frozen=True)
@@ -168,11 +175,16 @@ class ReportSection:
     chart_hint: str = ""            # existing-registry viz hint for the section's evidence chart
     chart_question: str = ""
     evidence: EvidenceLink = field(default_factory=EvidenceLink)
+    visual_key: str = ""            # stable key the visual bridge renders/embeds against
+    table_columns: tuple[str, ...] = ()
+    table_rows: tuple[tuple[str, ...], ...] = ()
 
     def to_dict(self) -> dict:
         return {"id": self.id, "title": self.title, "available": self.available, "reason": self.reason,
                 "headline": self.headline, "lines": list(self.lines), "chart_hint": self.chart_hint,
-                "chart_question": self.chart_question, "evidence": self.evidence.to_dict()}
+                "chart_question": self.chart_question, "evidence": self.evidence.to_dict(),
+                "visual_key": self.visual_key, "table_columns": list(self.table_columns),
+                "table_rows": [list(r) for r in self.table_rows]}
 
 
 @dataclass(frozen=True)
@@ -189,11 +201,12 @@ class OppositionReport:
     key_players: tuple[ReportPlayer, ...] = ()
     evolution: tuple[ReportTrend, ...] = ()
     focus_points: tuple[FocusPoint, ...] = ()
-    set_pieces: ReportSection | None = None
     data_quality: tuple[CoverageItem, ...] = ()
     excluded_matches: tuple[tuple[str, str], ...] = ()
     notices: tuple[str, ...] = ()
     included: tuple[str, ...] = ()
+    mode: str = "detailed"                        # executive | detailed
+    appendix: tuple[ReportSection, ...] = ()      # detailed mode only
 
     def section(self, sid: str) -> ReportSection | None:
         return next((s for s in self.sections if s.id == sid), None)
@@ -210,22 +223,23 @@ class OppositionReport:
             "key_players": [p.to_dict() for p in self.key_players],
             "evolution": [e.to_dict() for e in self.evolution],
             "focus_points": [f.to_dict() for f in self.focus_points],
-            "set_pieces": self.set_pieces.to_dict() if self.set_pieces else None,
             "data_quality": [c.to_dict() for c in self.data_quality],
             "excluded_matches": [list(e) for e in self.excluded_matches],
             "notices": list(self.notices), "included": list(self.included),
+            "mode": self.mode, "appendix": [s.to_dict() for s in self.appendix],
         }
 
 
 # ================================================================ builder
 class OppositionReportBuilder:
     def __init__(self, metadata: ReportMetadata | None = None,
-                 include: tuple[str, ...] | None = None) -> None:
+                 include: tuple[str, ...] | None = None, mode: str = "detailed") -> None:
         self.metadata = metadata or ReportMetadata()
         self.include = tuple(include) if include is not None else DEFAULT_SECTIONS
+        self.mode = mode if mode in ("executive", "detailed") else "detailed"
 
     def build(self, insight_report: InsightReport, profile: TacticalProfile,
-              evolution: TacticalEvolution | None, *, setpieces: dict | None = None) -> OppositionReport:
+              evolution: TacticalEvolution | None) -> OppositionReport:
         by_id = {i.id: i for i in insight_report.insights}
         subject = profile.subject or insight_report.subject or "the opponent"
         evo = evolution
@@ -239,17 +253,55 @@ class OppositionReportBuilder:
         summary = self._executive_summary(profile, evo, players)
         takeaways = self._takeaways(profile, evo, by_id, players)
         focus = self._focus_points(profile, evo, by_id)
-        setp = self._set_pieces(setpieces)
-        coverage = self._data_quality(profile, setpieces)
+        coverage = tuple(profile.coverage)             # Open Play coverage only (no set pieces)
         excluded = tuple(evo.excluded) if evo else ()
+        # the evidence appendix (match-by-match table + supporting evidence) is a
+        # DETAILED-mode extra; the Executive report stays concise.
+        appendix = self._appendix(insight_report, evo) if self.mode == "detailed" else ()
 
         return OppositionReport(
             metadata=meta, subject=subject,
             overall_confidence=profile.confidence.value, limited_evidence=profile.limited_evidence,
             executive_summary=summary, key_takeaways=takeaways, sections=sections,
             strengths=strengths, vulnerabilities=vulns, key_players=players, evolution=evo_trends,
-            focus_points=focus, set_pieces=setp, data_quality=coverage, excluded_matches=excluded,
-            notices=profile.notices, included=self.include)
+            focus_points=focus, data_quality=coverage, excluded_matches=excluded,
+            notices=profile.notices, included=self.include, mode=self.mode, appendix=appendix)
+
+    # ---- detailed-mode evidence appendix -------------------------------------
+    def _appendix(self, insight_report: InsightReport, evo) -> tuple[ReportSection, ...]:
+        out: list[ReportSection] = []
+        # A. match-by-match tables for the leading recurring/changing patterns
+        if evo is not None:
+            top, seen = [], set()
+            for p in (*evo.consistent(), *evo.changing(), *evo.patterns):
+                if p.insight_id in seen or not p.match_statuses:
+                    continue
+                seen.add(p.insight_id)
+                top.append(p)
+                if len(top) >= 4:
+                    break
+            for p in top:
+                valmap = dict(zip(p.observable_match_ids, p.shares))
+                rows = []
+                for mid, status in p.match_statuses:
+                    if status == "Observed":
+                        val = f"{valmap.get(mid, 0.0) * 100:.0f}%"
+                    elif status == "Absent":
+                        val = "absent"                 # genuine non-dominance
+                    else:
+                        val = status.lower()           # insufficient / unavailable — NEVER 0%
+                    rows.append((mid, status, val))
+                out.append(ReportSection(
+                    id=f"appendix_evo_{p.insight_id}", title=f"Match-by-match: {p.label}",
+                    available=True, table_columns=("Match", "Status", "Value"),
+                    table_rows=tuple(rows), evidence=EvidenceLink(insight_ids=(p.insight_id,))))
+        # B. supporting evidence (traceable, concise)
+        ev_lines = [f"{i.title} — {i.short_explanation} (confidence {i.confidence.value}, "
+                    f"priority {i.priority.value})." for i in insight_report.insights[:12]]
+        if ev_lines:
+            out.append(ReportSection("appendix_evidence", "Supporting Evidence", available=True,
+                                     lines=tuple(ev_lines)))
+        return tuple(out)
 
     # ---- metadata -------------------------------------------------------------
     def _filled_metadata(self, subject: str) -> ReportMetadata:
@@ -276,6 +328,7 @@ class OppositionReportBuilder:
                 id=sid, title=ps.title, available=ps.available, reason=ps.reason,
                 headline=ps.headline, lines=tuple(lines),
                 chart_hint=hint if ps.available else "", chart_question=question if ps.available else "",
+                visual_key=f"section:{sid}" if (ps.available and hint) else "",
                 evidence=EvidenceLink(insight_ids=tuple(ps.insight_ids))))
         return tuple(out)
 
@@ -443,24 +496,6 @@ class OppositionReportBuilder:
                 evidence=EvidenceLink(insight_ids=tuple(v.insight_ids))))
         return tuple(out[:4])
 
-    # ---- set pieces (integrate existing analysis if supplied; else honest) -----
-    @staticmethod
-    def _set_pieces(setpieces: dict | None) -> ReportSection:
-        if not setpieces:
-            return ReportSection("set_pieces", "Set Pieces", available=False,
-                                 reason="No set-piece analysis available for this selection.")
-        lines = tuple(str(x) for x in setpieces.get("lines", []))
-        return ReportSection("set_pieces", "Set Pieces", available=True,
-                             headline=str(setpieces.get("headline", "")), lines=lines)
-
-    # ---- data quality (reuse P1 coverage + P2 excluded matches) ---------------
-    @staticmethod
-    def _data_quality(profile: TacticalProfile, setpieces: dict | None) -> tuple[CoverageItem, ...]:
-        items = list(profile.coverage)
-        items.append(CoverageItem("Set-piece data", "ok" if setpieces else "missing"))
-        return tuple(items)
-
-
 # ---- helpers ----------------------------------------------------------------
 def _first(profile: TacticalProfile, sid: str):
     return profile.section(sid)
@@ -501,14 +536,13 @@ def _focus_title_for_vulnerability(insight_id: str, fallback: str) -> str:
 # ================================================================ convenience
 def build_report(insight_report: InsightReport, profile: TacticalProfile,
                  evolution: TacticalEvolution | None = None, *, metadata: ReportMetadata | None = None,
-                 include: tuple[str, ...] | None = None, setpieces: dict | None = None) -> OppositionReport:
-    return OppositionReportBuilder(metadata, include).build(insight_report, profile, evolution,
-                                                            setpieces=setpieces)
+                 include: tuple[str, ...] | None = None, mode: str = "detailed") -> OppositionReport:
+    return OppositionReportBuilder(metadata, include, mode).build(insight_report, profile, evolution)
 
 
 def build_report_from_frame(frame, *, metadata: ReportMetadata | None = None,
                             include: tuple[str, ...] | None = None, current_match: str | None = None,
-                            multi_match: bool = True, setpieces: dict | None = None,
+                            multi_match: bool = True, mode: str = "detailed",
                             thresholds=None) -> OppositionReport:
     """Convenience orchestration: frame -> P0 -> P1 -> P2 -> P3, one pass each. Each
     layer stays independently testable; this only wires them for callers who have a
@@ -524,4 +558,4 @@ def build_report_from_frame(frame, *, metadata: ReportMetadata | None = None,
             evo = build_evolution(frame, current_match=current_match, thresholds=thresholds)
         except Exception:
             evo = None
-    return build_report(rep, profile, evo, metadata=metadata, include=include, setpieces=setpieces)
+    return build_report(rep, profile, evo, metadata=metadata, include=include, mode=mode)

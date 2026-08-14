@@ -249,6 +249,7 @@ class PatternTrend:
     observable_match_ids: tuple[str, ...]
     present_match_ids: tuple[str, ...]
     evidence: tuple[EvidenceRef, ...]
+    match_statuses: tuple[tuple[str, str], ...] = ()   # (match_id, Observed/Absent/Insufficient/Unavailable)
 
     @property
     def delta_pp(self) -> float | None:
@@ -272,6 +273,7 @@ class PatternTrend:
                 "shares": [round(s, 4) for s in self.shares],
                 "observable_match_ids": list(self.observable_match_ids),
                 "present_match_ids": list(self.present_match_ids),
+                "match_statuses": [list(s) for s in self.match_statuses],
                 "evidence": [e.to_dict() for e in self.evidence]}
 
 
@@ -376,6 +378,7 @@ def analyze_evolution(context: MultiMatchContext,
                  if current_share is not None and baseline_share is not None else None)
 
         evidence = tuple(m.evidence[iid] for m in present if iid in m.evidence)
+        match_statuses = tuple((m.match_id, _STATUS_LABEL[s]) for m, s in statuses)
         patterns.append(PatternTrend(
             insight_id=iid, label=_label(iid), category=_category_of(iid),
             classification=classification, trend=trend, present_count=present_count,
@@ -384,7 +387,8 @@ def analyze_evolution(context: MultiMatchContext,
             current_status=_STATUS_LABEL[cur_status], current_share=current_share,
             baseline_status=baseline_status, baseline_share=baseline_share, delta=delta,
             confidence=confidence, match_ids=tuple(order_ids), shares=tuple(series),
-            observable_match_ids=obs_ids, present_match_ids=present_ids, evidence=evidence))
+            observable_match_ids=obs_ids, present_match_ids=present_ids, evidence=evidence,
+            match_statuses=match_statuses))
 
     # most tactically significant first: recurrence x strength
     patterns.sort(key=lambda p: (-(p.present_count * (max(p.shares) if p.shares else 0)), p.insight_id))

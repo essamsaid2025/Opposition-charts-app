@@ -27,8 +27,9 @@ from typing import Any, Callable
 import streamlit as st
 
 from fap.analytics.tactical import (
-    Confidence, ReportMetadata, SupportingViz, TacticalInsightEngine, analyze_evolution,
-    build_multimatch, build_profile, build_report, render_report,
+    Confidence, ReportMetadata, SetPieceReportMetadata, SupportingViz, TacticalInsightEngine,
+    analyze_evolution, build_multimatch, build_profile, build_report, build_setpiece_report,
+    build_setpiece_report_from_service, render_report, render_setpiece_report,
 )
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
@@ -60,6 +61,8 @@ EVO_WIN = K + "evo_window"   # Tactical Evolution baseline window
 EVO_CACHE = K + "evo_cache"  # {key: TacticalEvolution}
 REP_INC = K + "report_include"   # set of included report section ids
 REP_META = K + "report_meta"     # report metadata inputs
+RPT_KIND = K + "report_kind"     # "Open Play Report" | "Set Piece Report"
+SPR_META = K + "setpiece_report_meta"  # set-piece report metadata inputs
 
 VIEW_KIND = "openplay_view"      # WorkspaceManager preset kind (metadata only)
 FAV_SCOPE = "openplay_favorites"  # WorkspaceManager autosave scope
@@ -1288,7 +1291,7 @@ _REPORT_TOGGLES = (
     ("tactical_dna", "Tactical DNA"), ("vulnerabilities", "Vulnerabilities"),
     ("tactical_evolution", "Tactical Evolution"), ("key_players", "Key Players"),
     ("strengths", "Strengths"), ("focus_points", "Focus Points"),
-    ("set_pieces", "Set Pieces"), ("data_quality", "Data Quality"),
+    ("data_quality", "Data Quality"),
 )
 _DNA_SUB = ("tactical_dna", "build_up", "progression", "final_third", "transitions", "recoveries")
 
@@ -1329,7 +1332,7 @@ def _report_metadata(w: Studio) -> ReportMetadata:
         analyst=meta.get("analyst") or "", analysis_window=meta.get("window") or "")
 
 
-def _build_opposition_report(w: Studio, include: tuple[str, ...]):
+def _build_opposition_report(w: Studio, include: tuple[str, ...], *, mode: str = "detailed"):
     rep = _tac_report(w)
     if rep is None:
         return None, {}
@@ -1338,7 +1341,7 @@ def _build_opposition_report(w: Studio, include: tuple[str, ...]):
         evo = _evo_report(w)
     except Exception:
         evo = None
-    report = build_report(rep, profile, evo, metadata=_report_metadata(w), include=include)
+    report = build_report(rep, profile, evo, metadata=_report_metadata(w), include=include, mode=mode)
     return report, {i.id: i for i in rep.insights}
 
 
@@ -1350,9 +1353,27 @@ def _report_evidence_button(w: Studio, by_id: dict, key: str, link) -> None:
 
 
 def _panel_report(w: Studio) -> None:
+    """Parent 'Scouting Reports' surface: two INDEPENDENT reports — Open Play and Set
+    Pieces. Each has its own metadata, preview and exports; generating one does not
+    affect the other."""
+    kind = st.session_state.get(RPT_KIND, "Open Play Report")
+    c1, c2 = st.columns(2)
+    for col, name in ((c1, "Open Play Report"), (c2, "Set Piece Report")):
+        if col.button(name, key=f"rpt_kind_{name}", use_container_width=True,
+                      type="primary" if name == kind else "secondary"):
+            st.session_state[RPT_KIND] = name
+            st.rerun()
+    st.divider()
+    if kind == "Set Piece Report":
+        _panel_setpiece_report(w)
+    else:
+        _panel_openplay_report(w)
+
+
+def _panel_openplay_report(w: Studio) -> None:
     if w.filtered is None or getattr(w.filtered, "empty", True):
-        C.render_empty_state("No report", "The scouting report appears once events match the current "
-                             "filters.", icon_name="reports" if False else "analysis"); return
+        C.render_empty_state("No report", "The Open Play scouting report appears once events match the "
+                             "current filters.", icon_name="analysis"); return
 
     # ---- report metadata + section selection ----
     meta = st.session_state.setdefault(REP_META, {})
@@ -1372,11 +1393,21 @@ def _panel_report(w: Studio) -> None:
         for i, (tid, label) in enumerate(_REPORT_TOGGLES):
             on = cols[i % 2].checkbox(label, value=tid in inc, key=f"rep_inc_{tid}")
             inc.discard(tid) if not on else inc.add(tid)
+        mode_label = st.radio("Report mode", ["Detailed", "Executive"],
+                              index=0 if meta.get("mode", "detailed") == "detailed" else 1,
+                              key="rep_mode", horizontal=True,
+                              help="Detailed adds a supporting-evidence appendix and match-by-match tables.")
+        meta["mode"] = mode_label.lower()
+        meta["embed"] = st.checkbox("Embed supporting charts in export", value=meta.get("embed", False),
+                                    key="rep_embed",
+                                    help="Renders scoped charts via the existing engine and embeds them "
+                                         "in the exported report.")
 
     include_ids = set(_report_include(w))
     if "tactical_dna" in include_ids:
         include_ids.update(_DNA_SUB)
-    report, by_id = _build_opposition_report(w, tuple(sorted(include_ids)))
+    report, by_id = _build_opposition_report(w, tuple(sorted(include_ids)),
+                                             mode=meta.get("mode", "detailed"))
     if report is None:
         C.render_empty_state("No report", "Adjust the filters to analyse a set of events.",
                              icon_name="analysis"); return
@@ -1524,23 +1555,165 @@ def _panel_report(w: Studio) -> None:
         st.markdown(f'<div class="prof-cov"><div class="prof-block-h">Data Quality & Coverage</div>'
                     f'{dots}{exc}</div>', unsafe_allow_html=True)
 
-    # ---- export (reuses the existing report exporters) ----
+    # ---- Detailed Evidence Appendix (detailed mode) ----
+    if report.mode == "detailed" and report.appendix:
+        st.markdown('<div class="rep-block-h">Detailed Evidence Appendix</div>', unsafe_allow_html=True)
+        for ap in report.appendix:
+            st.markdown(f'<div class="rep-sec-title">{_html.escape(ap.title)}</div>', unsafe_allow_html=True)
+            if ap.table_rows:
+                st.table({col: [r[i] for r in ap.table_rows] for i, col in enumerate(ap.table_columns)})
+            else:
+                for ln in ap.lines[:12]:
+                    st.markdown(f'<div class="rep-line">• {_html.escape(ln)}</div>', unsafe_allow_html=True)
+
+    # ---- export (reuses the existing report exporters; charts via the visual bridge) ----
     st.markdown('<div class="rep-block-h">Export</div>', unsafe_allow_html=True)
-    safe = _slug_report(report.metadata.title)
+    chart_images = _report_chart_images(w, report, by_id) if meta.get("embed") else {}
+    if meta.get("embed"):
+        st.caption(f"{len(chart_images)} supporting chart(s) embedded." if chart_images
+                   else "No charts could be rendered for the current selection.")
     cols = st.columns(3)
-    for col, (label, fmt, mime) in zip(cols, [("Markdown", "markdown", "text/markdown"),
-                                              ("HTML", "html", "text/html"),
-                                              ("PDF", "pdf", "application/pdf")]):
+    for col, (label, fmt) in zip(cols, [("Markdown", "markdown"), ("HTML", "html"), ("PDF", "pdf")]):
         try:
-            out = render_report(report, fmt)
+            out = render_report(report, fmt, chart_images=chart_images)
             col.download_button(label, data=out.content, file_name=out.filename, mime=out.mime,
                                 key=f"rep_exp_{fmt}", use_container_width=True)
         except Exception as exc:
             col.caption(f"{label}: {type(exc).__name__}")
 
 
+def _report_chart_images(w: Studio, report, by_id: dict) -> dict:
+    """Render the report's scoped supporting charts via the existing engine (cached per
+    selection). Stores PNG bytes only — never a matplotlib figure."""
+    if w.engine is None or w.frame is None:
+        return {}
+    cache = _ss(K + "rep_charts", dict)
+    key = json.dumps({"sel": _selections(), "mode": report.mode,
+                      "n": int(len(w.filtered)) if w.filtered is not None else 0}, sort_keys=True,
+                     default=str)
+    if key not in cache:
+        try:
+            from fap.analytics.tactical import report_chart_images
+            cache.clear()
+            cache[key] = report_chart_images(w.engine, w.frame, report, by_id,
+                                             base_selections=dict(_selections()), mode=report.mode)
+        except Exception:
+            cache[key] = {}
+    return cache[key]
+
+
 def _slug_report(s: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in (s or "").lower()).strip("_") or "report"
+
+
+# ---- Set Piece Scouting Report (separate report; reuses fap.setpieces analytics) ---
+def _setpiece_report(w: Studio):
+    """Build the SEPARATE set-piece report from the existing setpieces service; honest
+    'unavailable' when the platform has no set-piece service/data."""
+    meta_in = st.session_state.setdefault(SPR_META, {})
+    md = SetPieceReportMetadata(
+        title=meta_in.get("title", "Set Piece Scouting Report"),
+        opponent=meta_in.get("opponent", "") or getattr(w.dataset, "name", ""),
+        team=meta_in.get("team", ""), competition=meta_in.get("competition", ""),
+        analyst=meta_in.get("analyst", ""))
+    svc = getattr(getattr(w.shell, "platform", None), "setpieces", None)
+    user = getattr(w.shell, "user", None)
+    opp = getattr(w.dataset, "name", None)
+    if svc is None or user is None:
+        return build_setpiece_report([], metadata=md, opponent=opp)      # unavailable
+    try:
+        return build_setpiece_report_from_service(svc, user, opponent=opp, metadata=md)
+    except Exception:
+        return build_setpiece_report([], metadata=md, opponent=opp)
+
+
+def _panel_setpiece_report(w: Studio) -> None:
+    meta = st.session_state.setdefault(SPR_META, {})
+    with st.expander("Set-piece report details", expanded=False):
+        c1, c2 = st.columns(2)
+        meta["title"] = c1.text_input("Report title", value=meta.get("title", "Set Piece Scouting Report"),
+                                      key="spr_title")
+        meta["opponent"] = c2.text_input("Opponent", value=meta.get("opponent", ""), key="spr_opp",
+                                         placeholder=getattr(w.dataset, "name", ""))
+        meta["team"] = c1.text_input("Your team", value=meta.get("team", ""), key="spr_team")
+        meta["analyst"] = c2.text_input("Analyst", value=meta.get("analyst", ""), key="spr_analyst")
+
+    report = _setpiece_report(w)
+    st.markdown(
+        f'<div class="rep-head"><div class="rep-h-title">{_html.escape(report.metadata.title)}</div>'
+        f'<div class="rep-h-sub">Opponent: {_html.escape(report.subject)} · '
+        f'generated {_html.escape(report.metadata.generated_at)}</div></div>', unsafe_allow_html=True)
+
+    if not report.available:
+        for n in report.notices:
+            C.render_alert(n, "info")
+        C.render_empty_state("Set-piece analysis unavailable", "No set-piece data is available for this "
+                             "opponent. Import set pieces in the Set Piece module to populate this report.",
+                             icon_name="target")
+        return
+
+    for s in report.sections:
+        with st.container(key=f"spr_sec_{s.id}"):
+            if s.available:
+                lines = "".join(f"<li>{_html.escape(l)}</li>" for l in s.lines)
+                st.markdown(f'<div class="rep-sec-title">{_html.escape(s.title)}</div>'
+                            f'<div class="prof-headline">{_html.escape(s.headline)}</div>'
+                            f'<ul class="prof-lines">{lines}</ul>', unsafe_allow_html=True)
+                if s.evidence.record_ids:
+                    st.caption(f"Evidence: {len(s.evidence.record_ids)} set-piece record(s).")
+            else:
+                st.markdown(f'<div class="rep-sec-title">{_html.escape(s.title)}</div>'
+                            f'<div class="prof-unavail">{_html.escape(s.reason)}</div>',
+                            unsafe_allow_html=True)
+
+    if report.key_takers:
+        st.markdown('<div class="rep-block-h">Key Takers</div>', unsafe_allow_html=True)
+        st.markdown("".join(f'<div class="rep-line">• {_html.escape(t)}</div>' for t in report.key_takers),
+                    unsafe_allow_html=True)
+    if report.routines:
+        st.markdown('<div class="rep-block-h">Repeated Routines</div>', unsafe_allow_html=True)
+        st.markdown("".join(f'<div class="rep-line">• {_html.escape(r)}</div>' for r in report.routines),
+                    unsafe_allow_html=True)
+
+    if report.strengths:
+        st.markdown('<div class="rep-block-h">Set-Piece Strengths</div>', unsafe_allow_html=True)
+        for it in report.strengths:
+            st.markdown(f'<div class="rep-line">• <b>{_html.escape(it.heading)}</b> — '
+                        f'{_html.escape(it.observation)}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="rep-block-h">Potential Weaknesses</div>', unsafe_allow_html=True)
+    if not report.weaknesses:
+        C.render_alert("No high-confidence set-piece weakness identified from the available data.", "info")
+    for it in report.weaknesses:
+        impl = f'<div class="rep-impl"><b>Implication:</b> {_html.escape(it.implication)}</div>' if it.implication else ""
+        st.markdown(f'<div class="rep-line">• <b>{_html.escape(it.heading)}</b><br>'
+                    f'<span class="rep-obs">{_html.escape(it.observation)}</span>{impl}</div>',
+                    unsafe_allow_html=True)
+
+    if report.match_prep:
+        st.markdown('<div class="rep-block-h">Match Preparation Points</div>', unsafe_allow_html=True)
+        for i, p in enumerate(report.match_prep):
+            st.markdown(f'<div class="rep-line">• <b>{_html.escape(p.heading)}</b> — '
+                        f'{_html.escape(p.observation)}</div>', unsafe_allow_html=True)
+
+    if report.data_quality:
+        dots = "".join(
+            f'<div class="prof-cov-row"><span class="dot {_COV_DOT.get(c.status, "bad")}"></span>'
+            f'<span class="l">{_html.escape(c.label)}</span><b>{_html.escape(c.status)}</b></div>'
+            for c in report.data_quality)
+        st.markdown(f'<div class="prof-cov"><div class="prof-block-h">Set-Piece Data Coverage</div>'
+                    f'{dots}</div>', unsafe_allow_html=True)
+
+    # ---- export (separate document + filename via the shared exporter path) ----
+    st.markdown('<div class="rep-block-h">Export</div>', unsafe_allow_html=True)
+    cols = st.columns(3)
+    for col, (label, fmt) in zip(cols, [("Markdown", "markdown"), ("HTML", "html"), ("PDF", "pdf")]):
+        try:
+            out = render_setpiece_report(report, fmt)
+            col.download_button(label, data=out.content, file_name=out.filename, mime=out.mime,
+                                key=f"spr_exp_{fmt}", use_container_width=True)
+        except Exception as exc:
+            col.caption(f"{label}: {type(exc).__name__}")
 
 
 def _panel_selection(w: Studio) -> None:
