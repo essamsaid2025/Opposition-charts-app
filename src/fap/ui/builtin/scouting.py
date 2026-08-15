@@ -202,19 +202,58 @@ class ScoutingPage(Page):
             self._assigned_charts_panel(shell, svc, p)
 
     def _active_analysis(self, shell, svc, p) -> None:
-        """Match analysis from the ACTIVE dataset (single source of truth), joined
-        in memory to this scouting record. Data Hub aware when nothing is active;
-        the persistent scouting DB is never used for event data."""
-        with st.expander("Match analysis (active dataset)", expanded=False):
-            if not svc.has_active_dataset(shell.user):
+        """Player analysis from the ACTIVE dataset, routed by dataset CAPABILITY:
+        a player-scouting dataset shows the player's metric profile; an event
+        dataset shows event/match analysis. The two are never mixed, and a
+        player-scouting dataset never reports 'No events found'."""
+        kind = svc.active_dataset_kind(shell.user)
+        if kind == "":
+            with st.expander("Player analysis (active dataset)", expanded=False):
                 go = C.render_empty_state(
-                    "No active dataset", "Scouting analysis reads match/event data from the active "
-                    "dataset. Import and choose one in the Data Hub - notes, ratings and tags stay "
-                    "in the scouting database.", icon_name="datasets",
+                    "No active dataset", "Scouting analysis reads from the active dataset. Import "
+                    "and choose one in the Data Hub - notes, ratings and tags stay in the scouting "
+                    "database.", icon_name="datasets",
                     action_label="Open Data Hub", key=f"sc_dh_{p.id}")
                 if go:
                     shell.goto("data_hub")
+            return
+        if kind == "player_scouting":
+            self._scouting_metric_profile(shell, svc, p)
+            return
+        self._event_analysis(shell, svc, p)
+
+    def _scouting_metric_profile(self, shell, svc, p) -> None:
+        """Player-scouting capability: the player's metrics from the active
+        player-scouting dataset (resolved by name against the Player column). No
+        event lookup, and missing event data is NOT an error."""
+        with st.expander("Scouting profile (active dataset)", expanded=True):
+            profile = svc.active_scouting_profile(shell.user, p.id)
+            if profile is None:
+                C.render_alert(
+                    f"{p.name} is not in the active player-scouting dataset "
+                    f"(the player's name may differ in the data). Notes, ratings and tags are "
+                    f"still available.", "info")
                 return
+            dims = profile.get("dimensions", {})
+            meta = " · ".join(f"**{k.title()}** {v}" for k, v in dims.items() if v not in (None, ""))
+            if meta:
+                st.markdown(meta)
+            scale = profile.get("value_scale")
+            if scale == "normalized":
+                st.caption("Metric values are percentile/rank-normalized (0-1), preserved as-is.")
+            rows = [{"metric": m["name"], "unit": m["unit"],
+                     "value": ("—" if m["value"] is None else m["value"])}
+                    for m in profile.get("metrics", [])]
+            if rows:
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+            C.render_alert(
+                "Event-level evidence (pass/shot/touch maps) is unavailable for this dataset - "
+                "player-scouting data has no match events. Activate an event dataset in the Data "
+                "Hub to add event analysis.", "info")
+
+    def _event_analysis(self, shell, svc, p) -> None:
+        """Event capability: match/event analysis from the active event dataset."""
+        with st.expander("Match analysis (active dataset)", expanded=False):
             stats = svc.active_player_stats(shell.user, p.id)
             if not stats["events"]:
                 C.render_alert(f"No events found for {p.name} in the active dataset "

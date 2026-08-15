@@ -129,12 +129,89 @@ class ScoutingService:
             return None
         return self._wm.dataset_frame(dataset_id)
 
+    # -- dataset CAPABILITY boundary -----------------------------------------
+    # Player-scouting datasets (one row per player, metric columns) and event
+    # datasets (one row per on-ball event) are DIFFERENT capabilities and must not
+    # be confused: a player-scouting dataset has no events, so the event lookup is
+    # never run against it (that produced the misleading "No events found").
+    def active_dataset_kind(self, user: User) -> str:
+        """The active dataset's capability: ``'player_scouting'``, ``'event'`` (an
+        event/match dataset - the historical default, carries no type flag), or
+        ``''`` when nothing is active."""
+        if self._wm is None:
+            return ""
+        try:
+            ds = self._wm.active_dataset(user)
+        except Exception:
+            return ""
+        if ds is None:
+            return ""
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        return "player_scouting" if doc.get("dataset_type") == PLAYER_SCOUTING else "event"
+
+    def _player_names(self, p) -> set[str]:
+        names = {p.name.lower().strip()} | {
+            str(a).lower().strip() for a in (p.document.get("aliases") or []) if a}
+        return names - {""}
+
+    def active_scouting_profile(self, user: User, player_id: str) -> dict[str, Any] | None:
+        """When a PLAYER-SCOUTING dataset is active, resolve this scouting record by
+        name against the dataset's player-identity column and return its metric
+        profile (dimensions + per-metric value/unit + value scale). ``None`` when the
+        active dataset is not player-scouting or the player is not in it. Reads the
+        persisted schema; never runs an event lookup or fabricates events."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return None
+        ds = self._wm.active_dataset(user)
+        if ds is None:
+            return None
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        if doc.get("dataset_type") != PLAYER_SCOUTING:
+            return None
+        schema = doc.get("scouting_schema") or {}
+        id_field = schema.get("id_field")
+        frame = self._wm.dataset_frame(ds.id)
+        if not id_field or frame is None or getattr(frame, "empty", True) \
+                or id_field not in frame.columns:
+            return None
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        names = self._player_names(p)
+        col = frame[id_field].astype(str).str.lower().str.strip()
+        match = frame[col.isin(names)]
+        if match.empty:
+            return None
+        row = match.iloc[0]
+        metrics = []
+        for m in schema.get("metrics", []):
+            src = m.get("source")
+            if src in frame.columns:
+                val = row[src]
+                metrics.append({"name": m.get("name", src), "source": src,
+                                "unit": m.get("unit", ""),
+                                "value": None if pd.isna(val) else val})
+        dimensions = {k: (None if pd.isna(row[v]) else row[v])
+                      for k, v in (schema.get("dimensions") or {}).items()
+                      if v in frame.columns}
+        return {"dataset": ds.name, "dataset_id": ds.id,
+                "player": str(row[id_field]), "dimensions": dimensions,
+                "metrics": metrics, "value_scale": schema.get("value_scale", "raw")}
+
     def player_event_frame(self, user: User, player_id: str):
         """The active dataset's events for this scouting player (canonical match/
         event source), joined in memory to the persistent record by name. ``None``
-        when no dataset is active or the player has no events in it. Stores nothing."""
+        when no dataset is active, the active dataset is player-scouting (not events),
+        or the player has no events in it. Stores nothing."""
         self._require(user, Capability.VIEW_SCOUTING)
         if self._wm is None:
+            return None
+        # Capability boundary: never run the event lookup on a player-scouting
+        # dataset (it has no events) - that is what produced "No events found".
+        if self.active_dataset_kind(user) == "player_scouting":
             return None
         p = self.get_player(player_id)
         if p is None:
@@ -142,9 +219,7 @@ class ScoutingService:
         frame = self._wm.active_frame(user)
         if frame is None or getattr(frame, "empty", True) or "player" not in frame.columns:
             return None
-        names = {p.name.lower().strip()} | {
-            str(a).lower().strip() for a in (p.document.get("aliases") or []) if a}
-        names -= {""}
+        names = self._player_names(p)
         match = frame[frame["player"].astype(str).str.lower().str.strip().isin(names)]
         return match if not match.empty else None
 
