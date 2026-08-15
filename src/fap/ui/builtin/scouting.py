@@ -13,7 +13,6 @@ from fap.core.exceptions import AuthError
 from fap.core.plugin import PluginInfo
 from fap.identity.capabilities import Capability
 from fap.identity.roles import Role
-from fap.scouting.models import PLAYER_STATUSES, PRIORITIES
 from fap.theme import components as C
 from fap.theme import icon
 from fap.ui.page import Page, page_registry
@@ -288,6 +287,14 @@ class ScoutingPage(Page):
                     st.info("This visualization could not be rendered from the current events.")
 
     def _profile(self, shell, svc, p) -> None:
+        from fap.scouting import identity
+        dn = identity.display_name_of(p)
+        aliases = identity.aliases_of(p)
+        st.write(f"**Recruitment** {C.badge_html(identity.status_label(p.status) or '—', 'info')} "
+                 f"&nbsp; **Priority** {identity.priority_label(p.priority) or '—'}"
+                 + (f" &nbsp; **Also known as** {', '.join(aliases)}" if aliases else "")
+                 + (f" &nbsp; **Source** {identity.source_of(p)}" if identity.source_of(p) else ""),
+                 unsafe_allow_html=True)
         st.write(f"**Country** {p.country or '—'} · **Age** {p.age or '—'} · **Foot** {p.foot or '—'} "
                  f"· **Height** {p.height or '—'} · **Contract** {p.contract_until or '—'}")
         st.write(f"**Rating** {p.internal_rating or '—'} · **Value** {p.market_value or '—'} "
@@ -295,6 +302,10 @@ class ScoutingPage(Page):
         self._active_analysis(shell, svc, p)
         if not self._can_edit:
             return
+        statuses = list(identity.RECRUITMENT_STATUSES)
+        priorities = [""] + list(identity.RECRUITMENT_PRIORITIES)
+        cur_status = identity.normalize_status(p.status)
+        cur_priority = identity.normalize_priority(p.priority)
         with st.expander("Edit profile"):
             cc = st.columns(3)
             club = cc[0].text_input("Club", value=p.club, key="ep_club")
@@ -302,17 +313,28 @@ class ScoutingPage(Page):
             country = cc[2].text_input("Country", value=p.country, key="ep_country")
             age = cc[0].number_input("Age", 0, 60, p.age or 0, key="ep_age")
             rating = cc[1].number_input("Rating", 0.0, 10.0, float(p.internal_rating or 0), 0.1, key="ep_rating")
-            status = cc[2].selectbox("Status", list(PLAYER_STATUSES),
-                                     index=(list(PLAYER_STATUSES).index(p.status) if p.status in PLAYER_STATUSES else 0),
-                                     key="ep_status")
-            priority = cc[0].selectbox("Priority", list(PRIORITIES),
-                                       index=list(PRIORITIES).index(p.priority) if p.priority in PRIORITIES else 0,
-                                       key="ep_priority")
+            status = cc[2].selectbox("Recruitment status", statuses,
+                                     index=statuses.index(cur_status) if cur_status in statuses else 0,
+                                     format_func=identity.status_label, key="ep_status")
+            priority = cc[0].selectbox("Priority", priorities,
+                                       index=priorities.index(cur_priority) if cur_priority in priorities else 0,
+                                       format_func=lambda x: identity.priority_label(x) or "—", key="ep_priority")
             contract = cc[1].text_input("Contract until", value=p.contract_until, key="ep_contract")
+            display_name = cc[2].text_input("Display name", value=dn, key="ep_dn")
+            alias_str = cc[0].text_input("Aliases (comma separated)", value=", ".join(aliases),
+                                         key="ep_aliases")
+            source = cc[1].text_input("Source", value=identity.source_of(p), key="ep_source",
+                                      placeholder="e.g. Malta league export, scout obs")
             if st.button("Save", type="primary", key="ep_save"):
                 svc.update_player(shell.user, p.id, club=club, league=league, country=country,
-                                  age=int(age) or None, internal_rating=rating or None, status=status,
-                                  priority=priority, contract_until=contract)
+                                  age=int(age) or None, internal_rating=rating or None,
+                                  contract_until=contract)
+                svc.set_recruitment_status(shell.user, p.id, status)
+                svc.set_priority(shell.user, p.id, priority)
+                svc.set_display_name(shell.user, p.id, display_name)
+                svc.set_source(shell.user, p.id, source)
+                svc.set_aliases(shell.user, p.id,
+                                [a.strip() for a in alias_str.split(",") if a.strip()])
                 st.rerun()
         col = st.columns(3)
         if col[0].button("Archive" if not p.archived else "Restore", key="p_archive"):

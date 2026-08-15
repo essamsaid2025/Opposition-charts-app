@@ -151,9 +151,117 @@ class ScoutingService:
         return "player_scouting" if doc.get("dataset_type") == PLAYER_SCOUTING else "event"
 
     def _player_names(self, p) -> set[str]:
-        names = {p.name.lower().strip()} | {
-            str(a).lower().strip() for a in (p.document.get("aliases") or []) if a}
-        return names - {""}
+        from fap.scouting import identity
+        return identity.identity_keys(p)
+
+    # ============================================================ identity (P4.1)
+    # The persistent player_id is the identity anchor; a dataset row is only a data
+    # source resolved back to a player by name/alias. All identity attributes the
+    # players table has no column for (aliases/display_name/source) live in the
+    # existing document JSON - no migration, no new table.
+    def resolve_player(self, user: User, *, player_id: str | None = None,
+                       name: str | None = None, workspace_id: str | None = None):
+        """Resolve an identity to a persistent player. ``player_id`` wins; else an
+        exact name/alias match, with ambiguity surfaced (never guessed). Returns an
+        ``identity.Resolution``."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import identity
+        if player_id:
+            p = self.players.get(player_id)
+            return identity.Resolution(
+                player=p, candidates=[p] if p else [],
+                reason="matched by player_id" if p else "no player with that id")
+        # Resolve in memory over the workspace pool: aliases/display_name live in the
+        # document, which the SQL name filter cannot see, so we must not pre-filter
+        # by the name query here.
+        pool = self.players.search(query="", workspace_id=workspace_id, limit=500)
+        return identity.resolve(pool, name=name)
+
+    def find_players_by_name(self, user: User, name: str, *,
+                             workspace_id: str | None = None) -> list[Player]:
+        """Every persistent player that answers to ``name`` (name/alias/display),
+        for disambiguation UIs. Exact identity match, not a fuzzy search."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import identity
+        pool = self.players.search(query="", workspace_id=workspace_id, limit=500)
+        return [p for p in pool if identity.matches_name(p, name)]
+
+    def _set_doc(self, user: User, player_id: str, action: str, **doc_updates: Any) -> Player:
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc.update(doc_updates)
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, action, target_type="player", target_id=player_id,
+                          detail={"fields": sorted(doc_updates)})
+        return p
+
+    def add_alias(self, user: User, player_id: str, alias: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        p = self._player_or_raise(player_id)
+        aliases = identity.aliases_of(p)
+        a = str(alias or "").strip()
+        if a and a.lower() not in {x.lower() for x in aliases} and a.lower() != p.name.lower():
+            aliases.append(a)
+        return self._set_doc(user, player_id, "scouting.player.alias_add", aliases=aliases)
+
+    def remove_alias(self, user: User, player_id: str, alias: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        p = self._player_or_raise(player_id)
+        a = str(alias or "").strip().lower()
+        aliases = [x for x in identity.aliases_of(p) if x.lower() != a]
+        return self._set_doc(user, player_id, "scouting.player.alias_remove", aliases=aliases)
+
+    def set_aliases(self, user: User, player_id: str, aliases: list[str]) -> Player:
+        """Replace the whole alias set (de-duplicated, excludes the primary name)."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        cleaned: list[str] = []
+        for a in aliases or []:
+            a = str(a).strip()
+            if a and a.lower() not in {x.lower() for x in cleaned} and a.lower() != p.name.lower():
+                cleaned.append(a)
+        return self._set_doc(user, player_id, "scouting.player.aliases", aliases=cleaned)
+
+    def set_display_name(self, user: User, player_id: str, display_name: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        return self._set_doc(user, player_id, "scouting.player.display_name",
+                             display_name=str(display_name or "").strip())
+
+    def set_source(self, user: User, player_id: str, source: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        return self._set_doc(user, player_id, "scouting.player.source",
+                             source=str(source or "").strip())
+
+    def set_recruitment_status(self, user: User, player_id: str, status: str) -> Player:
+        """Set the canonical recruitment status (normalized). Status *history* is
+        added in P4.2; this persists the current value only."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        p = self._player_or_raise(player_id)
+        p.status = identity.normalize_status(status)
+        self.players.save(p)
+        self.audit.record(user, "scouting.player.status", target_type="player",
+                          target_id=player_id, detail={"status": p.status})
+        return p
+
+    def set_priority(self, user: User, player_id: str, priority: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        p = self._player_or_raise(player_id)
+        p.priority = identity.normalize_priority(priority)
+        self.players.save(p)
+        self.audit.record(user, "scouting.player.priority", target_type="player",
+                          target_id=player_id, detail={"priority": p.priority})
+        return p
+
+    def player_event_frame(self, user: User, player_id: str):
+        """The active dataset's events for this scouting player (canonical match/
+        event source), joined in memory to the persistent record by name. ``None``
+        when no dataset is active, the active dataset is player-scouting (not events),
+        or the player has no events in it. Stores nothing."""
 
     def active_scouting_profile(self, user: User, player_id: str) -> dict[str, Any] | None:
         """When a PLAYER-SCOUTING dataset is active, resolve this scouting record by

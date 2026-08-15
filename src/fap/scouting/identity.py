@@ -1,0 +1,173 @@
+"""Player identity + recruitment vocabulary (P4.1) - pure, no persistence, no UI.
+
+The scouting module becomes PLAYER-centric: the persistent ``player_id`` is the
+identity anchor, and a dataset row is only a data source resolved back to a
+player by name/alias. This module owns:
+
+* the professional recruitment vocabulary (status pipeline + priority) with
+  back-compatible normalizers from the legacy free-text values, and
+* the ONE identity resolver every consumer uses - id first, then an exact
+  name/alias match, with ambiguity surfaced rather than guessed.
+
+Identity attributes that the fixed ``players`` table has no column for
+(``aliases``, ``display_name``, ``source``) live in the player's existing
+``document`` JSON - no migration, no new table, no second persistence layer.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Iterable
+
+# ---------------------------------------------------------------- recruitment vocab
+# the professional recruitment pipeline (ordered) + two terminal states.
+STATUS_PIPELINE: tuple[str, ...] = (
+    "watching", "shortlisted", "scouted", "target", "contacted", "negotiating", "signed",
+)
+TERMINAL_STATUSES: tuple[str, ...] = ("rejected", "archived")
+RECRUITMENT_STATUSES: tuple[str, ...] = STATUS_PIPELINE + TERMINAL_STATUSES
+
+RECRUITMENT_PRIORITIES: tuple[str, ...] = ("low", "medium", "high", "critical")
+
+# legacy (models.PLAYER_STATUSES / PRIORITIES) -> canonical. Back-compat only; we
+# never rewrite stored values silently - normalization happens at read/display.
+_LEGACY_STATUS: dict[str, str] = {
+    "prospect": "watching", "monitoring": "watching", "shortlisted": "shortlisted",
+    "recommended": "target", "signed": "signed", "rejected": "rejected",
+    "active": "scouted", "": "watching",
+}
+_LEGACY_PRIORITY: dict[str, str] = {"urgent": "critical", "": ""}
+
+
+def normalize_status(value: str | None) -> str:
+    """Map any stored/legacy status to a canonical one. Unknown values pass through
+    lower-cased (never fabricated into a different meaning)."""
+    v = str(value or "").strip().lower()
+    if v in RECRUITMENT_STATUSES:
+        return v
+    return _LEGACY_STATUS.get(v, v)
+
+
+def normalize_priority(value: str | None) -> str:
+    v = str(value or "").strip().lower()
+    if v in RECRUITMENT_PRIORITIES or v == "":
+        return v
+    return _LEGACY_PRIORITY.get(v, v)
+
+
+def status_label(value: str | None) -> str:
+    return normalize_status(value).replace("_", " ").title()
+
+
+def priority_label(value: str | None) -> str:
+    p = normalize_priority(value)
+    return p.title() if p else ""
+
+
+def is_terminal(status: str | None) -> bool:
+    return normalize_status(status) in TERMINAL_STATUSES
+
+
+def next_statuses(status: str | None) -> list[str]:
+    """The forward pipeline steps available from ``status`` (plus terminals). Used
+    later by the recruitment workflow (P4.2); defined here with the vocabulary."""
+    cur = normalize_status(status)
+    if cur in STATUS_PIPELINE:
+        i = STATUS_PIPELINE.index(cur)
+        forward = list(STATUS_PIPELINE[i + 1:])
+    else:
+        forward = list(STATUS_PIPELINE)
+    return forward + list(TERMINAL_STATUSES)
+
+
+# ---------------------------------------------------------------- identity helpers
+def _clean(s: Any) -> str:
+    return str(s or "").strip()
+
+
+def aliases_of(player: Any) -> list[str]:
+    """The player's alternate names (from ``document['aliases']``), de-duplicated
+    and order-preserved. Aliases are how a dataset row resolves to a player when
+    the spelling differs."""
+    doc = getattr(player, "document", None) or {}
+    out: list[str] = []
+    for a in doc.get("aliases", []) or []:
+        a = _clean(a)
+        if a and a not in out:
+            out.append(a)
+    return out
+
+
+def display_name_of(player: Any) -> str:
+    """The name to show in the UI: explicit display_name, else nickname, else name."""
+    doc = getattr(player, "document", None) or {}
+    return (_clean(doc.get("display_name")) or _clean(getattr(player, "nickname", ""))
+            or _clean(getattr(player, "name", "")))
+
+
+def source_of(player: Any) -> str:
+    """Where this player was first added from (free-text provenance)."""
+    doc = getattr(player, "document", None) or {}
+    return _clean(doc.get("source"))
+
+
+def identity_keys(player: Any) -> set[str]:
+    """Every lower-cased name this player answers to (name + aliases + display
+    name). The single matching surface used by resolution and event/metric joins."""
+    keys = {_clean(getattr(player, "name", "")).lower()}
+    keys |= {a.lower() for a in aliases_of(player)}
+    dn = display_name_of(player)
+    if dn:
+        keys.add(dn.lower())
+    keys.discard("")
+    return keys
+
+
+def matches_name(player: Any, name: str) -> bool:
+    return _clean(name).lower() in identity_keys(player)
+
+
+# ---------------------------------------------------------------- resolution
+@dataclass(frozen=True, slots=True)
+class Resolution:
+    """Result of resolving an identity: the matched player (or None), all
+    candidates considered, and whether the match was ambiguous."""
+    player: Any = None
+    candidates: list[Any] = field(default_factory=list)
+    ambiguous: bool = False
+    reason: str = ""
+
+    @property
+    def found(self) -> bool:
+        return self.player is not None
+
+
+def resolve(players: Iterable[Any], *, player_id: str | None = None,
+            name: str | None = None) -> Resolution:
+    """Resolve an identity against a set of players. ``player_id`` wins (the
+    persistent anchor); otherwise an exact name/alias match is used, and multiple
+    matches are reported as ambiguous rather than silently picking one."""
+    players = list(players)
+    if player_id:
+        hit = next((p for p in players if getattr(p, "id", None) == player_id), None)
+        return Resolution(player=hit, candidates=[hit] if hit else [],
+                          ambiguous=False,
+                          reason="matched by player_id" if hit else "no player with that id")
+    if name:
+        cands = [p for p in players if matches_name(p, name)]
+        if len(cands) == 1:
+            return Resolution(player=cands[0], candidates=cands, ambiguous=False,
+                              reason="matched by name/alias")
+        if len(cands) > 1:
+            return Resolution(player=None, candidates=cands, ambiguous=True,
+                              reason=f"{len(cands)} players share this name - disambiguate by id")
+        return Resolution(player=None, candidates=[], ambiguous=False,
+                          reason="no player matches this name")
+    return Resolution(player=None, candidates=[], ambiguous=False, reason="no identity given")
+
+
+__all__ = [
+    "STATUS_PIPELINE", "TERMINAL_STATUSES", "RECRUITMENT_STATUSES", "RECRUITMENT_PRIORITIES",
+    "normalize_status", "normalize_priority", "status_label", "priority_label",
+    "is_terminal", "next_statuses", "aliases_of", "display_name_of", "source_of",
+    "identity_keys", "matches_name", "Resolution", "resolve",
+]
