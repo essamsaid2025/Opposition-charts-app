@@ -9,11 +9,16 @@ PermissionService for capability checks and AuditService for the trail.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import uuid
 from datetime import date
 from typing import Any
 
 import pandas as pd
+
+
+def _dt_now() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
 
 from fap.identity.capabilities import Capability
 from fap.identity.models import User
@@ -235,17 +240,187 @@ class ScoutingService:
         return self._set_doc(user, player_id, "scouting.player.source",
                              source=str(source or "").strip())
 
-    def set_recruitment_status(self, user: User, player_id: str, status: str) -> Player:
-        """Set the canonical recruitment status (normalized). Status *history* is
-        added in P4.2; this persists the current value only."""
+    def set_recruitment_status(self, user: User, player_id: str, status: str,
+                               note: str = "") -> Player:
+        """Set the canonical recruitment status (normalized) and append an
+        append-only status-history event to the player's document (+ audit trail).
+        No-op history entry when the status is unchanged."""
         self._require(user, Capability.EDIT_SCOUTING)
         from fap.scouting import identity
         p = self._player_or_raise(player_id)
-        p.status = identity.normalize_status(status)
+        old = identity.normalize_status(p.status)
+        new = identity.normalize_status(status)
+        p.status = new
+        if new != old:
+            history = identity.status_history_of(p)
+            history.append({"from": old, "to": new, "at": _dt_now(), "by": user.email,
+                            "note": str(note or "").strip()})
+            doc = dict(p.document) if isinstance(p.document, dict) else {}
+            doc["status_history"] = history
+            p.document = doc
         self.players.save(p)
         self.audit.record(user, "scouting.player.status", target_type="player",
-                          target_id=player_id, detail={"status": p.status})
+                          target_id=player_id, detail={"status": p.status, "from": old})
         return p
+
+    # ============================================================ pathway / registry (P4.2)
+    def _assign_operational_id(self, player_type: str) -> str:
+        """A stable, club-wide operational id (CLB-/ACD-/TRI-000001). Backed by the
+        WorkspaceManager's global monotonic counter, so ids are never reused after a
+        player is deleted. The immutable player_id remains the true identity anchor."""
+        from fap.scouting import identity
+        pt = identity.normalize_player_type(player_type)
+        prefix = identity.TYPE_PREFIX.get(pt, "CLB")
+        seq = self._wm.next_counter(f"scouting_op_{prefix}") if self._wm is not None else 0
+        return identity.format_operational_id(pt, seq)
+
+    def set_player_type(self, user: User, player_id: str, player_type: str, *,
+                        reassign_operational_id: bool = False, note: str = "") -> Player:
+        """Change a player's pathway (academy/first_team/trialist) WITHOUT changing
+        player_id. Records a pathway-history event; optionally issues a new
+        operational id for the new pathway while keeping the old one in history."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        p = self._player_or_raise(player_id)
+        old_type = identity.player_type_of(p)
+        new_type = identity.normalize_player_type(player_type)
+        old_op = identity.operational_id_of(p)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc["player_type"] = new_type
+        new_op = old_op
+        if reassign_operational_id or not old_op:
+            new_op = self._assign_operational_id(new_type)
+            doc["operational_id"] = new_op
+        history = list(doc.get("pathway_history", []) or [])
+        history.append({"from": old_type, "to": new_type, "at": _dt_now(), "by": user.email,
+                        "operational_id_before": old_op, "operational_id_after": new_op,
+                        "note": str(note or "").strip()})
+        doc["pathway_history"] = history
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, "scouting.player.pathway", target_type="player",
+                          target_id=player_id,
+                          detail={"from": old_type, "to": new_type, "operational_id": new_op})
+        return p
+
+    def promote_to_first_team(self, user: User, player_id: str, note: str = "") -> Player:
+        """Promote an academy player to the first team - SAME player_id, all history
+        and assets preserved, a new CLB operational id issued, pathway history logged."""
+        return self.set_player_type(user, player_id, "first_team",
+                                    reassign_operational_id=True, note=note)
+
+    def set_recruitment_profile(self, user: User, player_id: str, profile_id: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        return self._set_doc(user, player_id, "scouting.player.profile",
+                             recruitment_profile=str(profile_id or "").strip())
+
+    def set_age_group(self, user: User, player_id: str, age_group: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        return self._set_doc(user, player_id, "scouting.player.age_group",
+                             age_group=str(age_group or "").strip())
+
+    def set_academy_profile(self, user: User, player_id: str, **fields: Any) -> Player:
+        """Store academy-specific development fields (development stage, potential
+        ratings, projection, …) in document['academy']. Only the given keys are set;
+        empty values are dropped so nothing is fabricated."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        p = self._player_or_raise(player_id)
+        academy = identity.academy_profile_of(p)
+        for k, v in fields.items():
+            if v in (None, ""):
+                academy.pop(k, None)
+            else:
+                academy[k] = v
+        return self._set_doc(user, player_id, "scouting.player.academy", academy=academy)
+
+    def status_history(self, player_id: str):
+        from fap.scouting import identity
+        p = self.get_player(player_id)
+        return identity.status_history_of(p) if p else []
+
+    def pathway_history(self, player_id: str):
+        from fap.scouting import identity
+        p = self.get_player(player_id)
+        return identity.pathway_history_of(p) if p else []
+
+    # -- recruitment profiles + fit -----------------------------------------
+    def available_profiles(self, position: str = "") -> list[dict[str, Any]]:
+        from fap.scouting import profiles
+        return [pr.to_dict() for pr in profiles.profiles_for_position(position)]
+
+    def profile_fit_for(self, user: User, player_id: str, profile_id: str) -> dict[str, Any] | None:
+        """Transparent profile-fit for a player against the ACTIVE player-scouting
+        dataset. ``None`` when no scouting dataset is active or the player is not in
+        it; ``available: False`` when the dataset lacks enough compatible metrics."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import identity, profiles, viz
+        profile = profiles.get_profile(profile_id)
+        if profile is None:
+            return None
+        ctx = self.active_scouting_dataset(user)
+        if ctx is None or ctx.get("frame") is None:
+            return None
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        names = identity.identity_keys(p)
+        primary = next((n for n in ctx["players"] if n.lower().strip() in names), None)
+        if primary is None:
+            return None
+        view = viz.build_view(ctx["frame"], ctx["schema"], [primary],
+                              dataset_id=ctx["id"], dataset_name=ctx["name"])
+        result = profiles.profile_fit(view, profile, primary)
+        result["profile"] = profile.name
+        result["profile_id"] = profile.id
+        return result
+
+    def player_registry(self, user: User, *, filters: dict[str, Any] | None = None,
+                        workspace_id: str | None = None,
+                        min_fit: float | None = None,
+                        profile_id: str | None = None) -> list[dict[str, Any]]:
+        """The recruitment registry: players (canonical records) with identity,
+        pathway, status/priority and - when a compatible scouting dataset is active -
+        an optional profile-fit score. Filters adapt to player_type. Never depends on
+        a filename; identity is the anchor."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import identity
+        f = dict(filters or {})
+        player_type = f.pop("player_type", None)
+        repo_filters = {k: v for k, v in f.items()
+                        if k in ("club", "league", "country", "nationality", "position",
+                                 "foot", "status", "priority", "min_age", "max_age") and v not in (None, "")}
+        pool = self.players.search(query=f.get("query", ""), filters=repo_filters,
+                                   workspace_id=workspace_id, limit=500)
+        out: list[dict[str, Any]] = []
+        for p in pool:
+            pt = identity.player_type_of(p)
+            if player_type and player_type != "all" and pt != player_type:
+                continue
+            if f.get("age_group") and identity.age_group_of(p) != f["age_group"]:
+                continue
+            if f.get("recruitment_profile") and identity.recruitment_profile_of(p) != f["recruitment_profile"]:
+                continue
+            fit = None
+            if profile_id:
+                res = self.profile_fit_for(user, p.id, profile_id)
+                fit = res.get("score") if res and res.get("available") else None
+                if min_fit is not None and (fit is None or fit < min_fit):
+                    continue
+            out.append({
+                "id": p.id, "operational_id": identity.operational_id_of(p),
+                "name": p.name, "display_name": identity.display_name_of(p),
+                "player_type": pt, "type_label": identity.type_label(pt),
+                "position": p.position, "club": p.club, "league": p.league,
+                "age": p.age, "age_group": identity.age_group_of(p),
+                "nationality": p.nationality or p.country,
+                "status": identity.normalize_status(p.status),
+                "priority": identity.normalize_priority(p.priority),
+                "recruitment_profile": identity.recruitment_profile_of(p),
+                "profile_fit": fit, "profile_image_id": p.profile_image_id,
+                "favorite": p.favorite,
+            })
+        return out
 
     def set_priority(self, user: User, player_id: str, priority: str) -> Player:
         self._require(user, Capability.EDIT_SCOUTING)
@@ -422,15 +597,34 @@ class ScoutingService:
 
     # ================================================================ players
     def create_player(self, user: User, name: str, **fields: Any) -> Player:
+        """Create a canonical player. Assigns the immutable internal ``player_id``
+        (uuid) and a stable operational id (CLB-/ACD-/TRI-000001) reflecting the
+        pathway. player_type/operational_id are structured identity metadata in the
+        document - no schema migration. The operational prefix never becomes the
+        identity."""
         self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        player_type = identity.normalize_player_type(fields.pop("player_type", "first_team"))
+        # document keys we manage on the identity layer (not dataclass columns)
+        doc_extra = {k: fields.pop(k) for k in
+                     ("aliases", "display_name", "source", "age_group",
+                      "recruitment_profile", "academy") if k in fields}
         p = Player(id=self._uid(), name=name.strip(), owner=user.email, created_by=user.email,
                    workspace_id=fields.pop("workspace_id", None))
         for k, v in fields.items():
             if hasattr(p, k):
                 setattr(p, k, v)
+        p.status = identity.normalize_status(p.status)
+        p.priority = identity.normalize_priority(p.priority)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc.update(doc_extra)
+        doc["player_type"] = player_type
+        doc["operational_id"] = self._assign_operational_id(player_type)
+        p.document = doc
         self.players.save(p)
         self.audit.record(user, "scouting.player.create", target_type="player", target_id=p.id,
-                          detail={"name": p.name})
+                          detail={"name": p.name, "player_type": player_type,
+                                  "operational_id": doc["operational_id"]})
         return p
 
     def get_player(self, player_id: str) -> Player | None:
@@ -496,6 +690,11 @@ class ScoutingService:
                       status=src.status, tags=list(src.tags), custom_fields=dict(src.custom_fields),
                       priority=src.priority, internal_rating=src.internal_rating,
                       workspace_id=src.workspace_id, owner=user.email, created_by=user.email)
+        # a duplicate is a NEW canonical identity: same pathway, fresh operational id,
+        # no inherited history/aliases.
+        from fap.scouting import identity
+        pt = identity.player_type_of(src)
+        copy.document = {"player_type": pt, "operational_id": self._assign_operational_id(pt)}
         self.players.save(copy)
         self.audit.record(user, "scouting.player.duplicate", target_type="player", target_id=copy.id,
                           detail={"source": player_id})

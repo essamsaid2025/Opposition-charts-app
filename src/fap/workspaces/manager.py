@@ -370,6 +370,24 @@ class WorkspaceManager:
     def load_autosave(self, user: User, scope: str = "session") -> dict[str, Any]:
         return self._state.load_state(user.email, scope)
 
+    # ---------------------------------------------------------------- global counters
+    # A monotonic, club-wide counter persisted in the EXISTING user_state table under
+    # a system sentinel key (no new table/layer). Used for stable operational IDs that
+    # must never be reused after a player is deleted. Global, not per-user.
+    _COUNTER_SCOPE = "system_counters"
+    _COUNTER_KEY = "__system__"
+
+    def next_counter(self, name: str) -> int:
+        state = self._state.load_state(self._COUNTER_KEY, self._COUNTER_SCOPE) or {}
+        nxt = int(state.get(name, 0)) + 1
+        state[name] = nxt
+        self._state.save_state(self._COUNTER_KEY, self._COUNTER_SCOPE, state)
+        return nxt
+
+    def peek_counter(self, name: str) -> int:
+        state = self._state.load_state(self._COUNTER_KEY, self._COUNTER_SCOPE) or {}
+        return int(state.get(name, 0))
+
     # ---------------------------------------------------------------- pins / favorites / recents
     def pin(self, user: User, target_type: str, target_id: str) -> None:
         self._state.add_item(user.email, "pin", target_type, target_id)
