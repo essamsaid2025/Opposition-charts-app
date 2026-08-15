@@ -73,10 +73,10 @@ def _render_and_show(fig, title: str, ex, *, key: str,
         cols[1].download_button("Download PDF", pdf, file_name=f"{slug}.pdf",
                                 mime="application/pdf", key=f"{key}_pdf",
                                 use_container_width=True)
-    if on_assign is not None and cols[2].button("Assign to report", key=f"{key}_assign",
+    if on_assign is not None and cols[2].button("Save to player", key=f"{key}_assign",
                                                 use_container_width=True):
         on_assign(png, title, viz_id)
-        st.toast("Chart assigned to the player's report")
+        st.toast("Saved to the player's dossier (Visual evidence)")
 
 
 def render_scouting_viz_workspace(shell, svc, player, *, key: str,

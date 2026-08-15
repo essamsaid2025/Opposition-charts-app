@@ -386,6 +386,10 @@ class ScoutingPage(Page):
         When the scout can edit, each rendered chart can be assigned (frozen) to
         the player's report."""
         def _assign(png, title, viz_id):
+            # P4.6: persist as a player VISUAL ASSET (immutable PNG + dataset_id +
+            # player-only scope, survives active-dataset changes and reload) AND keep
+            # embedding it into the player's report (existing behaviour).
+            svc.save_player_visualization(shell.user, p.id, png, title=title, viz_id=viz_id)
             svc.assign_chart(shell.user, p.id, png, title=title, viz_id=viz_id)
 
         on_assign = _assign if self._can_edit else None
@@ -400,6 +404,70 @@ class ScoutingPage(Page):
                                        key=f"sc_viz_{p.id}", on_assign=on_assign)
         if self._can_edit:
             self._assigned_charts_panel(shell, svc, p)
+
+    def _data_sources_section(self, shell, svc, p, dash) -> None:
+        """Every dataset PERSISTENTLY linked to this player, read by dataset_id and
+        independent of the active dataset. Honest per-dataset status; a deleted
+        dataset shows 'unavailable' (the link is kept, nothing fabricated)."""
+        sources = dash.get("data_sources", [])
+        active = ""
+        try:
+            ad = shell.wm.active_dataset(shell.user)
+            active = ad.id if ad else ""
+        except Exception:
+            active = ""
+        with st.expander(f"Data sources ({len(sources)})", expanded=bool(sources)):
+            if not sources:
+                C.render_alert("No datasets linked yet. Activate a dataset in the Data Hub and link "
+                               "it to this player — the link then persists regardless of the active "
+                               "dataset.", "info")
+            _kind = {"metrics_available": "success", "linked": "success",
+                     "linked_no_row": "warning", "ambiguous": "warning",
+                     "not_scouting": "info", "unavailable": "danger"}
+            for d in sources:
+                with st.container(border=True):
+                    cc = st.columns([5, 1], vertical_alignment="center")
+                    stt = d["status"]
+                    label = {"metrics_available": f"{d.get('metric_count', 0)} metrics",
+                             "linked": f"{d.get('matches', 0)} match(es)",
+                             "linked_no_row": "player record unavailable",
+                             "ambiguous": "identity ambiguous",
+                             "not_scouting": "event data", "unavailable": "dataset unavailable"}.get(stt, stt)
+                    typ = "Player Scouting" if d["kind"] == "player_scouting" else "Event Data"
+                    is_active = d["dataset_id"] == active and active
+                    cc[0].markdown(
+                        f"**{_html.escape(d['name'])}** "
+                        + (C.badge_html('Active', 'info') + " " if is_active else "")
+                        + C.badge_html(label, _kind.get(stt, "neutral"))
+                        + f"<br><span style='color:var(--fap-text-muted)'>{typ}"
+                        + (f" · {_html.escape(str(d['entity_key']))}" if d.get('entity_key') else "")
+                        + "</span>", unsafe_allow_html=True)
+                    if d["exists"] and cc[1].button("Open", key=f"ds_open_{p.id}_{d['dataset_id']}"):
+                        shell.wm.set_active_dataset(shell.user, d["dataset_id"])   # working context only
+                        st.rerun()
+
+    def _visual_evidence_section(self, shell, svc, p, dash) -> None:
+        """Saved player visualizations — persistent, immutable PNG assets that carry
+        their source dataset + player-only scope, available regardless of the active
+        dataset or a later dataset change."""
+        assets = dash.get("visualizations", [])
+        with st.expander(f"Visual evidence ({len(assets)})", expanded=bool(assets)):
+            if not assets:
+                st.caption("No saved visualizations yet. In the Visualization tab, render a chart and "
+                           "click 'Save to player' — it is stored permanently against this player.")
+                return
+            cols = st.columns(3)
+            for i, a in enumerate(reversed(assets)):
+                with cols[i % 3]:
+                    png = svc.player_visualization_bytes(p.id, a["id"])
+                    if png:
+                        st.image(png, use_container_width=True)
+                    scope = a.get("scope", {}).get("player") or []
+                    st.caption(f"**{_html.escape(a.get('title', 'Visualization'))}**")
+                    st.caption(f"{_html.escape(a.get('source_dataset_name') or 'dataset')}"
+                               + (f" · {_html.escape(', '.join(map(str, scope)))}" if scope else ""))
+                    if self._can_edit and st.button("Remove", key=f"vz_del_{p.id}_{a['id']}"):
+                        svc.delete_player_visualization(shell.user, p.id, a["id"]); st.rerun()
 
     def _active_analysis(self, shell, svc, p) -> None:
         """Player analysis from the ACTIVE dataset, routed by dataset CAPABILITY:
@@ -606,7 +674,13 @@ class ScoutingPage(Page):
                                     unsafe_allow_html=True)
             st.caption("Observation from dataset percentiles — analyst interpretation is kept separate (Notes).")
 
-        # ---- dataset status + metrics ----
+        # ---- data sources: every LINKED dataset (persistent, active-independent) ----
+        self._data_sources_section(shell, svc, p, dash)
+
+        # ---- saved visual evidence (persistent player assets) ----
+        self._visual_evidence_section(shell, svc, p, dash)
+
+        # ---- dataset status + metrics (active working context) ----
         self._active_analysis(shell, svc, p)
 
         # ---- match-level evidence (persistent, active-dataset-independent) ----
