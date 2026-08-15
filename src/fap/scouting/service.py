@@ -348,6 +348,138 @@ class ScoutingService:
                 trial[k] = v
         return self._set_doc(user, player_id, "scouting.player.trial", trial=trial)
 
+    # -- professional profile (P4.3) ----------------------------------------
+    _PROFILE_COLUMNS = ("dob", "nationality", "country", "height", "weight", "foot",
+                        "position", "secondary_positions", "club", "league",
+                        "shirt_number", "contract_until", "agent", "market_value")
+
+    def update_profile(self, user: User, player_id: str, **fields: Any) -> Player:
+        """Edit structured profile metadata. Preserves player_id / operational_id /
+        aliases / dataset links / videos / notes / history - only the given profile
+        fields change. Foot is normalized to the controlled vocabulary; secondary
+        nationalities are multi-valued in document. Audited."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import player_profile
+        secondary_nats = fields.pop("secondary_nationalities", None)
+        if "foot" in fields and fields["foot"] is not None:
+            fields["foot"] = player_profile.normalize_foot(fields["foot"])
+        col_updates = {k: v for k, v in fields.items() if k in self._PROFILE_COLUMNS}
+        if col_updates:
+            self.update_player(user, player_id, **col_updates)
+        if secondary_nats is not None:
+            self.set_secondary_nationalities(user, player_id, secondary_nats)
+        return self._player_or_raise(player_id)
+
+    def set_secondary_nationalities(self, user: User, player_id: str,
+                                    nationalities: list[str]) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        prof = dict(doc.get("profile") or {})
+        cleaned: list[str] = []
+        for n in nationalities or []:
+            n = str(n).strip()
+            if n and n not in cleaned:
+                cleaned.append(n)
+        prof["secondary_nationalities"] = cleaned
+        doc["profile"] = prof
+        return self._save_doc(user, player_id, doc, "scouting.player.profile")
+
+    def _save_doc(self, user: User, player_id: str, doc: dict[str, Any], action: str) -> Player:
+        p = self._player_or_raise(player_id)
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, action, target_type="player", target_id=player_id)
+        return p
+
+    # club logo (reuses ImageStorage; no new media store)
+    def set_club_logo(self, user: User, player_id: str, data: bytes, mime: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        self.add_image(user, player_id, data, mime, kind="logo", caption="club logo")
+        return self._player_or_raise(player_id)
+
+    def remove_club_logo(self, user: User, player_id: str) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        if p.club_logo_id and self._images is not None:
+            self._images.delete(p.club_logo_id)
+        return self.update_player(user, player_id, club_logo_id="")
+
+    # external (non-video) links - stored in document, no new table/storage
+    def add_link(self, user: User, player_id: str, url: str, *, title: str = "",
+                 category: str = "reference", note: str = "") -> dict[str, Any]:
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        links = list(doc.get("links", []) or [])
+        link = {"id": self._uid(), "url": str(url).strip(), "title": str(title).strip() or str(url).strip(),
+                "category": category, "note": note, "created_by": user.email, "created_at": _dt_now()}
+        links.append(link)
+        doc["links"] = links
+        self._save_doc(user, player_id, doc, "scouting.player.link_add")
+        return link
+
+    def list_links(self, player_id: str) -> list[dict[str, Any]]:
+        p = self.get_player(player_id)
+        from fap.scouting import player_profile
+        return player_profile.links_of(p) if p else []
+
+    def delete_link(self, user: User, player_id: str, link_id: str) -> None:
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc["links"] = [l for l in (doc.get("links") or []) if l.get("id") != link_id]
+        self._save_doc(user, player_id, doc, "scouting.player.link_delete")
+
+    def player_dashboard(self, user: User, player_id: str) -> dict[str, Any] | None:
+        """Everything the premium player dashboard needs, aggregated from existing
+        services: normalized snapshot, dataset-link state, transparent profile fit,
+        top/bottom percentile strengths, and asset counts. Never fabricates."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import identity, player_profile
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        snap = player_profile.player_snapshot(p)
+        link = self.dataset_link_status(user, player_id)
+        fit = None
+        prof_id = snap.get("recruitment_profile")
+        if prof_id:
+            fit = self.profile_fit_for(user, player_id, prof_id)
+        strengths, dev_areas = self._percentile_highlights(user, player_id)
+        counts = {"notes": len(self.list_notes(player_id)),
+                  "videos": len(self.list_videos(player_id)),
+                  "links": len(self.list_links(player_id)),
+                  "attachments": len(self.list_attachments(player_id)),
+                  "reports": len(self.list_reports(player_id)),
+                  "tags": len(snap.get("tags", []))}
+        return {"snapshot": snap, "dataset": link, "fit": fit,
+                "strengths": strengths, "dev_areas": dev_areas, "counts": counts,
+                "academy": identity.academy_profile_of(p)}
+
+    def _percentile_highlights(self, user: User, player_id: str, n: int = 5):
+        """Top/bottom metrics by percentile from the linked scouting dataset - real
+        observation, not interpretation. Empty when no dataset row is linked."""
+        prof = self.active_scouting_profile(user, player_id)
+        if prof is None:
+            return [], []
+        ctx = self.active_scouting_dataset(user)
+        if ctx is None:
+            return [], []
+        from fap.scouting import viz
+        primary, _ = self._resolve_dataset_key(self.get_player(player_id), ctx)
+        if primary is None:
+            return [], []
+        view = viz.build_view(ctx["frame"], ctx["schema"], [primary],
+                              dataset_id=ctx["id"], dataset_name=ctx["name"])
+        ranked = [(m.name, m.percentile(primary)) for m in view.metrics
+                  if m.percentile(primary) is not None]
+        ranked.sort(key=lambda t: t[1], reverse=True)
+        strengths = [{"name": nm, "percentile": round(pct)} for nm, pct in ranked[:n]]
+        dev = [{"name": nm, "percentile": round(pct)} for nm, pct in ranked[-n:][::-1]] \
+            if len(ranked) > n else []
+        return strengths, dev
+
     def status_history(self, player_id: str):
         from fap.scouting import identity
         p = self.get_player(player_id)
@@ -755,12 +887,15 @@ class ScoutingService:
         document - no schema migration. The operational prefix never becomes the
         identity."""
         self._require(user, Capability.EDIT_SCOUTING)
-        from fap.scouting import identity
+        from fap.scouting import identity, player_profile
         player_type = identity.normalize_player_type(fields.pop("player_type", "first_team"))
-        # document keys we manage on the identity layer (not dataclass columns)
+        # document keys we manage on the identity/profile layer (not dataclass columns)
         doc_extra = {k: fields.pop(k) for k in
                      ("aliases", "display_name", "source", "age_group",
                       "recruitment_profile", "academy") if k in fields}
+        secondary_nats = fields.pop("secondary_nationalities", None)
+        if "foot" in fields:
+            fields["foot"] = player_profile.normalize_foot(fields["foot"])
         p = Player(id=self._uid(), name=name.strip(), owner=user.email, created_by=user.email,
                    workspace_id=fields.pop("workspace_id", None))
         for k, v in fields.items():
@@ -772,6 +907,10 @@ class ScoutingService:
         doc.update(doc_extra)
         doc["player_type"] = player_type
         doc["operational_id"] = self._assign_operational_id(player_type)
+        if secondary_nats:
+            prof = dict(doc.get("profile") or {})
+            prof["secondary_nationalities"] = [str(n).strip() for n in secondary_nats if str(n).strip()]
+            doc["profile"] = prof
         p.document = doc
         self.players.save(p)
         self.audit.record(user, "scouting.player.create", target_type="player", target_id=p.id,
@@ -940,6 +1079,8 @@ class ScoutingService:
         self.media.add(m)
         if kind == "profile":
             self.update_player(user, player_id, profile_image_id=image_id)
+        elif kind == "logo":
+            self.update_player(user, player_id, club_logo_id=image_id)
         self.audit.record(user, "scouting.image.add", target_type="player", target_id=player_id,
                           detail={"kind": kind})
         return m

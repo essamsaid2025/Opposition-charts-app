@@ -28,6 +28,18 @@ def _initials(name: str) -> str:
     return ("".join(p[0] for p in parts[:2]) or "?").upper()
 
 
+def _safe_image(container, data, *, width) -> bool:
+    """Render an image, tolerating broken/undecodable bytes (spec: media fallbacks
+    must never error). Returns True if it displayed."""
+    if not data:
+        return False
+    try:
+        container.image(data, width=width)
+        return True
+    except Exception:
+        return False
+
+
 # a neutral, professional avatar fallback (light app theme, no player photo)
 _AVATAR = ("<div style='width:56px;height:56px;border-radius:8px;"
            "background:var(--fap-surface-2,#eef1f5);color:var(--fap-text-muted,#5b6472);"
@@ -168,7 +180,7 @@ class ScoutingPage(Page):
     def _add_player_form(self, shell, svc) -> None:
         """Professional, pathway-aware registration. Only fields relevant to the
         chosen pathway are shown. Creation never depends on any dataset."""
-        from fap.scouting import identity
+        from fap.scouting import identity, player_profile
         with st.expander("+ Add Player", expanded=False):
             st.markdown("**Identity**")
             a, b = st.columns(2)
@@ -177,11 +189,29 @@ class ScoutingPage(Page):
             c, d, e = st.columns(3)
             dob = c.text_input("Date of birth", key="np_dob", placeholder="YYYY-MM-DD")
             nationality = d.text_input("Nationality", key="np_nat")
-            club = e.text_input("Club", key="np_club")
-            f, g = st.columns(2)
+            secondary_nat = e.text_input("Secondary nationality", key="np_secnat")
+
+            st.markdown("**Physical**")
+            ph = st.columns(3)
+            height = ph[0].number_input("Height (cm)", 0, 260, 0, key="np_h")
+            weight = ph[1].number_input("Weight (kg)", 0, 200, 0, key="np_w")
+            foot = ph[2].selectbox("Preferred foot", list(player_profile.FOOT_VALUES),
+                                   index=3, format_func=str.title, key="np_foot")
+
+            st.markdown("**Football**")
+            f, g, h = st.columns(3)
             position = f.text_input("Primary position", key="np_pos", placeholder="CF")
             secondary = g.text_input("Secondary positions", key="np_sec", placeholder="RAMF, AMF")
-            league = st.text_input("Competition / league", key="np_league")
+            club = h.text_input("Current club", key="np_club")
+            f2, g2, h2 = st.columns(3)
+            league = f2.text_input("Competition / league", key="np_league")
+            shirt = g2.number_input("Shirt number", 0, 99, 0, key="np_shirt")
+            contract = h2.text_input("Contract expiry", key="np_contract", placeholder="YYYY-MM-DD")
+            source = st.text_input("Source", key="np_source", placeholder="e.g. Malta league export")
+
+            for w in player_profile.validate_profile({"dob": dob, "height_cm": height,
+                                                      "weight_kg": weight, "contract_expires": contract}):
+                C.render_alert(w, "warning")
 
             st.markdown("**Pathway**")
             np_type = st.radio("Player pathway", list(identity.PLAYER_TYPES),
@@ -216,15 +246,30 @@ class ScoutingPage(Page):
                                         format_func=lambda i: dict(profs).get(i, i), key="np_prof")
                 extra.update(status=status, priority=priority, recruitment_profile=prof)
 
+            st.markdown("**Media** (optional)")
+            mcol = st.columns(2)
+            photo = mcol[0].file_uploader("Player photo", type=["png", "jpg", "jpeg", "webp"], key="np_photo")
+            logo = mcol[1].file_uploader("Club logo", type=["png", "jpg", "jpeg", "webp"], key="np_logo")
+            note0 = st.text_area("Scouting note (optional)", key="np_note", height=68)
+
             if st.button("Create player", type="primary", key="np_create") and name.strip():
                 secondary_positions = [s.strip() for s in secondary.split(",") if s.strip()]
                 p = svc.create_player(
                     shell.user, name.strip(), club=club, league=league, position=position,
                     secondary_positions=secondary_positions, dob=dob, nationality=nationality,
+                    secondary_nationalities=[s.strip() for s in secondary_nat.split(",") if s.strip()],
+                    height=int(height) or None, weight=int(weight) or None, foot=foot,
+                    shirt_number=int(shirt) or None, contract_until=contract, source=source,
                     display_name=display.strip(), player_type=np_type, age_group=age_group,
                     status=extra.get("status", ""), priority=extra.get("priority", ""),
                     recruitment_profile=extra.get("recruitment_profile", ""),
                     workspace_id=shell.workspace_id)
+                if photo is not None:
+                    svc.add_image(shell.user, p.id, photo.getvalue(), photo.type or "image/png", kind="profile")
+                if logo is not None:
+                    svc.set_club_logo(shell.user, p.id, logo.getvalue(), logo.type or "image/png")
+                if note0.strip():
+                    svc.add_note(shell.user, p.id, note0.strip())
                 if academy_fields:
                     svc.set_academy_profile(shell.user, p.id, **academy_fields)
                 if np_type == "trialist":
@@ -242,9 +287,7 @@ class ScoutingPage(Page):
         with st.container(border=True):
             cols = st.columns([1, 5, 2, 1], vertical_alignment="center")
             img = svc.image_bytes(r["profile_image_id"]) if r.get("profile_image_id") else None
-            if img:
-                cols[0].image(img, width=56)
-            else:
+            if not _safe_image(cols[0], img, width=56):
                 cols[0].markdown(_AVATAR.format(_initials(r["name"])), unsafe_allow_html=True)
             type_kind = "info" if r["player_type"] == "first_team" else "neutral"
             fit = r.get("profile_fit")
@@ -293,6 +336,8 @@ class ScoutingPage(Page):
         if prof_name:
             badges += f" &nbsp; <b>{_html.escape(prof_name)}</b>"
         top[1].markdown(badges, unsafe_allow_html=True)
+        logo = svc.image_bytes(p.club_logo_id) if p.club_logo_id else None
+        _safe_image(top[2], logo, width=48)
         if self._can_edit and top[2].button("Favorite" if not p.favorite else "Unfavorite",
                                             key="scout_fav_btn", use_container_width=True,
                                             type="primary" if not p.favorite else "secondary"):
@@ -301,9 +346,7 @@ class ScoutingPage(Page):
 
         hcols = st.columns([1, 5], vertical_alignment="center")
         data = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
-        if data:
-            hcols[0].image(data, width=120)
-        else:
+        if not _safe_image(hcols[0], data, width=120):
             hcols[0].markdown(_AVATAR.format(_initials(p.name)).replace("56px", "120px")
                               .replace("18px", "38px"), unsafe_allow_html=True)
         # live recruitment-profile fit against the active scouting dataset (if any)
@@ -503,55 +546,75 @@ class ScoutingPage(Page):
                     st.info("This visualization could not be rendered from the current events.")
 
     def _profile(self, shell, svc, p) -> None:
+        """The premium player dashboard - a professional scouting dossier, not a
+        CRUD form. Built from ``player_dashboard`` (snapshot + dataset state + fit +
+        percentile highlights + counts). Missing data shows 'Not available'."""
         from fap.scouting import identity
-        dn = identity.display_name_of(p)
-        aliases = identity.aliases_of(p)
-        st.write(f"**Recruitment** {C.badge_html(identity.status_label(p.status) or '—', 'info')} "
-                 f"&nbsp; **Priority** {identity.priority_label(p.priority) or '—'}"
-                 + (f" &nbsp; **Also known as** {', '.join(aliases)}" if aliases else "")
-                 + (f" &nbsp; **Source** {identity.source_of(p)}" if identity.source_of(p) else ""),
-                 unsafe_allow_html=True)
-        st.write(f"**Country** {p.country or '—'} · **Age** {p.age or '—'} · **Foot** {p.foot or '—'} "
-                 f"· **Height** {p.height or '—'} · **Contract** {p.contract_until or '—'}")
-        st.write(f"**Rating** {p.internal_rating or '—'} · **Value** {p.market_value or '—'} "
-                 f"· **Agent** {p.agent or '—'} · **Tags** {', '.join(p.tags) or '—'}")
+        dash = svc.player_dashboard(shell.user, p.id)
+        snap = dash["snapshot"]
+
+        # ---- profile snapshot (compact cards) ----
+        def _v(x):
+            return "—" if x in (None, "", []) else x
+        cards = [
+            C.metric_card_html("Age", _v(snap["age"]), hint="from DOB" if snap["age_derived"] else "not derived"),
+            C.metric_card_html("Height", f"{snap['height_cm']} cm" if snap["height_cm"] else "—"),
+            C.metric_card_html("Weight", f"{snap['weight_kg']} kg" if snap["weight_kg"] else "—"),
+            C.metric_card_html("Foot", snap["preferred_foot"].title()),
+            C.metric_card_html("Positions", ", ".join(snap["positions"]) or "—"),
+            C.metric_card_html("Contract", _v(snap["contract_expires"])),
+        ]
+        C.render_metric_row(cards)
+        line = f"**Nationality** {_v(snap['nationality'])}"
+        if snap["secondary_nationalities"]:
+            line += f" ( + {', '.join(snap['secondary_nationalities'])})"
+        line += f" &nbsp; · &nbsp; **Club** {_v(snap['club'])} &nbsp; · &nbsp; **League** {_v(snap['league'])}"
+        if snap["shirt_number"]:
+            line += f" &nbsp; · &nbsp; **#{snap['shirt_number']}**"
+        if snap["agent"]:
+            line += f" &nbsp; · &nbsp; **Agent** {_html.escape(str(snap['agent']))}"
+        st.markdown(line, unsafe_allow_html=True)
+
+        # ---- recruitment profile + fit ----
+        if dash["fit"] is not None:
+            fit = dash["fit"]
+            with st.container(border=True):
+                if fit.get("available"):
+                    score = fit["score"]
+                    badge = C.badge_html(f"Fit {score:.0f}", "success")
+                    st.markdown(
+                        f"**{_html.escape(fit['profile'])}** &nbsp; {badge} &nbsp; "
+                        f"<span style='color:var(--fap-text-muted)'>{fit['mode']} · "
+                        f"{len(fit['matched'])} matched metrics</span>", unsafe_allow_html=True)
+                    st.caption("Matched: " + ", ".join(fit["matched"][:10]))
+                else:
+                    st.caption(f"{fit['profile']} fit unavailable — {fit.get('reason', '')}")
+
+        # ---- scouting summary: strengths / development (observation, from percentiles) ----
+        if dash["strengths"]:
+            sc_cols = st.columns(2)
+            with sc_cols[0]:
+                st.markdown("**Strengths** (top percentiles)")
+                for s in dash["strengths"]:
+                    st.markdown(f"{C.badge_html(str(s['percentile']), 'success')} {_html.escape(s['name'])}",
+                                unsafe_allow_html=True)
+            with sc_cols[1]:
+                if dash["dev_areas"]:
+                    st.markdown("**Areas to monitor** (low percentiles)")
+                    for s in dash["dev_areas"]:
+                        st.markdown(f"{C.badge_html(str(s['percentile']), 'warning')} {_html.escape(s['name'])}",
+                                    unsafe_allow_html=True)
+            st.caption("Observation from dataset percentiles — analyst interpretation is kept separate (Notes).")
+
+        # ---- dataset status + metrics ----
         self._active_analysis(shell, svc, p)
+
+        # ---- media / links summary ----
+        self._links_panel(shell, svc, p)
+
         if not self._can_edit:
             return
-        statuses = list(identity.RECRUITMENT_STATUSES)
-        priorities = [""] + list(identity.RECRUITMENT_PRIORITIES)
-        cur_status = identity.normalize_status(p.status)
-        cur_priority = identity.normalize_priority(p.priority)
-        with st.expander("Edit profile"):
-            cc = st.columns(3)
-            club = cc[0].text_input("Club", value=p.club, key="ep_club")
-            league = cc[1].text_input("League", value=p.league, key="ep_league")
-            country = cc[2].text_input("Country", value=p.country, key="ep_country")
-            age = cc[0].number_input("Age", 0, 60, p.age or 0, key="ep_age")
-            rating = cc[1].number_input("Rating", 0.0, 10.0, float(p.internal_rating or 0), 0.1, key="ep_rating")
-            status = cc[2].selectbox("Recruitment status", statuses,
-                                     index=statuses.index(cur_status) if cur_status in statuses else 0,
-                                     format_func=identity.status_label, key="ep_status")
-            priority = cc[0].selectbox("Priority", priorities,
-                                       index=priorities.index(cur_priority) if cur_priority in priorities else 0,
-                                       format_func=lambda x: identity.priority_label(x) or "—", key="ep_priority")
-            contract = cc[1].text_input("Contract until", value=p.contract_until, key="ep_contract")
-            display_name = cc[2].text_input("Display name", value=dn, key="ep_dn")
-            alias_str = cc[0].text_input("Aliases (comma separated)", value=", ".join(aliases),
-                                         key="ep_aliases")
-            source = cc[1].text_input("Source", value=identity.source_of(p), key="ep_source",
-                                      placeholder="e.g. Malta league export, scout obs")
-            if st.button("Save", type="primary", key="ep_save"):
-                svc.update_player(shell.user, p.id, club=club, league=league, country=country,
-                                  age=int(age) or None, internal_rating=rating or None,
-                                  contract_until=contract)
-                svc.set_recruitment_status(shell.user, p.id, status)
-                svc.set_priority(shell.user, p.id, priority)
-                svc.set_display_name(shell.user, p.id, display_name)
-                svc.set_source(shell.user, p.id, source)
-                svc.set_aliases(shell.user, p.id,
-                                [a.strip() for a in alias_str.split(",") if a.strip()])
-                st.rerun()
+        self._edit_profile_form(shell, svc, p, snap)
         self._recruitment_block(shell, svc, p)
         if identity.player_type_of(p) == "academy":
             self._academy_block(shell, svc, p)
@@ -563,6 +626,104 @@ class ScoutingPage(Page):
             dup = svc.duplicate_player(shell.user, p.id); st.session_state[SEL] = dup.id; st.rerun()
         if col[2].button("Delete", key="p_del"):
             svc.delete_player(shell.user, p.id); st.session_state.pop(SEL, None); st.rerun()
+
+    def _links_panel(self, shell, svc, p) -> None:
+        links = svc.list_links(p.id)
+        with st.expander(f"External links ({len(links)})"):
+            for l in links:
+                cc = st.columns([5, 1], vertical_alignment="center")
+                cc[0].markdown(f"{icon('link', 13)} [{_html.escape(l.get('title') or l['url'])}]({l['url']})"
+                               f" &nbsp; <span style='color:var(--fap-text-muted)'>{_html.escape(l.get('category',''))}</span>",
+                               unsafe_allow_html=True)
+                if self._can_edit and cc[1].button("Remove", key=f"lk_{l['id']}"):
+                    svc.delete_link(shell.user, p.id, l["id"]); st.rerun()
+            if self._can_edit:
+                a, b, c = st.columns([3, 2, 1])
+                url = a.text_input("URL", key=f"lk_url_{p.id}", placeholder="https://…")
+                title = b.text_input("Title", key=f"lk_title_{p.id}")
+                cat = c.selectbox("Type", ["reference", "video", "profile", "article", "club", "other"],
+                                  key=f"lk_cat_{p.id}")
+                if st.button("Add link", key=f"lk_add_{p.id}") and url.strip():
+                    svc.add_link(shell.user, p.id, url.strip(), title=title.strip(), category=cat)
+                    st.rerun()
+
+    def _edit_profile_form(self, shell, svc, p, snap) -> None:
+        """Full sectioned Edit form - preserves player_id/operational_id/links/etc.,
+        with honest validation warnings (never silently corrects)."""
+        from fap.scouting import identity, player_profile
+        with st.expander("Edit profile"):
+            st.markdown("**Identity**")
+            i = st.columns(3)
+            display_name = i[0].text_input("Display name", value=snap["display_name"], key="ep_dn")
+            dob = i[1].text_input("Date of birth", value=snap["dob"] or "", key="ep_dob", placeholder="YYYY-MM-DD")
+            nationality = i[2].text_input("Nationality", value=snap["nationality"] or "", key="ep_nat")
+            j = st.columns(2)
+            secondary_nat = j[0].text_input("Secondary nationalities", key="ep_secnat",
+                                            value=", ".join(snap["secondary_nationalities"]))
+            alias_str = j[1].text_input("Aliases", value=", ".join(snap["aliases"]), key="ep_aliases")
+
+            st.markdown("**Physical**")
+            ph = st.columns(3)
+            height = ph[0].number_input("Height (cm)", 0, 260, int(snap["height_cm"] or 0), key="ep_h")
+            weight = ph[1].number_input("Weight (kg)", 0, 200, int(snap["weight_kg"] or 0), key="ep_w")
+            foot = ph[2].selectbox("Preferred foot", list(player_profile.FOOT_VALUES),
+                                   index=list(player_profile.FOOT_VALUES).index(snap["preferred_foot"]),
+                                   format_func=str.title, key="ep_foot")
+
+            st.markdown("**Football**")
+            fb = st.columns(3)
+            position = fb[0].text_input("Primary position", value=p.position, key="ep_pos")
+            secondary_pos = fb[1].text_input("Secondary positions",
+                                             value=", ".join(p.secondary_positions or []), key="ep_secpos")
+            shirt = fb[2].number_input("Shirt number", 0, 99, int(snap["shirt_number"] or 0), key="ep_shirt")
+            fb2 = st.columns(3)
+            club = fb2[0].text_input("Club", value=p.club, key="ep_club")
+            league = fb2[1].text_input("League", value=p.league, key="ep_league")
+            contract = fb2[2].text_input("Contract expiry", value=snap["contract_expires"] or "", key="ep_contract")
+            agent = st.text_input("Agent", value=snap["agent"] or "", key="ep_agent")
+
+            st.markdown("**Recruitment**")
+            statuses = list(identity.RECRUITMENT_STATUSES)
+            priorities = [""] + list(identity.RECRUITMENT_PRIORITIES)
+            rc = st.columns(3)
+            status = rc[0].selectbox("Status", statuses,
+                                     index=statuses.index(snap["status"]) if snap["status"] in statuses else 0,
+                                     format_func=identity.status_label, key="ep_status")
+            priority = rc[1].selectbox("Priority", priorities,
+                                       index=priorities.index(snap["priority"]) if snap["priority"] in priorities else 0,
+                                       format_func=lambda x: identity.priority_label(x) or "—", key="ep_priority")
+            source = rc[2].text_input("Source", value=snap["source"], key="ep_source")
+
+            edited = {"dob": dob, "height_cm": height, "weight_kg": weight,
+                      "preferred_foot": foot, "contract_expires": contract}
+            for w in player_profile.validate_profile(edited):
+                C.render_alert(w, "warning")
+
+            if st.button("Save profile", type="primary", key="ep_save"):
+                svc.update_profile(
+                    shell.user, p.id, dob=dob, nationality=nationality, height=int(height) or None,
+                    weight=int(weight) or None, foot=foot, position=position,
+                    secondary_positions=[s.strip() for s in secondary_pos.split(",") if s.strip()],
+                    shirt_number=int(shirt) or None, club=club, league=league,
+                    contract_until=contract, agent=agent,
+                    secondary_nationalities=[s.strip() for s in secondary_nat.split(",") if s.strip()])
+                svc.set_recruitment_status(shell.user, p.id, status)
+                svc.set_priority(shell.user, p.id, priority)
+                svc.set_display_name(shell.user, p.id, display_name)
+                svc.set_source(shell.user, p.id, source)
+                svc.set_aliases(shell.user, p.id, [a.strip() for a in alias_str.split(",") if a.strip()])
+                st.rerun()
+
+            st.markdown("**Media**")
+            mc = st.columns(2)
+            photo = mc[0].file_uploader("Player photo", type=["png", "jpg", "jpeg", "webp"], key="ep_photo")
+            if photo is not None and mc[0].button("Set photo", key="ep_setphoto"):
+                svc.add_image(shell.user, p.id, photo.getvalue(), photo.type or "image/png", kind="profile")
+                st.rerun()
+            logo = mc[1].file_uploader("Club logo", type=["png", "jpg", "jpeg", "webp", "svg"], key="ep_logo")
+            if logo is not None and mc[1].button("Set logo", key="ep_setlogo"):
+                svc.set_club_logo(shell.user, p.id, logo.getvalue(), logo.type or "image/png")
+                st.rerun()
 
     def _recruitment_block(self, shell, svc, p) -> None:
         from fap.scouting import identity
