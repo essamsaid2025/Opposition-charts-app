@@ -5,16 +5,15 @@ headless = true
 gatherUsageStats = false
 
 # Align Streamlit's native (BaseWeb) widget theme with the FAP design system.
-# Without a [theme] block Streamlit defaults to its LIGHT base, so native controls
-# (selectboxes, number steppers, radios, popovers, menus) render white regardless of
-# the app's dark shell. Setting the base to the FAP DARK palette makes native widgets
-# dark at the source; the fap.theme stylesheet then refines them to the exact tokens
-# and overrides them to light surfaces when the runtime toggle selects Light mode.
-# These values mirror fap.theme.colors.DEFAULT_PALETTE (dark surface + brand primary).
+# The application now has ONE fixed appearance: an always-LIGHT workspace (with a
+# dark navigation rail skinned separately in fap.theme.css). Setting the base to the
+# FAP LIGHT palette makes native controls (selectboxes, steppers, radios, popovers,
+# menus) render light AT THE SOURCE, so they match the light workspace and never
+# appear as dark/white blocks. These mirror fap.theme.colors.DEFAULT_PALETTE.light.
 [theme]
-base = "dark"
+base = "light"
 primaryColor = "#E07B2B"
-backgroundColor = "#0C0E12"
-secondaryBackgroundColor = "#16181D"
-textColor = "#E6E9EF"
+backgroundColor = "#F4F6FA"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#141A22"
 font = "sans serif"

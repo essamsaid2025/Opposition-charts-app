@@ -8,6 +8,7 @@ Navigation stays in-session via ``shell.goto`` (the existing routing).
 from __future__ import annotations
 
 import datetime as _dt
+import html as _html
 
 import streamlit as st
 
@@ -19,7 +20,8 @@ from fap.ui.page import Page, get_page, page_registry, visible_pages
 # Modules offered as "Start analysis" launchers — shown only when the page exists
 # and the user's role can see it (no invented modules).
 _ACTIONS = [
-    ("opponent_analysis", "Opponent Analysis", "Build an evidence-backed opposition profile.", "target"),
+    ("scouting", "Scouting", "Player identification, evaluation and recruitment analysis.", "scouting"),
+    ("opponent_analysis", "Opponent Analysis", "Evidence-backed opponent profiling and tactical analysis.", "target"),
     ("open_play_studio", "Open Play Studio", "Explore open-play behaviour and tactical patterns.", "analysis"),
     ("set_piece_analysis", "Set Piece Analysis", "Analyse attacking and defensive set pieces.", "flag"),
     ("tactical_board", "Tactical Board", "Build and review tactical scenarios.", "teams"),
@@ -52,17 +54,8 @@ class DashboardPage(Page):
             context=[("Workspace", ws_name), ("Active dataset", ds_name),
                      ("Today", _dt.date.today().strftime("%A %d %B %Y"))])
 
-        # ---- primary analysis: the module entry points come first (analyst-led) ----
-        actions = [(pid, t, d, ic) for pid, t, d, ic in _ACTIONS if _can_open(shell, pid)]
-        if actions:
-            st.markdown('<div class="fap-dash-h">Primary analysis</div>', unsafe_allow_html=True)
-            cols = st.columns(len(actions), gap="small")
-            for col, (pid, title, desc, ic) in zip(cols, actions):
-                with col:
-                    _action_card(shell, pid, title, desc, ic)
-
-        # ---- workspace snapshot (real figures) ----
-        st.markdown('<div class="fap-dash-h">Workspace snapshot</div>', unsafe_allow_html=True)
+        # ---- intelligence snapshot (real figures only) ----
+        st.markdown('<div class="fap-dash-h">Intelligence snapshot</div>', unsafe_allow_html=True)
         metrics = [
             C.metric_card_html("Datasets", f"{len(datasets)}", icon_name="datasets",
                                accent="primary", hint="in this workspace"),
@@ -72,39 +65,88 @@ class DashboardPage(Page):
         if reports_n is not None:
             metrics.append(C.metric_card_html("Reports", f"{reports_n}", icon_name="reports",
                                               accent="success", hint="created"))
-        metrics.append(C.metric_card_html("Recent items", f"{len(recents)}", icon_name="clock",
-                                          accent="warning", hint="you touched lately"))
+        scouted = _scouted_count(shell)
+        if scouted is not None:
+            metrics.append(C.metric_card_html("Scouted players", f"{scouted}", icon_name="scouting",
+                                              accent="warning", hint="in the registry"))
         C.render_metric_row(metrics)
 
-        # ---- recent analysis + activity ----
-        left, right = st.columns([3, 2], gap="medium")
-        with left:
-            st.markdown('<div class="fap-dash-h">Recent analysis</div>', unsafe_allow_html=True)
-            items = _recent_items(shell, datasets)
-            if not items:
-                C.render_empty_state("No recent analysis yet", "Modules and datasets you open will "
-                                     "appear here for quick access.", icon_name="clock")
-            else:
-                for i, (name, meta, ic, target) in enumerate(items):
-                    with st.container(key=f"dash_recent_{i}"):
-                        st.markdown(C.recent_row_html(name, meta, icon_name=ic), unsafe_allow_html=True)
-                        if st.button(name, key=f"dashrec_{i}", use_container_width=True):
-                            shell.goto(target)
-        with right:
-            st.markdown('<div class="fap-dash-h">Recent activity</div>', unsafe_allow_html=True)
-            if not audit:
-                C.render_empty_state("No activity yet", "Actions across the platform are logged here.",
-                                     icon_name="list")
-            else:
-                rows = "".join(
-                    f'<div class="fap-activity-row"><code>{e.action}</code>'
-                    f'<span class="who">{e.actor or "system"}</span>'
-                    f'<span class="ts">{e.ts}</span></div>'
-                    for e in audit)
-                st.markdown(f'<div class="fap-card fap-activity">{rows}</div>', unsafe_allow_html=True)
+        # ---- primary workflows: professional entry points into the analysis modules ----
+        actions = [(pid, t, d, ic) for pid, t, d, ic in _ACTIONS if _can_open(shell, pid)]
+        if actions:
+            st.markdown('<div class="fap-dash-h">Primary workflows</div>', unsafe_allow_html=True)
+            per_row = 3
+            for start in range(0, len(actions), per_row):
+                chunk = actions[start:start + per_row]
+                cols = st.columns(per_row, gap="small")
+                for col, (pid, title, desc, ic) in zip(cols, chunk):
+                    with col:
+                        _action_card(shell, pid, title, desc, ic)
+
+        # ---- current workspace: the active dataset in context (no recent-activity feed) ----
+        st.markdown('<div class="fap-dash-h">Current workspace</div>', unsafe_allow_html=True)
+        self._current_workspace(shell)
+
+
+    def _current_workspace(self, shell) -> None:
+        """The active dataset in context — a clean detail list, not a wall of cards.
+        Only real fields are shown; nothing is fabricated. Polished empty state when
+        no dataset is active."""
+        ds = None
+        try:
+            ds = shell.wm.active_dataset(shell.user) if shell.wm is not None else None
+        except Exception:
+            ds = None
+        if ds is None:
+            if C.render_empty_state(
+                    "No active dataset", "Import and activate a dataset in the Data Hub to begin — "
+                    "its type, competition, players and data quality will appear here.",
+                    icon_name="datasets", action_label="Open Data Hub", key="dash_ws_empty"):
+                shell.goto("data_hub")
+            return
+        doc = ds.document if isinstance(getattr(ds, "document", None), dict) else {}
+        summary = doc.get("scouting_summary") if isinstance(doc.get("scouting_summary"), dict) else {}
+        dtype = doc.get("dataset_type") or ("player scouting" if summary else "event")
+        rows: list[tuple[str, str]] = [("Dataset", ds.name),
+                                       ("Type", str(dtype).replace("_", " ").title())]
+        comp = ds.competition or summary.get("competition") or ""
+        if comp:
+            rows.append(("Competition", comp))
+        if summary:                                         # player-scouting dataset
+            if summary.get("entity_count"):
+                rows.append(("Players", f"{summary['entity_count']:,}"))
+            if summary.get("teams"):
+                rows.append(("Teams", f"{summary['teams']:,}"))
+            if summary.get("metric_count"):
+                rows.append(("Metrics", f"{summary['metric_count']:,}"))
+        elif isinstance(getattr(ds, "rows", None), int) and ds.rows:
+            rows.append(("Rows", f"{ds.rows:,}"))
+        q = doc.get("quality")
+        rating = doc.get("quality_rating") or summary.get("grade") or ""
+        if isinstance(q, (int, float)):
+            rows.append(("Data quality", f"{q:.0f}/100" + (f" · {rating}" if rating else "")))
+        elif rating:
+            rows.append(("Data quality", str(rating)))
+        detail = "".join(
+            f'<div class="fap-kv"><span class="fap-kv-k">{_html.escape(str(k))}</span>'
+            f'<span class="fap-kv-v">{_html.escape(str(v))}</span></div>' for k, v in rows)
+        st.markdown(f'<div class="fap-card fap-ws-detail">{detail}</div>', unsafe_allow_html=True)
+        if st.button("Open in Data Hub", key="dash_ws_open"):
+            shell.goto("data_hub")
 
 
 # ---------------------------------------------------------------- helpers
+def _scouted_count(shell):
+    """Real scouted-player count, or None when the scouting service is unavailable."""
+    svc = getattr(getattr(shell, "platform", None), "scouting", None)
+    if svc is None:
+        return None
+    try:
+        return svc.players.count(archived=False)
+    except Exception:
+        return None
+
+
 def _greeting() -> str:
     h = _dt.datetime.now().hour
     return "Good morning" if h < 12 else "Good afternoon" if h < 18 else "Good evening"

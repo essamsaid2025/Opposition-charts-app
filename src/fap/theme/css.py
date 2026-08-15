@@ -61,6 +61,14 @@ def _variables(brand: Branding, mode: str) -> str:
   --fap-rail-expanded: 248px;
   --fap-rail-collapsed: 72px;
   --fap-rail-width: 248px;
+  --fap-rail-bg: #111318;
+  --fap-rail-surface: #181B22;
+  --fap-rail-text: #E7E9EE;
+  --fap-rail-muted: #9AA3B2;
+  --fap-rail-subtle: #6E7686;
+  --fap-rail-hover: rgba(255,255,255,0.06);
+  --fap-rail-active: rgba(255,255,255,0.09);
+  --fap-rail-border: rgba(255,255,255,0.09);
   --fap-header-height: {sp.header_height};
   --fap-shadow-xs: {sp.shadow_xs};
   --fap-shadow-sm: {sp.shadow_sm};
@@ -467,6 +475,13 @@ def _components() -> str:
   padding: 1px 7px; border-radius: var(--fap-radius-xs); font-size: 0.76rem; }
 .fap-activity-row .who { color: var(--fap-text-muted); font-size: 0.82rem; }
 .fap-activity-row .ts { margin-left: auto; color: var(--fap-text-subtle); font-size: 0.75rem; white-space: nowrap; }
+/* current-workspace detail: a clean key/value list (not a wall of cards) */
+.fap-ws-detail { padding: 4px 6px; }
+.fap-kv { display: flex; align-items: baseline; gap: 16px; padding: 10px 8px; }
+.fap-kv + .fap-kv { border-top: 1px solid var(--fap-border); }
+.fap-kv-k { flex: 0 0 190px; color: var(--fap-text-subtle); font-size: 11px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase; }
+.fap-kv-v { color: var(--fap-text); font-size: 14px; font-weight: 600; }
 """
 
 
@@ -789,46 +804,49 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 /* the WHOLE rail scrolls as one column (robust: no reliance on Streamlit's nested
    wrappers keeping a flex chain intact), so every element - including the footer
    and the last nav items - is always reachable. */
+/* The rail is a FIXED dark charcoal surface, independent of the (always-light)
+   workspace mode — one professional identity: dark navigation + light workspace. */
 .st-key-fap_rail { position: fixed; inset: 0 auto 0 0; z-index: 1000;
-  width: var(--fap-rail-width, 280px); background: var(--fap-surface);
-  border-right: 1px solid var(--fap-border); box-shadow: var(--fap-shadow-lg);
+  width: var(--fap-rail-width, 280px); background: var(--fap-rail-bg);
+  border-right: 1px solid var(--fap-rail-border); box-shadow: var(--fap-shadow-lg);
   overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
   transition: width 0.3s ease; padding: 0 0 var(--fap-space-4) !important; }
 .st-key-fap_rail_nav { padding: var(--fap-space-2) var(--fap-space-3); }
 .st-key-fap_rail_footer { margin-top: var(--fap-space-2); }
 /* brand stays pinned at the top while the rest scrolls */
-.st-key-fap_rail .nv-brand { position: sticky; top: 0; z-index: 3; background: var(--fap-surface); }
+.st-key-fap_rail .nv-brand { position: sticky; top: 0; z-index: 3; background: var(--fap-rail-bg); }
 
 /* ---- 1) brand block: FC Masar x Right To Dream, centred + divider accent ---- */
-.nv-brand { padding: 14px 16px 12px; border-bottom: 1px solid var(--fap-border); position: relative; }
+.nv-brand { padding: 14px 16px 12px; border-bottom: 1px solid var(--fap-rail-border); position: relative; }
 .nv-brand::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: -1px; height: 2px;
   background: var(--fap-primary); border-radius: 2px; opacity: .9; }
 .nv-brand.collapsed { padding: 12px 0; display: flex; justify-content: center; }
 .nv-logos { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .nv-logos img.nv-logo { height: 30px; width: auto; object-fit: contain; display: block; }
-.nv-logo-sep { width: 1px; height: 22px; background: var(--fap-border); }
+.nv-logo-sep { width: 1px; height: 22px; background: var(--fap-rail-border); }
 .nv-brand-title { text-align: center; margin-top: 9px; font-size: 13px; font-weight: 800; line-height: 1.2;
-  letter-spacing: -.01em; color: var(--fap-text); }
+  letter-spacing: -.01em; color: var(--fap-rail-text); }
 .nv-brand-sub { text-align: center; margin-top: 3px; font-size: 10px; font-weight: 600; letter-spacing: .06em;
-  color: var(--fap-text-subtle); }
+  color: var(--fap-rail-subtle); }
 
 /* ---- 3) search pill (styled st.text_input; icon inside) ---- */
 .st-key-fap_rail [data-testid="stTextInput"] { padding: var(--fap-space-4) var(--fap-space-4) var(--fap-space-2); }
 .st-key-_nav_search [data-testid="stTextInputRootElement"] { position: relative; }
 .st-key-_nav_search [data-testid="stTextInputRootElement"]::before { content: ""; position: absolute; left: 16px;
   top: 50%; transform: translateY(-50%); width: 16px; height: 16px; z-index: 3; pointer-events: none;
-  background-color: var(--fap-text-subtle); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  background-color: var(--fap-rail-muted); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
   -webkit-mask-position: center; mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
 .st-key-_nav_search [data-baseweb="input"], .st-key-_nav_search [data-baseweb="base-input"] {
-  height: 46px; border-radius: 14px; background: var(--fap-bg) !important; border: 1px solid var(--fap-border);
-  transition: border-color 150ms ease, box-shadow 150ms ease; }
+  height: 46px; border-radius: 12px; background: var(--fap-rail-surface) !important;
+  border: 1px solid var(--fap-rail-border); transition: border-color 150ms ease, box-shadow 150ms ease; }
 .st-key-_nav_search input { height: 44px; padding-left: 38px !important; background: transparent !important;
-  font-size: var(--fap-text-sm); border: 0 !important; }
+  font-size: var(--fap-text-sm); border: 0 !important; color: var(--fap-rail-text); }
+.st-key-_nav_search input::placeholder { color: var(--fap-rail-subtle); }
 .st-key-_nav_search [data-testid="stTextInputRootElement"]:focus-within [data-baseweb="input"] {
-  border-color: var(--fap-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fap-primary) 18%, transparent); }
+  border-color: var(--fap-primary); box-shadow: 0 0 0 3px color-mix(in srgb, var(--fap-primary) 22%, transparent); }
 
 /* ---- 4) section titles ---- */
-.nv-sec { margin: 13px 12px 6px; color: var(--fap-text-subtle); font-size: 11px; font-weight: 700;
+.nv-sec { margin: 13px 12px 6px; color: var(--fap-rail-subtle); font-size: 11px; font-weight: 700;
   letter-spacing: .12em; text-transform: uppercase; }
 
 /* ---- navigation rows = REAL st.buttons, styled as desktop nav items ----
@@ -836,43 +854,44 @@ button[data-testid="stSidebarCollapseButton"] { display: none !important; }
 .st-key-fap_rail .stButton { margin: 2px 0; }
 .st-key-fap_rail .stButton > button { display: flex; align-items: center; justify-content: flex-start;
   width: 100%; min-height: 38px; text-align: left; font-weight: 500; font-size: 13.5px;
-  padding: 0 12px; border: 1px solid transparent; background: transparent; border-radius: 10px;
-  color: var(--fap-text-muted); white-space: nowrap; overflow: hidden;
-  transition: background 150ms ease, color 150ms ease, transform 150ms ease, box-shadow 200ms ease; }
-.st-key-fap_rail .stButton > button:hover { background: var(--fap-hover); color: var(--fap-text);
-  transform: translateX(3px); }
+  padding: 0 12px; border: 1px solid transparent; background: transparent; border-radius: 8px;
+  color: var(--fap-rail-muted); white-space: nowrap; overflow: hidden;
+  transition: background 150ms ease, color 150ms ease, box-shadow 200ms ease; }
+.st-key-fap_rail .stButton > button:hover { background: var(--fap-rail-hover); color: var(--fap-rail-text); }
 .st-key-fap_rail .stButton > button::before { content: ""; display: inline-block; flex: 0 0 auto;
   width: 18px; height: 18px; margin-right: 11px; background-color: currentColor;
   -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-position: center;
   mask-position: center; -webkit-mask-size: contain; mask-size: contain; }
-/* active page: BOLD solid-orange fill with on-primary text (matches the reference) */
+/* active page: a sophisticated workspace treatment — a subtle raised charcoal
+   surface with a thin orange accent bar + orange icon + white text (NOT a pill). */
 .st-key-fap_rail .stButton > button[kind="primary"] {
-  background: var(--fap-primary); color: var(--fap-on-primary); font-weight: 700; transform: none;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--fap-primary) 30%, transparent); }
+  background: var(--fap-rail-active); color: #FFFFFF; font-weight: 600;
+  box-shadow: inset 3px 0 0 var(--fap-primary); }
+.st-key-fap_rail .stButton > button[kind="primary"]::before { background-color: var(--fap-primary); }
 .st-key-fap_rail .stButton > button[kind="primary"]:hover {
-  background: var(--fap-primary-hover); color: var(--fap-on-primary); transform: none; }
+  background: var(--fap-rail-active); color: #FFFFFF; }
 /* recent rows: smaller, muted (keyed by st-key-rec_ prefix) */
 .st-key-fap_rail [class*="st-key-rec_"] button { min-height: 32px; font-size: 12.5px;
-  color: var(--fap-text-subtle); font-weight: 500; }
+  color: var(--fap-rail-subtle); font-weight: 500; }
 .st-key-fap_rail [class*="st-key-rec_"] button::before { width: 15px; height: 15px; margin-right: 10px; }
 /* collapsible SECTION headers (dropdowns): a real button styled as a section label
    with a chevron that flips down/right with the open state (keyed by st-key-grp_) */
 .st-key-fap_rail [class*="st-key-grp_"] .stButton > button { min-height: 28px; margin-top: 10px;
-  padding: 0 10px; background: transparent; color: var(--fap-text-subtle); font-size: 11px;
-  font-weight: 700; letter-spacing: .12em; text-transform: uppercase; transform: none; }
+  padding: 0 10px; background: transparent; color: var(--fap-rail-subtle); font-size: 11px;
+  font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .st-key-fap_rail [class*="st-key-grp_"] .stButton > button:hover { background: transparent;
-  color: var(--fap-text); transform: none; box-shadow: none; }
+  color: var(--fap-rail-text); box-shadow: none; }
 .st-key-fap_rail [class*="st-key-grp_"] .stButton > button::before { width: 13px; height: 13px;
   margin-right: 9px; opacity: .75; }
 
 /* ---- 6) footer status card ---- */
 .nv-footer { padding: var(--fap-space-4); }
-.nv-card { border: 1px solid var(--fap-border); border-radius: 14px; background: var(--fap-bg); padding: 14px; }
+.nv-card { border: 1px solid var(--fap-rail-border); border-radius: 12px; background: var(--fap-rail-surface); padding: 14px; }
 .nv-card-title { font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
-  color: var(--fap-text-subtle); }
-.nv-card-ds { font-size: 14px; font-weight: 700; color: var(--fap-text); margin: 6px 0 4px;
+  color: var(--fap-rail-subtle); }
+.nv-card-ds { font-size: 14px; font-weight: 700; color: var(--fap-rail-text); margin: 6px 0 4px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nv-card-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fap-text-muted); }
+.nv-card-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--fap-rail-muted); }
 .nv-badge { background: var(--fap-surface); border: 1px solid var(--fap-border); border-radius: 6px;
   padding: 1px 7px; font-weight: 600; }
 .nv-rows { color: var(--fap-text-muted); }

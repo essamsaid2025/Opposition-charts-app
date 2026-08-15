@@ -100,7 +100,10 @@ def render_shell(open_play_renderer: Callable[[], None] | None = None, *,
     base_brand = _branding()
     preset_id = st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID
     brand = theme.branding_for(preset_id, base_brand)
-    theme.apply(brand, theme.resolve_mode(st.session_state.get("_theme_mode"), brand))
+    # ONE fixed application identity: an always-light workspace (the dark navigation
+    # rail is skinned independently in fap.theme.css). No application light/dark
+    # switching — chart visualization themes are separate and untouched.
+    theme.apply(brand, "light")
 
     from fap.identity import current_user
     if current_user() is None:
@@ -324,9 +327,8 @@ def _footer_info(ctx: "ShellContext", brand: theme.Branding) -> nav.FooterInfo:
         doc = ds.document if isinstance(getattr(ds, "document", None), dict) else {}
         q = doc.get("quality")
         quality = f"{q:.0f}" if isinstance(q, (int, float)) else ""
-    preset = theme.get_preset(st.session_state.get("_theme_preset") or theme.DEFAULT_PRESET_ID)
-    mode = theme.resolve_mode(st.session_state.get("_theme_mode"), brand)
-    theme_label = f"{preset.label} · {mode.title()}"
+    # single fixed application appearance — no light/dark label to surface
+    theme_label = "Professional"
     storage = "Local"
     try:
         storage = getattr(getattr(ctx.platform, "cache", None), "backend_name", "Local").title()
@@ -453,7 +455,7 @@ def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) 
     notifications = st.session_state.get("_notifications", [])
 
     with st.container(key="fap_header"):
-        c = st.columns([0.6, 8, 0.6, 3], vertical_alignment="center")
+        c = st.columns([0.6, 8, 3], vertical_alignment="center")
         with c[0]:
             st.button("", key="hdr_collapse", on_click=_cb_toggle_collapse,
                       help="Expand navigation" if collapsed else "Collapse navigation",
@@ -463,17 +465,13 @@ def _render_header(ctx: "ShellContext", brand: theme.Branding, collapsed: bool) 
                                                C.breadcrumb_html(crumbs)),
                         unsafe_allow_html=True)
         with c[2]:
-            st.button("", key="hdr_theme", on_click=_cb_toggle_theme,
-                      help="Toggle light / dark", use_container_width=True)
-        with c[3]:
             st.markdown(nav.header_user_html(
                 ctx.user.name, initials, C.badge_html(ctx.user.role_label, "info"),
                 len(notifications)), unsafe_allow_html=True)
-    # header button glyphs (collapse chevron + theme sun/moon) via the same mask trick
-    mode = theme.resolve_mode(st.session_state.get("_theme_mode"), brand)
+    # header button glyph (collapse chevron). The application has a single fixed
+    # appearance, so there is no light/dark theme control.
     st.markdown(nav.icon_css([
         ("hdr_collapse", "chevron-right" if collapsed else "chevron-left"),
-        ("hdr_theme", "sun" if mode == "dark" else "moon"),
     ]), unsafe_allow_html=True)
 
 
@@ -483,14 +481,15 @@ def _render_controls_bar(ctx: "ShellContext", brand: theme.Branding) -> None:
     navigation itself stays in the HTML rail."""
     if ctx.wm is None:
         return
-    cols = st.columns([3, 3, 6, 2, 2], vertical_alignment="center")
+    # The application has ONE fixed appearance, so there is no theme/appearance
+    # control here (chart visualization themes remain selectable inside the chart
+    # tools, unchanged).
+    cols = st.columns([3, 3, 8, 2], vertical_alignment="center")
     with cols[0]:
         _workspace_selector(ctx)
     with cols[1]:
         _project_selector(ctx)
     with cols[3]:
-        _appearance_popover()
-    with cols[4]:
         _account_popover(ctx)
 
 
