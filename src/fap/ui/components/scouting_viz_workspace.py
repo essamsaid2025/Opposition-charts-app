@@ -1,0 +1,309 @@
+"""Player Scouting Visualization Workspace (P4).
+
+A professional metric-analysis workspace for a player-scouting dataset. It reuses:
+the scouting service for data, ``fap.scouting.viz`` as the pure adapter,
+``fap.scouting.charts`` (matplotlib + mplsoccer PyPizza) for rendering, the
+existing ThemeManager for themes, and the existing ExportEngine for PNG/PDF. It
+NEVER touches event data - no x/y/event_type - and never re-normalizes a
+normalized dataset.
+
+The component is a thin view: all analytics live in ``viz``/``charts``. It stores
+only selections + PNG bytes in session state (never matplotlib figures), and
+closes every figure after export.
+"""
+from __future__ import annotations
+
+from typing import Any, Callable
+
+import streamlit as st
+
+from fap.scouting import charts, viz
+from fap.theme import components as C
+from fap.utils.text import slugify
+
+
+def _themes(shell):
+    tm = getattr(shell.platform, "themes", None) if shell.platform else None
+    if tm is None:
+        return None, []
+    try:
+        return tm, tm.ids()
+    except Exception:
+        return None, []
+
+
+def _export_engine():
+    from fap.visuals.export import ExportEngine
+    return ExportEngine()
+
+
+def _render_and_show(fig, title: str, ex, *, key: str,
+                     on_assign: Callable | None = None, viz_id: str = "") -> None:
+    """Export a figure to PNG (display + download) and PDF (download), then CLOSE
+    it. Figures never enter session state - only bytes do."""
+    import matplotlib.pyplot as plt
+    try:
+        png = ex.export(fig, title, fmt="png").data
+        try:
+            pdf = ex.export(fig, title, fmt="pdf").data
+        except Exception:
+            pdf = None
+    finally:
+        plt.close(fig)
+    st.image(png, use_container_width=True)
+    slug = slugify(title) or "chart"
+    cols = st.columns(3)
+    cols[0].download_button("Download PNG", png, file_name=f"{slug}.png",
+                            mime="image/png", key=f"{key}_png", use_container_width=True)
+    if pdf is not None:
+        cols[1].download_button("Download PDF", pdf, file_name=f"{slug}.pdf",
+                                mime="application/pdf", key=f"{key}_pdf",
+                                use_container_width=True)
+    if on_assign is not None and cols[2].button("Assign to report", key=f"{key}_assign",
+                                                use_container_width=True):
+        on_assign(png, title, viz_id)
+        st.toast("Chart assigned to the player's report")
+
+
+def render_scouting_viz_workspace(shell, svc, player, *, key: str,
+                                  on_assign: Callable | None = None) -> None:
+    """The full workspace for one scouting player over the active player-scouting
+    dataset. ``player`` is the scouting DB record; the dataset row is resolved by
+    name inside the adapter."""
+    ctx = svc.active_scouting_dataset(shell.user)
+    if ctx is None or ctx.get("frame") is None:
+        C.render_alert("Activate a player-scouting dataset in the Data Hub to visualize "
+                       "player metrics here.", "info")
+        return
+    frame = ctx["frame"]
+    schema = ctx["schema"]
+    population = ctx["players"]
+    tm, theme_ids = _themes(shell)
+    if tm is None or not theme_ids:
+        C.render_alert("Chart themes are unavailable in this session.", "warning")
+        return
+
+    # resolve the primary player's exact name against the dataset (adapter-safe)
+    names = {player.name.lower().strip()} | {
+        str(a).lower().strip() for a in (player.document.get("aliases") or []) if a}
+    primary = next((p for p in population if p.lower().strip() in names), None)
+    if primary is None:
+        C.render_alert(f"{player.name} is not in the active player-scouting dataset. "
+                       "Notes, ratings and tags are still available.", "info")
+        return
+
+    # ---- controls: theme + comparison players ----
+    default_theme = "opta_dark" if "opta_dark" in theme_ids else theme_ids[0]
+    tcol, pcol = st.columns([1, 2])
+    theme_id = tcol.selectbox("Theme", theme_ids,
+                              index=theme_ids.index(st.session_state.get(f"{key}_theme", default_theme))
+                              if st.session_state.get(f"{key}_theme", default_theme) in theme_ids else 0,
+                              key=f"{key}_theme")
+    others = [p for p in population if p != primary]
+    compare = pcol.multiselect("Compare with (same dataset)", others,
+                               default=st.session_state.get(f"{key}_cmp", []),
+                               max_selections=3, key=f"{key}_cmp")
+    theme = tm.get(theme_id)
+    selected_players = [primary] + [c for c in compare if c in population]
+    view = viz.build_view(frame, schema, selected_players,
+                          dataset_id=ctx["id"], dataset_name=ctx["name"])
+    if not view.metrics:
+        C.render_alert("This dataset has no numeric scouting metrics to visualize.", "warning")
+        return
+
+    # ---- player header ----
+    dims = view.dimensions.get(view.primary, {})
+    C.render_section_title(
+        view.primary, eyebrow="Player Visualizations",
+        subtitle="  ·  ".join(str(dims[k]) for k in ("team", "position", "league")
+                              if dims.get(k)) or ctx["name"], icon_name="scouting")
+    st.caption(f"Dataset: {view.dataset_name}  ·  {view.population} players  ·  "
+               f"{len(view.metrics)} metrics  ·  values are "
+               f"{'percentile/normalized (0-1)' if view.value_scale == viz.SCALE_NORMALIZED else 'raw measurements'}")
+
+    ex = _export_engine()
+    tab_explorer, tab_viz, tab_pizza, tab_pop = st.tabs(
+        ["Metric Explorer", "Visualizations", "Pizza Builder", "Population Context"])
+    with tab_explorer:
+        _metric_explorer(view, key)
+    with tab_viz:
+        _viz_workspace(view, theme, frame, ex, key, on_assign)
+    with tab_pizza:
+        _pizza_builder(shell, svc, view, theme, ex, key, on_assign)
+    with tab_pop:
+        _population_context(view, key)
+
+
+# ------------------------------------------------------------ metric explorer
+def _metric_explorer(view: viz.ScoutingView, key: str) -> None:
+    st.caption("Search, filter and sort every metric. Raw source values are always kept.")
+    c = st.columns([2, 1, 1])
+    q = c[0].text_input("Search", key=f"{key}_ex_q", placeholder="passes, xg, duels…").lower().strip()
+    cats = ["All"] + view.categories()
+    units = ["All"] + view.units()
+    fcat = c[1].selectbox("Category", cats, key=f"{key}_ex_cat")
+    funit = c[2].selectbox("Unit", units, key=f"{key}_ex_unit")
+    rows = []
+    for m in view.metrics:
+        if q and q not in m.name.lower():
+            continue
+        if fcat != "All" and m.category != fcat:
+            continue
+        if funit != "All" and m.unit != funit:
+            continue
+        v = m.value(view.primary)
+        pct = m.percentile(view.primary)
+        rk = m.rank(view.primary)
+        rows.append({
+            "Metric": m.name, "Category": m.category, "Unit": m.unit,
+            "Value": "—" if v is None else round(float(v), 3),
+            "Percentile": "—" if pct is None else round(float(pct)),
+            "Rank": "—" if rk is None else f"{rk}/{m.count}",
+            "Population": m.count,
+        })
+    st.caption(f"{len(rows)} of {len(view.metrics)} metrics")
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+# ------------------------------------------------------------ visualization workspace
+def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
+                   on_assign) -> None:
+    avail = viz.chart_availability(view, selected=st.session_state.get(f"{key}_metrics"))
+    options = list(viz.CHART_TYPES)
+    labels = {ct: viz.CHART_LABELS[ct] + ("" if avail[ct][0] else "  (unavailable)")
+              for ct in options}
+    ct = st.selectbox("Chart type", options, format_func=lambda c: labels[c], key=f"{key}_ct")
+    ok, reason = avail[ct]
+    if not ok:
+        C.render_alert(f"{viz.CHART_LABELS[ct]} unavailable: {reason}", "info")
+        return
+
+    sources = view.sources()
+    opts: dict[str, Any] = {"frame": frame}
+    # per-chart metric controls
+    if ct in ("bar", "percentile_bar", "radar", "lollipop", "comparison",
+              "small_multiples", "heatmap", "box"):
+        default = viz.suggest_pizza_metrics(view, 10) if ct in ("radar",) else sources[:12]
+        picked = st.multiselect("Metrics", sources,
+                                default=st.session_state.get(f"{key}_m_{ct}", default),
+                                format_func=lambda s: view.metric(s).name if view.metric(s) else s,
+                                key=f"{key}_m_{ct}")
+        opts["metrics"] = picked or default
+        st.session_state[f"{key}_metrics"] = opts["metrics"]
+    elif ct == "scatter":
+        cc = st.columns(2)
+        xs = cc[0].selectbox("X metric", sources,
+                             format_func=lambda s: view.metric(s).name, key=f"{key}_sx")
+        ys = cc[1].selectbox("Y metric", sources, index=min(1, len(sources) - 1),
+                             format_func=lambda s: view.metric(s).name, key=f"{key}_sy")
+        opts["x"], opts["y"] = xs, ys
+    elif ct in ("ranking_bar", "histogram"):
+        mk = st.selectbox("Metric", sources,
+                          format_func=lambda s: view.metric(s).name, key=f"{key}_single_{ct}")
+        opts["metric"] = mk
+
+    if st.button("Render", type="primary", key=f"{key}_render_{ct}"):
+        try:
+            fig = charts.render(ct, view, theme, opts)
+        except Exception as exc:                       # never crash the page
+            C.render_alert(f"Could not render this chart: {exc}", "warning")
+            return
+        title = f"{view.primary} - {viz.CHART_LABELS[ct]}"
+        _render_and_show(fig, title, ex, key=f"{key}_{ct}", on_assign=on_assign,
+                         viz_id=f"scouting_{ct}")
+
+
+# ------------------------------------------------------------ pizza builder
+def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
+                   on_assign) -> None:
+    st.caption("Manually choose the metrics on the pizza. Presets only appear when "
+               "matching metrics exist; the analyst always controls the final set.")
+    sources = view.sources()
+    state_key = f"{key}_pizza_sel"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = viz.suggest_pizza_metrics(view, 10)
+
+    # presets (only those with enough metrics) + select-all / clear
+    presets = viz.available_presets(view)
+    pcols = st.columns(max(len(presets) + 2, 3))
+    for i, preset in enumerate(presets):
+        if pcols[i].button(preset, key=f"{key}_preset_{i}", use_container_width=True):
+            st.session_state[state_key] = viz.preset_metrics(view, preset)[:12]
+            st.rerun()
+    if pcols[len(presets)].button("Select all", key=f"{key}_pz_all", use_container_width=True):
+        st.session_state[state_key] = sources[:12]
+        st.rerun()
+    if pcols[len(presets) + 1].button("Clear", key=f"{key}_pz_clear", use_container_width=True):
+        st.session_state[state_key] = []
+        st.rerun()
+
+    selected = st.multiselect(
+        "Pizza metrics (search to add, drag order kept)", sources,
+        default=[s for s in st.session_state[state_key] if s in sources],
+        format_func=lambda s: view.metric(s).name if view.metric(s) else s,
+        key=f"{key}_pz_ms")
+    st.session_state[state_key] = selected
+
+    # saved presets (reuse existing preset persistence)
+    with st.expander("Saved selections"):
+        sc = st.columns([2, 1])
+        pname = sc[0].text_input("Name", key=f"{key}_pz_name", placeholder="e.g. CF template")
+        if sc[1].button("Save selection", key=f"{key}_pz_save", use_container_width=True):
+            if selected and pname.strip():
+                svc.save_scouting_view_preset(shell.user, pname.strip(),
+                                              {"chart": "pizza", "metrics": selected})
+                st.toast(f"Saved '{pname.strip()}'")
+        saved = svc.list_scouting_view_presets(shell.user)
+        if saved:
+            pick = st.selectbox("Load", saved, format_func=lambda p: p["name"],
+                                key=f"{key}_pz_load_sel")
+            if st.button("Load selection", key=f"{key}_pz_load"):
+                st.session_state[state_key] = [s for s in pick["config"].get("metrics", [])
+                                               if s in sources]
+                st.rerun()
+
+    data = viz.pizza_values(view, selected)
+    if not data["available"]:
+        C.render_alert(f"Pizza unavailable: {data['reason']}", "info")
+        return
+    st.caption(f"{data['note']}  ·  {len(selected)} metrics")
+    if st.button("Render pizza", type="primary", key=f"{key}_pz_render"):
+        try:
+            fig = charts.pizza_chart(view, selected, theme)
+        except Exception as exc:
+            C.render_alert(f"Could not render the pizza: {exc}", "warning")
+            return
+        _render_and_show(fig, f"{view.primary} - Pizza", ex, key=f"{key}_pz",
+                         on_assign=on_assign, viz_id="scouting_pizza")
+
+
+# ------------------------------------------------------------ population context
+def _population_context(view: viz.ScoutingView, key: str) -> None:
+    if view.population < 2:
+        C.render_alert("Population context needs more than one player in the dataset.", "info")
+        return
+    st.caption(f"How {view.primary} ranks within the {view.population}-player dataset.")
+    ranked = [(m, m.percentile(view.primary)) for m in view.metrics
+              if m.percentile(view.primary) is not None]
+    ranked.sort(key=lambda t: t[1], reverse=True)
+    top = ranked[:6]
+    bottom = ranked[-6:][::-1] if len(ranked) > 6 else []
+    cols = st.columns(2)
+    with cols[0]:
+        st.markdown("**Strengths** (top percentiles)")
+        for m, pct in top:
+            rk = m.rank(view.primary)
+            st.markdown(f"{C.badge_html(f'{pct:.0f} pct', 'success')} {m.name}"
+                        f" &nbsp; <span style='color:var(--fap-text-muted)'>#{rk}/{m.count}</span>",
+                        unsafe_allow_html=True)
+    with cols[1]:
+        if bottom:
+            st.markdown("**Development areas** (low percentiles)")
+            for m, pct in bottom:
+                rk = m.rank(view.primary)
+                st.markdown(f"{C.badge_html(f'{pct:.0f} pct', 'warning')} {m.name}"
+                            f" &nbsp; <span style='color:var(--fap-text-muted)'>#{rk}/{m.count}</span>",
+                            unsafe_allow_html=True)
+
+
+__all__ = ["render_scouting_viz_workspace"]

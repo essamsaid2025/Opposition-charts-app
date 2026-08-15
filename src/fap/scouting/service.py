@@ -201,6 +201,56 @@ class ScoutingService:
                 "player": str(row[id_field]), "dimensions": dimensions,
                 "metrics": metrics, "value_scale": schema.get("value_scale", "raw")}
 
+    def active_scouting_dataset(self, user: User) -> dict[str, Any] | None:
+        """The full active player-scouting dataset context for the visualization
+        workspace: id, name, semantic schema, the frame (one row per player) and the
+        list of player names. ``None`` when the active dataset is not player-scouting.
+        Reads only scouting APIs - never the event pipeline."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return None
+        ds = self._wm.active_dataset(user)
+        if ds is None:
+            return None
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        if doc.get("dataset_type") != PLAYER_SCOUTING:
+            return None
+        schema = doc.get("scouting_schema") or {}
+        frame = self._wm.dataset_frame(ds.id)
+        id_field = schema.get("id_field")
+        players: list[str] = []
+        if frame is not None and id_field in getattr(frame, "columns", []):
+            players = [str(x) for x in frame[id_field].astype(str).str.strip().tolist()
+                       if str(x).strip()]
+        return {"id": ds.id, "name": ds.name, "schema": schema, "frame": frame,
+                "players": players}
+
+    # -- saved visualization/pizza selections (reuses WorkspaceManager presets) --
+    _VIEW_PRESET_KIND = "scouting_pizza"
+
+    def save_scouting_view_preset(self, user: User, name: str,
+                                  config: dict[str, Any]) -> str | None:
+        """Persist a named metric selection (pizza/radar) via the EXISTING preset
+        store - no new persistence system. Returns the preset id, or None if
+        presets are unavailable."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        if self._wm is None:
+            return None
+        preset = self._wm.save_preset(user, kind=self._VIEW_PRESET_KIND,
+                                      name=name, document=dict(config))
+        return getattr(preset, "id", None)
+
+    def list_scouting_view_presets(self, user: User) -> list[dict[str, Any]]:
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return []
+        try:
+            presets = self._wm.list_presets(user, kind=self._VIEW_PRESET_KIND)
+        except Exception:
+            return []
+        return [{"id": p.id, "name": p.name, "config": p.document} for p in presets]
+
     def player_event_frame(self, user: User, player_id: str):
         """The active dataset's events for this scouting player (canonical match/
         event source), joined in memory to the persistent record by name. ``None``

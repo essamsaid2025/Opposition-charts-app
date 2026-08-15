@@ -186,18 +186,25 @@ class ScoutingPage(Page):
             self._reports(shell, svc, p)
 
     def _tab_visualization(self, shell, svc, p) -> None:
-        """Visualization workspace (reuses the platform visualization engine) over
-        the scouting player's events from the active dataset. When the scout can
-        edit, each rendered chart can be assigned (frozen) to the player's report."""
-        from fap.ui.components.viz_workspace import render_visualization_workspace
-        frame = svc.player_event_frame(shell.user, p.id)
-
+        """Visualization workspace, routed by dataset CAPABILITY:
+        - a player-scouting dataset -> the Player Scouting Visualization workspace
+          (metric charts + pizza, no event data required);
+        - an event dataset -> the existing event visualization engine.
+        When the scout can edit, each rendered chart can be assigned (frozen) to
+        the player's report."""
         def _assign(png, title, viz_id):
             svc.assign_chart(shell.user, p.id, png, title=title, viz_id=viz_id)
 
+        on_assign = _assign if self._can_edit else None
+        if svc.active_dataset_kind(shell.user) == "player_scouting":
+            from fap.ui.components.scouting_viz_workspace import render_scouting_viz_workspace
+            render_scouting_viz_workspace(shell, svc, p, key=f"sc_pviz_{p.id}",
+                                          on_assign=on_assign)
+            return
+        from fap.ui.components.viz_workspace import render_visualization_workspace
+        frame = svc.player_event_frame(shell.user, p.id)
         render_visualization_workspace(shell, frame=frame, player_name=p.name,
-                                       key=f"sc_viz_{p.id}",
-                                       on_assign=_assign if self._can_edit else None)
+                                       key=f"sc_viz_{p.id}", on_assign=on_assign)
         if self._can_edit:
             self._assigned_charts_panel(shell, svc, p)
 
