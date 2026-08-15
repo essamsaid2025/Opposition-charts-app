@@ -1349,15 +1349,63 @@ class ScoutingService:
                        sync_offset_seconds: float | None) -> PlayerVideo | None:
         """Associate a video with a match and record its kickoff offset (the two
         Tier-1 sync fields). Both are plain metadata - no match/event data is copied
-        or duplicated. Returns the updated record, or ``None`` if it doesn't exist."""
+        or duplicated. Returns the updated record, or ``None`` if it doesn't exist.
+        Clearing the match (empty match_id) also clears the persisted dataset link."""
         self._require(user, Capability.EDIT_SCOUTING)
         if self.videos_repo.get(video_id) is None:
             return None
         offset = None if sync_offset_seconds is None else float(sync_offset_seconds)
         self.videos_repo.set_sync(video_id, str(match_id or ""), offset)
+        if not str(match_id or "").strip():
+            self.videos_repo.set_dataset(video_id, "")       # unlink -> also drop dataset binding
         self.audit.record(user, "scouting.video.sync", target_type="video", target_id=video_id,
                           detail={"match_id": match_id, "offset": offset})
         return self.videos_repo.get(video_id)
+
+    def link_video_to_match(self, user: User, video_id: str, dataset_id: str,
+                            match_id: str) -> PlayerVideo | None:
+        """Persist a video's evidence source: (dataset_id, match_id). From now on the
+        video's action list ALWAYS comes from this dataset via
+        WorkspaceManager.dataset_frame(dataset_id) - the active dataset has zero
+        influence. Also registers the P4.4 evidence link (reuse, no duplicate store).
+        Kickoff offset is left for calibration (unchanged)."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        v = self.videos_repo.get(video_id)
+        if v is None:
+            return None
+        self.videos_repo.set_sync(video_id, str(match_id or ""), v.sync_offset_seconds)
+        self.videos_repo.set_dataset(video_id, str(dataset_id or ""))
+        if dataset_id and self._wm is not None:
+            try:
+                self.link_match_evidence(user, v.player_id, dataset_id, match_id=str(match_id or ""))
+            except Exception:
+                pass                                          # evidence-link is best-effort
+        self.audit.record(user, "scouting.video.dataset_link", target_type="video",
+                          target_id=video_id,
+                          detail={"dataset_id": dataset_id, "match_id": match_id})
+        return self.videos_repo.get(video_id)
+
+    def video_events(self, user: User, player_id: str, video) -> "pd.DataFrame | None":
+        """The event/action rows for a LINKED video - read from the video's persisted
+        ``dataset_id`` (via WorkspaceManager.dataset_frame), NEVER the active dataset.
+        Reuses the P4.4 canonical retrieval (``evidence.event_rows``) scoped by
+        player identity (name+aliases) + the video's match_id. ``None`` when the video
+        has no dataset link (legacy) or the dataset is missing/not event data."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import evidence, identity
+        ds_id = getattr(video, "dataset_id", "") or ""
+        if not ds_id:
+            return None                                       # legacy/unlinked -> explicit linking
+        meta = self._dataset_meta(ds_id)
+        if not meta or meta["dataset_type"] != "event":
+            return None                                       # player-scouting/missing -> no events
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        frame = self._dataset_frame_for(ds_id)                # persisted source, active-independent
+        keys = identity.identity_keys(p)
+        rows = evidence.event_rows(frame, keys, match_id=getattr(video, "match_id", "") or "")
+        return rows
 
     # ================================================================ attachments
     def add_attachment(self, user: User, player_id: str, data: bytes, filename: str,

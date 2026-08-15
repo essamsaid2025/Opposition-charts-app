@@ -774,7 +774,14 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE player_videos ADD COLUMN match_id TEXT NOT NULL DEFAULT '';
         ALTER TABLE player_videos ADD COLUMN sync_offset_seconds REAL;
     """),
-    # (13, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Scouting video ↔ dataset link (P4.5). A linked video's evidence source becomes
+    # the persisted dataset_id, so the currently ACTIVE dataset can never change (or
+    # empty) an already-linked video's action list. Additive & defaulted so every
+    # existing row keeps loading (dataset_id defaults to '', i.e. legacy/unlinked).
+    (13, """
+        ALTER TABLE player_videos ADD COLUMN dataset_id TEXT NOT NULL DEFAULT '';
+    """),
+    # (14, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

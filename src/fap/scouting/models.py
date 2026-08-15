@@ -91,6 +91,9 @@ class PlayerVideo:
     # existing video, so those render exactly as before.
     match_id: str = ""                       # which match this footage is of (plain association)
     sync_offset_seconds: float | None = None  # video timestamp of kickoff -> event seek time
+    # P4.5: the persisted evidence source. Once set, the video's action list ALWAYS
+    # comes from this dataset (never the active dataset). "" = legacy/unlinked.
+    dataset_id: str = ""
 
 
 @dataclass(slots=True)

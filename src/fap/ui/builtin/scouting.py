@@ -974,17 +974,30 @@ class ScoutingPage(Page):
         return None, ""
 
     def _match_linker(self, shell, svc, p, v) -> None:
-        with st.expander("Link this footage to a match (enables click-to-seek)"):
+        with st.expander("Link this footage to a match dataset (enables click-to-seek)",
+                         expanded=not bool(v.dataset_id)):
+            try:
+                active = shell.wm.active_dataset(shell.user)
+            except Exception:
+                active = None
+            # Linking captures the active EVENT dataset PERMANENTLY on the video, so the
+            # active dataset never influences the action list afterwards.
+            if active is None or svc.active_dataset_kind(shell.user) != "event":
+                st.caption("Activate this player's event match dataset in the Data Hub, then link it "
+                           "here. The link is saved permanently — changing the active dataset later "
+                           "won't affect this video's actions.")
+                return
             frame = svc.player_event_frame(shell.user, p.id)
             ids = []
             if frame is not None and "match_id" in frame.columns:
                 ids = sorted({str(m).strip() for m in frame["match_id"] if str(m).strip()})
             options = ["(choose)"] + ids
-            chosen = st.selectbox("Match from active dataset", options, key=f"vm_sel_{v.id}")
+            chosen = st.selectbox("Match", options, key=f"vm_sel_{v.id}")
             manual = st.text_input("…or type a match id", key=f"vm_txt_{v.id}")
             target = manual.strip() or ("" if chosen == "(choose)" else chosen)
+            st.caption(f"Evidence source: **{_html.escape(active.name)}**")
             if st.button("Link match", key=f"vm_btn_{v.id}") and target:
-                svc.set_video_sync(shell.user, v.id, target, None)   # calibrate next
+                svc.link_video_to_match(shell.user, v.id, active.id, target)   # persists dataset_id
                 st.rerun()
 
     def _video_calibrate(self, shell, svc, v, VS) -> None:
@@ -1027,8 +1040,18 @@ class ScoutingPage(Page):
             self._video_static_today(svc, v)
             st.caption("Interactive player unavailable — standard playback shown.")
             return
-        st.caption(f"Synced to match **{v.match_id}** (kickoff at "
-                   f"{float(v.sync_offset_seconds):.1f}s). Click an event to jump the video there.")
+        ds_name = ""
+        if getattr(v, "dataset_id", ""):
+            try:
+                ds = shell.wm.get_dataset(v.dataset_id)
+                ds_name = ds.name if ds else ""
+            except Exception:
+                ds_name = ""
+        st.caption(f"Synced to match **{v.match_id}**"
+                   + (f" · dataset **{_html.escape(ds_name)}**" if ds_name else "")
+                   + f" (kickoff at {float(v.sync_offset_seconds):.1f}s). "
+                   "Click an event to jump the video there — actions stay from this dataset "
+                   "regardless of the active dataset.")
         if self._can_edit:
             c1, c2 = st.columns(2)
             if c1.button("Recalibrate kickoff", key=f"vs_recal_{v.id}", use_container_width=True):
@@ -1045,14 +1068,22 @@ class ScoutingPage(Page):
     def _event_seek_list(self, shell, svc, p, v, seek_key, VS) -> None:
         import uuid as _uuid
         import pandas as pd
-        frame = svc.player_event_frame(shell.user, p.id)
-        if frame is None or "match_id" not in frame.columns:
-            C.render_alert("No active dataset events to sync to — activate this player's match "
-                           "dataset in the Data Hub.", "info")
+        # Actions come from the video's PERSISTED dataset_id (P4.4/P4.5), NEVER the
+        # active dataset. A legacy video (no dataset_id) is explicitly re-linked.
+        ev = svc.video_events(shell.user, p.id, v)
+        if ev is None:
+            if not getattr(v, "dataset_id", ""):
+                C.render_alert("Dataset not linked. Link this video to its match dataset to load "
+                               "the player's actions — it will then stay linked regardless of the "
+                               "active dataset.", "info")
+                self._match_linker(shell, svc, p, v)
+            else:
+                C.render_alert("The linked dataset is unavailable or holds no events for this "
+                               "match.", "info")
             return
-        ev = frame[frame["match_id"].astype(str).str.strip() == str(v.match_id)].copy()
+        ev = ev.copy()
         if ev.empty:
-            C.render_alert(f"No events for match {v.match_id} for this player in the active "
+            C.render_alert(f"No events for match {v.match_id} for this player in the linked "
                            "dataset.", "info")
             return
         ev["_m"] = pd.to_numeric(ev.get("minute", 0), errors="coerce").fillna(0).astype(int)

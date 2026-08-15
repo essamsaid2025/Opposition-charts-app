@@ -185,6 +185,11 @@ class VideoRepository:
             "UPDATE player_videos SET match_id = ?, sync_offset_seconds = ? WHERE id = ?",
             (match_id, sync_offset_seconds, video_id))
 
+    def set_dataset(self, video_id: str, dataset_id: str) -> None:
+        """Bind (or clear) the persisted evidence dataset for a video (migration 13)."""
+        self._db.execute("UPDATE player_videos SET dataset_id = ? WHERE id = ?",
+                         (str(dataset_id or ""), video_id))
+
     def delete(self, video_id: str) -> None:
         self._db.execute("DELETE FROM player_videos WHERE id = ?", (video_id,))
 
@@ -197,7 +202,8 @@ class VideoRepository:
                            title=r["title"], created_by=r["created_by"], created_at=r["created_at"],
                            match_id=(r["match_id"] if "match_id" in keys else ""),
                            sync_offset_seconds=(r["sync_offset_seconds"]
-                                                if "sync_offset_seconds" in keys else None))
+                                                if "sync_offset_seconds" in keys else None),
+                           dataset_id=(r["dataset_id"] if "dataset_id" in keys else ""))
 
 
 class MediaRepository:
