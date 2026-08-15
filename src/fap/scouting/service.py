@@ -334,6 +334,20 @@ class ScoutingService:
                 academy[k] = v
         return self._set_doc(user, player_id, "scouting.player.academy", academy=academy)
 
+    def set_trial_profile(self, user: User, player_id: str, **fields: Any) -> Player:
+        """Store trialist-specific fields (trial period/source, evaluation status) in
+        document['trial']. Empty values dropped - nothing fabricated."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        trial = dict(doc.get("trial") or {})
+        for k, v in fields.items():
+            if v in (None, ""):
+                trial.pop(k, None)
+            else:
+                trial[k] = v
+        return self._set_doc(user, player_id, "scouting.player.trial", trial=trial)
+
     def status_history(self, player_id: str):
         from fap.scouting import identity
         p = self.get_player(player_id)
@@ -349,12 +363,125 @@ class ScoutingService:
         from fap.scouting import profiles
         return [pr.to_dict() for pr in profiles.profiles_for_position(position)]
 
+    # -- dataset identity mapping (P4.2.1) ----------------------------------
+    # The player is the source of truth; the dataset is evidence. A confirmed
+    # mapping (player_id -> dataset row) is persisted per dataset in the player's
+    # document, so resolution is deterministic and survives reloads. The dataset's
+    # spelling never becomes the player's identity.
+    def _dataset_links(self, player) -> dict[str, Any]:
+        doc = getattr(player, "document", None) or {}
+        links = doc.get("dataset_links")
+        return dict(links) if isinstance(links, dict) else {}
+
+    def _resolve_dataset_key(self, player, ctx) -> tuple[str | None, Any]:
+        """Resolve a player to a dataset row: a confirmed mapping wins; otherwise a
+        single high-confidence match auto-resolves. Returns (entity_key|None, result)
+        where result is the explainable MatchResult (or None). Never guesses."""
+        from fap.scouting import matching
+        entities = matching.dataset_entities(ctx["frame"], ctx["schema"])
+        keys = {e.key for e in entities}
+        link = self._dataset_links(player).get(ctx["id"])
+        if link and link.get("entity_key") in keys:
+            return link["entity_key"], None
+        result = matching.match_player(player, entities)
+        if result.status == "matched" and result.auto and result.candidate:
+            return result.candidate.key, result
+        return None, result
+
+    def match_player_in_active_dataset(self, user: User, player_id: str) -> dict[str, Any] | None:
+        """Explainable match of a player to the ACTIVE scouting dataset for the UI.
+        ``None`` when no scouting dataset is active. Includes the confirmed link if
+        any, the auto/proposed match, and ambiguous candidates."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import matching
+        ctx = self.active_scouting_dataset(user)
+        if ctx is None or ctx.get("frame") is None:
+            return None
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        link = self._dataset_links(p).get(ctx["id"])
+        entities = matching.dataset_entities(ctx["frame"], ctx["schema"])
+        result = matching.match_player(p, entities)
+        out = {"dataset_id": ctx["id"], "dataset_name": ctx["name"],
+               "linked": bool(link and link.get("entity_key") in {e.key for e in entities}),
+               "link": link, "match": result.to_dict()}
+        return out
+
+    def link_dataset_identity(self, user: User, player_id: str, entity_key: str, *,
+                              method: str = "manual", confidence: str = "confirmed",
+                              add_alias: bool = False) -> Player:
+        """Persist a confirmed player <-> dataset-row mapping for the ACTIVE dataset
+        (in document['dataset_links'][dataset_id]). Optionally add the dataset name
+        as an internal alias. Never changes the canonical name or the dataset."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        ctx = self.active_scouting_dataset(user)
+        if ctx is None:
+            raise ValueError("no active player-scouting dataset")
+        p = self._player_or_raise(player_id)
+        links = self._dataset_links(p)
+        links[ctx["id"]] = {"entity_key": str(entity_key), "dataset_display_name": str(entity_key),
+                            "dataset_name": ctx["name"], "match_method": method,
+                            "confidence": confidence, "confirmed_by": user.email,
+                            "confirmed_at": _dt_now()}
+        p = self._set_doc(user, player_id, "scouting.player.dataset_link", dataset_links=links)
+        if add_alias:
+            self.add_alias(user, player_id, str(entity_key))
+            p = self.get_player(player_id)
+        return p
+
+    def unlink_dataset_identity(self, user: User, player_id: str,
+                                dataset_id: str | None = None) -> Player:
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        links = self._dataset_links(p)
+        if dataset_id is None:
+            ctx = self.active_scouting_dataset(user)
+            dataset_id = ctx["id"] if ctx else None
+        if dataset_id:
+            links.pop(dataset_id, None)
+        return self._set_doc(user, player_id, "scouting.player.dataset_unlink", dataset_links=links)
+
+    def dataset_link_status(self, user: User, player_id: str) -> dict[str, Any]:
+        """The three independent states the UI needs: player exists / dataset linked /
+        metrics available - so a profile never reads as 'the player doesn't exist'."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        p = self.get_player(player_id)
+        status = {"player_exists": p is not None, "dataset_active": False, "linked": False,
+                  "auto": False, "entity_key": None, "method": "", "confidence": "",
+                  "metrics_available": False, "metric_count": 0, "candidates": [],
+                  "proposed": None, "dataset_name": ""}
+        if p is None:
+            return status
+        ctx = self.active_scouting_dataset(user)
+        if ctx is None or ctx.get("frame") is None:
+            return status
+        status["dataset_active"] = True
+        status["dataset_name"] = ctx["name"]
+        key, result = self._resolve_dataset_key(p, ctx)
+        if key is not None:
+            link = self._dataset_links(p).get(ctx["id"])
+            status.update(linked=True, entity_key=key,
+                          method=(link or {}).get("match_method") or (result.method if result else "auto"),
+                          confidence=(link or {}).get("confidence") or (result.confidence if result else ""),
+                          auto=bool(result.auto) if result else True)
+            metrics = ctx.get("schema", {}).get("metrics", []) or []
+            status["metrics_available"] = bool(metrics)
+            status["metric_count"] = len(metrics)
+        elif result is not None and result.status == "ambiguous":
+            status["candidates"] = [c.to_dict() for c in result.candidates]
+        elif result is not None and result.status == "matched" and result.candidate:
+            # a single but lower-confidence match: propose it for explicit confirmation
+            status["proposed"] = result.candidate.to_dict()
+        return status
+
     def profile_fit_for(self, user: User, player_id: str, profile_id: str) -> dict[str, Any] | None:
         """Transparent profile-fit for a player against the ACTIVE player-scouting
-        dataset. ``None`` when no scouting dataset is active or the player is not in
-        it; ``available: False`` when the dataset lacks enough compatible metrics."""
+        dataset. ``None`` when no scouting dataset is active or the player cannot be
+        resolved to a row; ``available: False`` when the dataset lacks enough
+        compatible metrics."""
         self._require(user, Capability.VIEW_SCOUTING)
-        from fap.scouting import identity, profiles, viz
+        from fap.scouting import profiles, viz
         profile = profiles.get_profile(profile_id)
         if profile is None:
             return None
@@ -364,8 +491,7 @@ class ScoutingService:
         p = self.get_player(player_id)
         if p is None:
             return None
-        names = identity.identity_keys(p)
-        primary = next((n for n in ctx["players"] if n.lower().strip() in names), None)
+        primary, _ = self._resolve_dataset_key(p, ctx)
         if primary is None:
             return None
         view = viz.build_view(ctx["frame"], ctx["schema"], [primary],
@@ -374,6 +500,21 @@ class ScoutingService:
         result["profile"] = profile.name
         result["profile_id"] = profile.id
         return result
+
+    @staticmethod
+    def _matches_query(p, query: str) -> bool:
+        """One professional search surface: name, display name, aliases, operational
+        id, internal id, club, league, position, nationality, and any linked dataset
+        display name. Case-insensitive substring."""
+        from fap.scouting import identity
+        doc = p.document if isinstance(p.document, dict) else {}
+        parts = [p.name, identity.display_name_of(p), identity.operational_id_of(p), p.id,
+                 p.club, p.league, p.position, p.nationality, p.country]
+        parts += identity.aliases_of(p)
+        for link in (doc.get("dataset_links") or {}).values():
+            parts += [str(link.get("dataset_display_name", "")), str(link.get("dataset_name", ""))]
+        hay = " ".join(str(x) for x in parts if x).lower()
+        return all(tok in hay for tok in query.split())
 
     def player_registry(self, user: User, *, filters: dict[str, Any] | None = None,
                         workspace_id: str | None = None,
@@ -387,10 +528,14 @@ class ScoutingService:
         from fap.scouting import identity
         f = dict(filters or {})
         player_type = f.pop("player_type", None)
+        query = str(f.get("query", "")).strip().lower()
         repo_filters = {k: v for k, v in f.items()
                         if k in ("club", "league", "country", "nationality", "position",
                                  "foot", "status", "priority", "min_age", "max_age") and v not in (None, "")}
-        pool = self.players.search(query=f.get("query", ""), filters=repo_filters,
+        # Fetch the pool WITHOUT the name query so an in-memory search can also match
+        # operational id / aliases / display name / linked dataset name (none of which
+        # the SQL name filter can see).
+        pool = self.players.search(query="", filters=repo_filters,
                                    workspace_id=workspace_id, limit=500)
         out: list[dict[str, Any]] = []
         for p in pool:
@@ -400,6 +545,8 @@ class ScoutingService:
             if f.get("age_group") and identity.age_group_of(p) != f["age_group"]:
                 continue
             if f.get("recruitment_profile") and identity.recruitment_profile_of(p) != f["recruitment_profile"]:
+                continue
+            if query and not self._matches_query(p, query):
                 continue
             fit = None
             if profile_id:
@@ -463,9 +610,14 @@ class ScoutingService:
         p = self.get_player(player_id)
         if p is None:
             return None
-        names = self._player_names(p)
-        col = frame[id_field].astype(str).str.lower().str.strip()
-        match = frame[col.isin(names)]
+        # Resolve the dataset row through the deterministic matcher (confirmed
+        # mapping -> exact/normalized/initial-variant), not a bare exact-name match.
+        ctx = {"id": ds.id, "name": ds.name, "schema": schema, "frame": frame}
+        key, _ = self._resolve_dataset_key(p, ctx)
+        if key is None:
+            return None
+        col = frame[id_field].astype(str).str.strip()
+        match = frame[col == key]
         if match.empty:
             return None
         row = match.iloc[0]

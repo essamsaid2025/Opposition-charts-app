@@ -138,6 +138,9 @@ def test_ui_routes_scouting_dataset_to_profile_not_event_path(ctx):
         def active_scouting_profile(self, u, pid):
             return self._svc.active_scouting_profile(u, pid)
 
+        def dataset_link_status(self, u, pid):          # P4.2.1 dataset-identity panel
+            return self._svc.dataset_link_status(u, pid)
+
         def active_player_stats(self, u, pid):          # the event path - must NOT run
             self.event_lookup_called = True
             return self._svc.active_player_stats(u, pid)

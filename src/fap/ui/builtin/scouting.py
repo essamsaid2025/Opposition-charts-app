@@ -163,24 +163,78 @@ class ScoutingPage(Page):
 
         if self._can_edit:
             st.divider()
-            with st.expander("Add player"):
-                name = st.text_input("Name", key="np_name")
-                cc = st.columns(4)
-                club = cc[0].text_input("Club", key="np_club")
-                league = cc[1].text_input("League", key="np_league")
-                position = cc[2].text_input("Position", key="np_pos")
-                np_type = cc[3].selectbox("Pathway", list(identity.PLAYER_TYPES),
-                                          format_func=identity.type_label, key="np_type")
-                age_group = ""
-                if np_type == "academy":
-                    age_group = st.selectbox("Age group", [""] + list(identity.AGE_GROUPS),
-                                             key="np_ag")
-                if st.button("Create player", type="primary", key="np_create") and name.strip():
-                    p = svc.create_player(shell.user, name.strip(), club=club, league=league,
-                                          position=position, player_type=np_type,
-                                          age_group=age_group, workspace_id=shell.workspace_id)
-                    st.session_state[SEL] = p.id
-                    st.rerun()
+            self._add_player_form(shell, svc)
+
+    def _add_player_form(self, shell, svc) -> None:
+        """Professional, pathway-aware registration. Only fields relevant to the
+        chosen pathway are shown. Creation never depends on any dataset."""
+        from fap.scouting import identity
+        with st.expander("+ Add Player", expanded=False):
+            st.markdown("**Identity**")
+            a, b = st.columns(2)
+            name = a.text_input("Full name", key="np_name")
+            display = b.text_input("Preferred / display name", key="np_display")
+            c, d, e = st.columns(3)
+            dob = c.text_input("Date of birth", key="np_dob", placeholder="YYYY-MM-DD")
+            nationality = d.text_input("Nationality", key="np_nat")
+            club = e.text_input("Club", key="np_club")
+            f, g = st.columns(2)
+            position = f.text_input("Primary position", key="np_pos", placeholder="CF")
+            secondary = g.text_input("Secondary positions", key="np_sec", placeholder="RAMF, AMF")
+            league = st.text_input("Competition / league", key="np_league")
+
+            st.markdown("**Pathway**")
+            np_type = st.radio("Player pathway", list(identity.PLAYER_TYPES),
+                               format_func=identity.type_label, horizontal=True, key="np_type")
+            extra: dict = {}
+            academy_fields: dict = {}
+            age_group = ""
+            if np_type == "academy":
+                ac = st.columns(3)
+                age_group = ac[0].selectbox("Age group", [""] + list(identity.AGE_GROUPS), key="np_ag")
+                academy_fields["stage"] = ac[1].text_input("Development stage", key="np_stage")
+                academy_fields["projection"] = ac[2].text_input("First-team projection", key="np_proj")
+                pc = st.columns(3)
+                academy_fields["technical_potential"] = pc[0].number_input("Technical potential", 0, 100, 0, 5, key="np_tp") or None
+                academy_fields["tactical_potential"] = pc[1].number_input("Tactical potential", 0, 100, 0, 5, key="np_tacp") or None
+                academy_fields["physical_potential"] = pc[2].number_input("Physical potential", 0, 100, 0, 5, key="np_pp") or None
+            elif np_type == "trialist":
+                tc = st.columns(3)
+                extra["trial_period"] = tc[0].text_input("Trial period", key="np_trialp")
+                extra["trial_source"] = tc[1].text_input("Trial source", key="np_trials")
+                extra["evaluation_status"] = tc[2].text_input("Evaluation status", key="np_evals")
+            else:
+                sc_ = st.columns(3)
+                status = sc_[0].selectbox("Recruitment status", list(identity.RECRUITMENT_STATUSES),
+                                          format_func=identity.status_label, key="np_status")
+                priority = sc_[1].selectbox("Priority", [""] + list(identity.RECRUITMENT_PRIORITIES),
+                                            format_func=lambda x: x.title() if x else "—", key="np_prio")
+                profs = [("", "None")] + [(pr["id"], pr["name"])
+                                          for pr in svc.available_profiles(position)]
+                pids = [x[0] for x in profs]
+                prof = sc_[2].selectbox("Recruitment profile", pids,
+                                        format_func=lambda i: dict(profs).get(i, i), key="np_prof")
+                extra.update(status=status, priority=priority, recruitment_profile=prof)
+
+            if st.button("Create player", type="primary", key="np_create") and name.strip():
+                secondary_positions = [s.strip() for s in secondary.split(",") if s.strip()]
+                p = svc.create_player(
+                    shell.user, name.strip(), club=club, league=league, position=position,
+                    secondary_positions=secondary_positions, dob=dob, nationality=nationality,
+                    display_name=display.strip(), player_type=np_type, age_group=age_group,
+                    status=extra.get("status", ""), priority=extra.get("priority", ""),
+                    recruitment_profile=extra.get("recruitment_profile", ""),
+                    workspace_id=shell.workspace_id)
+                if academy_fields:
+                    svc.set_academy_profile(shell.user, p.id, **academy_fields)
+                if np_type == "trialist":
+                    svc.set_trial_profile(
+                        shell.user, p.id, trial_period=extra.get("trial_period"),
+                        trial_source=extra.get("trial_source"),
+                        evaluation_status=extra.get("evaluation_status"))
+                st.session_state[SEL] = p.id
+                st.toast(f"Created {p.name} — {identity.operational_id_of(p)}")
+                st.rerun()
 
     def _registry_card(self, shell, svc, r: dict) -> None:
         from fap.theme import components as C
@@ -327,15 +381,17 @@ class ScoutingPage(Page):
 
     def _scouting_metric_profile(self, shell, svc, p) -> None:
         """Player-scouting capability: the player's metrics from the active
-        player-scouting dataset (resolved by name against the Player column). No
-        event lookup, and missing event data is NOT an error."""
+        player-scouting dataset, resolved through the deterministic dataset-identity
+        matcher. Three independent states (player exists / dataset linked / metrics)
+        are shown honestly - a missing link is informational, never an error."""
+        self._dataset_identity_panel(shell, svc, p)
         with st.expander("Scouting profile (active dataset)", expanded=True):
             profile = svc.active_scouting_profile(shell.user, p.id)
             if profile is None:
                 C.render_alert(
-                    f"{p.name} is not in the active player-scouting dataset "
-                    f"(the player's name may differ in the data). Notes, ratings and tags are "
-                    f"still available.", "info")
+                    "Metrics unavailable — no dataset record is linked to this player yet. "
+                    "Link the player to a dataset row above; the player profile, notes, "
+                    "ratings, tags, videos and links remain fully available.", "info")
                 return
             dims = profile.get("dimensions", {})
             meta = " · ".join(f"**{k.title()}** {v}" for k, v in dims.items() if v not in (None, ""))
@@ -353,6 +409,69 @@ class ScoutingPage(Page):
                 "Event-level evidence (pass/shot/touch maps) is unavailable for this dataset - "
                 "player-scouting data has no match events. Activate an event dataset in the Data "
                 "Hub to add event analysis.", "info")
+
+    def _dataset_identity_panel(self, shell, svc, p) -> None:
+        """DATASET IDENTITY: the confirmed/auto/proposed/ambiguous mapping between
+        the canonical player and a row in the active scouting dataset. The dataset's
+        spelling never becomes the player's identity."""
+        status = svc.dataset_link_status(shell.user, p.id)
+        if not status["dataset_active"]:
+            return
+        can_edit = getattr(self, "_can_edit", False)
+        with st.container(border=True):
+            st.markdown(f"**Dataset identity** &nbsp; "
+                        f"<span style='color:var(--fap-text-muted)'>{_html.escape(status['dataset_name'])}</span>",
+                        unsafe_allow_html=True)
+            if status["linked"]:
+                st.markdown(
+                    f"{C.badge_html('Linked', 'success')} &nbsp; **{_html.escape(str(status['entity_key']))}** "
+                    f"&nbsp; <span style='color:var(--fap-text-muted)'>{_html.escape(status['method'])}"
+                    f"{' · auto' if status['auto'] else ''}</span>", unsafe_allow_html=True)
+                if can_edit and st.button("Change dataset match", key=f"dl_change_{p.id}"):
+                    st.session_state[f"dl_manual_{p.id}"] = True
+            elif status["proposed"]:
+                cand = status["proposed"]
+                st.markdown(f"{icon('search', 13)} **Possible dataset match found**", unsafe_allow_html=True)
+                st.markdown(f"{_html.escape(p.name)} → **{_html.escape(cand['key'])}** "
+                            f"<span style='color:var(--fap-text-muted)'>{_html.escape(cand['method'])} · "
+                            f"{cand['confidence']} confidence</span>", unsafe_allow_html=True)
+                if can_edit and st.button("Confirm match", type="primary", key=f"dl_confirm_{p.id}"):
+                    svc.link_dataset_identity(shell.user, p.id, cand["key"], method=cand["method"])
+                    st.rerun()
+            elif status["candidates"]:
+                st.markdown(f"{icon('alert-triangle', 13)} **Multiple possible matches** — choose one:",
+                            unsafe_allow_html=True)
+                for cand in status["candidates"]:
+                    dims = cand.get("dims", {})
+                    ctx = " · ".join(str(dims[k]) for k in ("team", "position") if dims.get(k))
+                    cc = st.columns([4, 1], vertical_alignment="center")
+                    cc[0].markdown(f"**{_html.escape(cand['key'])}** "
+                                   f"<span style='color:var(--fap-text-muted)'>{_html.escape(ctx)}</span>",
+                                   unsafe_allow_html=True)
+                    if can_edit and cc[1].button("Select", key=f"dl_sel_{p.id}_{cand['key']}"):
+                        svc.link_dataset_identity(shell.user, p.id, cand["key"], method="manual (ambiguous)")
+                        st.rerun()
+            else:
+                st.markdown(f"{C.badge_html('Not linked', 'neutral')} &nbsp; "
+                            "no matching record in this dataset.")
+                if can_edit and st.button("Find player in dataset", key=f"dl_find_{p.id}"):
+                    st.session_state[f"dl_manual_{p.id}"] = True
+            # manual search/selection dialog
+            if can_edit and st.session_state.get(f"dl_manual_{p.id}"):
+                ctx = svc.active_scouting_dataset(shell.user)
+                q = st.text_input("Search the dataset", key=f"dl_q_{p.id}").strip().lower()
+                names = ctx["players"] if ctx else []
+                hits = [n for n in names if q in n.lower()][:15] if q else names[:15]
+                pick = st.selectbox("Dataset player", hits, key=f"dl_pick_{p.id}") if hits else None
+                mcols = st.columns(2)
+                if pick and mcols[0].button("Link selected", type="primary", key=f"dl_link_{p.id}"):
+                    svc.link_dataset_identity(shell.user, p.id, pick, method="manual")
+                    st.session_state.pop(f"dl_manual_{p.id}", None); st.rerun()
+                if mcols[1].button("Cancel", key=f"dl_cancel_{p.id}"):
+                    st.session_state.pop(f"dl_manual_{p.id}", None); st.rerun()
+            if status["linked"] and can_edit:
+                if st.button("Unlink", key=f"dl_unlink_{p.id}"):
+                    svc.unlink_dataset_identity(shell.user, p.id); st.rerun()
 
     def _event_analysis(self, shell, svc, p) -> None:
         """Event capability: match/event analysis from the active event dataset."""
