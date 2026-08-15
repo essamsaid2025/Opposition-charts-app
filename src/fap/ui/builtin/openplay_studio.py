@@ -2152,6 +2152,20 @@ class OpenPlayStudioPage(Page):
         except Exception:
             w.dataset = None
 
+        # Compatibility gate: the Studio engine needs event data (add_derived_columns
+        # reads x/y -> x2). A player-scouting dataset has no coordinates, so refuse it
+        # here and point to Scouting instead of crashing on KeyError('x2').
+        from fap.ui.dataset_compat import non_event_active_dataset
+        blocked = non_event_active_dataset(shell)
+        if blocked is not None:
+            C.render_empty_state(
+                f"'{blocked.name}' is a player-scouting dataset",
+                "Player-scouting data (one row per player, no match events) can't be "
+                "analysed in Open Play. Open it in Scouting, or activate an event "
+                "dataset in the Data Hub.", icon_name="analysis",
+                action_label="Open Scouting", key="ops_non_event") and shell.goto("scouting")
+            return
+
         _restore_workspace(shell)
 
         # frame + theme + spec are needed by both the dashboard (stats/health/suggestions)

@@ -19,7 +19,7 @@ from fap.ui.page import Page, get_page, page_registry, visible_pages
 # Modules offered as "Start analysis" launchers — shown only when the page exists
 # and the user's role can see it (no invented modules).
 _ACTIONS = [
-    ("opponent_analysis", "Scouting", "Build an evidence-backed opposition profile.", "target"),
+    ("opponent_analysis", "Opponent Analysis", "Build an evidence-backed opposition profile.", "target"),
     ("open_play_studio", "Open Play Studio", "Explore open-play behaviour and tactical patterns.", "analysis"),
     ("set_piece_analysis", "Set Piece Analysis", "Analyse attacking and defensive set pieces.", "flag"),
     ("tactical_board", "Tactical Board", "Build and review tactical scenarios.", "teams"),
