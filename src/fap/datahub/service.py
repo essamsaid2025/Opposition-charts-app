@@ -11,12 +11,16 @@ existing ``document`` JSON. Pure (no Streamlit).
 from __future__ import annotations
 
 import datetime as _dt
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
 from fap.datahub import quality as dq
 from fap.datahub import validation as dv
+from fap.datahub.classification import (
+    DatasetClassification, PLAYER_SCOUTING, classify_frame,
+)
 from fap.datahub.dataset_profiles import ProfileStore
 from fap.datahub.models import (
     LINEAGE_STAGES, TARGET_MODULES, CompatibilityResult, DatasetHealth, HealthAxis,
@@ -24,9 +28,29 @@ from fap.datahub.models import (
 )
 from fap.datahub.preview import PreviewRequest, PreviewResult, build_preview
 from fap.datahub.repository import DataHubRepository
+from fap.datahub.scouting_schema import ScoutingAnalysis, analyze_player_scouting
 from fap.identity.models import User
 from fap.pipeline.importer import FilePreview, ImportResult, ImportService
 from fap.pipeline.validation import KNOWN_EVENTS
+
+# document key that flags a dataset's kind for every downstream consumer
+DATASET_TYPE_KEY = "dataset_type"
+ENTITY_TYPE_KEY = "entity_type"
+# grade -> a 0-100 quality number so scouting datasets render on the same library
+# card + quality badge as event datasets (no separate visual language).
+_GRADE_SCORE = {"Good": 85.0, "Fair": 65.0, "Poor": 40.0}
+
+
+@dataclass(slots=True)
+class AnalyzeResult:
+    """Discriminated result of ``analyze`` — the Data Hub's single entry point
+    that classifies a file *first*, then routes it to the right analyzer. ``kind``
+    tells the UI which report to render; exactly one payload is populated."""
+    kind: str                                   # "event" | "player_scouting"
+    classification: DatasetClassification
+    filename: str = ""
+    import_result: ImportResult | None = None   # kind == "event"
+    scouting: ScoutingAnalysis | None = None    # kind == "player_scouting"
 
 
 def _now() -> str:
@@ -78,6 +102,34 @@ class DataHubService:
                               mapping: dict[str, str]) -> None:
         self._imp.save_template(name, provider_id, raw_columns, mapping)
 
+    # ------------------------------------------------------- classification/routing
+    def classify(self, data: bytes, filename: str, *,
+                 provider_id: str | None = None) -> DatasetClassification:
+        """What does this file represent? Loads the raw provider frame (reusing the
+        ImportService's one provider-resolution path) and classifies its schema/
+        content — event, tracking, player-scouting, roster, set-piece or unknown —
+        without running the event pipeline. Row-count agnostic; never uses the
+        filename as evidence."""
+        preview = self._imp.inspect(data, filename, provider_id=provider_id)
+        return classify_frame(preview.frame)
+
+    def analyze(self, data: bytes, filename: str, *, provider_id: str | None = None,
+                use_cache: bool = True) -> AnalyzeResult:
+        """Classify first, then route to the correct analyzer. A player-scouting
+        table is read by the scouting analyzer (never the event pipeline, which is
+        why it no longer fails with 'No objects to concatenate'); anything else
+        continues through the existing event import unchanged."""
+        preview = self._imp.inspect(data, filename, provider_id=provider_id)
+        cls = classify_frame(preview.frame)
+        if cls.is_player_scouting:
+            analysis = analyze_player_scouting(preview.frame, cls)
+            return AnalyzeResult(kind=PLAYER_SCOUTING, classification=cls,
+                                 filename=filename, scouting=analysis)
+        result = self.run_import(data, filename, provider_id=provider_id,
+                                 use_cache=use_cache)
+        return AnalyzeResult(kind="event", classification=cls, filename=filename,
+                             import_result=result)
+
     # ------------------------------------------------------------ step 9: save dataset
     def save_dataset(self, user: User, result: ImportResult, *, name: str,
                      workspace_id: str | None = None, metadata: dict[str, Any] | None = None):
@@ -120,6 +172,67 @@ class DataHubService:
         self.repo.save_hub_doc(ds.id, hub)
         self._snapshot(ds.id, user, note="initial import")
         return self.repo.get(ds.id)
+
+    def save_scouting_dataset(self, user: User, analysis: ScoutingAnalysis, *, name: str,
+                              workspace_id: str | None = None,
+                              metadata: dict[str, Any] | None = None):
+        """Persist a player-scouting table as a first-class dataset through the SAME
+        WorkspaceManager register/store paths every dataset uses (no second store).
+        The semantic schema (dimensions/metrics/units/value-scale) and a
+        ``dataset_type`` flag are stored in the dataset's existing ``document`` JSON,
+        so the Scouting module can discover and read it without re-inferring."""
+        meta = dict(metadata or {})
+        summary = analysis.summary()
+        frame = analysis.frame if analysis.frame is not None else pd.DataFrame()
+        grade = analysis.quality.grade
+        document = {
+            DATASET_TYPE_KEY: analysis.dataset_type,
+            ENTITY_TYPE_KEY: analysis.schema.entity_type,
+            "scouting_schema": analysis.schema.to_dict(),
+            "scouting_summary": summary,
+            "classification": analysis.classification.to_dict(),
+            "quality": _GRADE_SCORE.get(grade, 60.0),
+            "quality_rating": grade,
+            "provider": "player_scouting",
+            "coord_system": "",
+            "pitch": meta.get("pitch", ""),
+            "units": meta.get("units", ""),
+            "tags": list(meta.get("tags", [])),
+            "visibility": meta.get("visibility", "workspace"),
+            "description": meta.get("description", ""),
+        }
+        ds = self.repo.register(
+            user, name=name, provider_id="player_scouting", coord_system="",
+            rows=int(len(frame)), content_hash="", workspace_id=workspace_id,
+            season=meta.get("season", ""),
+            competition=meta.get("competition") or analysis.competition,
+            opponent=meta.get("opponent", ""), match_date=meta.get("match_date", ""),
+            document=document)
+        self.repo.store_frame(ds.id, frame)
+        lineage = [LineageEvent(s, _now(), user.email,
+                                "scouting analyzer").to_dict() for s in LINEAGE_STAGES[:5]]
+        lineage.append(LineageEvent("saved", _now(), user.email, name).to_dict())
+        self.repo.save_hub_doc(ds.id, {"lineage": lineage, "versions": []})
+        self._snapshot(ds.id, user, note="initial import")
+        return self.repo.get(ds.id)
+
+    # ------------------------------------------------------------ scouting discovery
+    def list_scouting_datasets(self, *, workspace_id: str | None = None,
+                               include_archived: bool = False) -> list[Any]:
+        """Every registered player-scouting dataset — the query the Scouting module
+        uses to find datasets by kind, without knowing any filename."""
+        out = []
+        for ds in self.repo.list(workspace_id=workspace_id,
+                                 include_archived=include_archived):
+            doc = ds.document if isinstance(ds.document, dict) else {}
+            if doc.get(DATASET_TYPE_KEY) == PLAYER_SCOUTING:
+                out.append(ds)
+        return out
+
+    @staticmethod
+    def dataset_type(ds: Any) -> str:
+        doc = getattr(ds, "document", None)
+        return doc.get(DATASET_TYPE_KEY, "") if isinstance(doc, dict) else ""
 
     # ------------------------------------------------------------ step 8: preview
     def preview(self, dataset_id: str, request: PreviewRequest | None = None) -> PreviewResult:
@@ -212,7 +325,41 @@ class DataHubService:
     def health(self, dataset_id: str) -> DatasetHealth:
         frame = self.repo.frame(dataset_id)
         doc = (self.repo.get(dataset_id).document if self.repo.get(dataset_id) else {}) or {}
+        if doc.get(DATASET_TYPE_KEY) == PLAYER_SCOUTING:
+            return self._scouting_health(frame, doc)
         return self._health(frame, doc)
+
+    def _scouting_health(self, frame: pd.DataFrame | None,
+                         doc: dict[str, Any]) -> DatasetHealth:
+        """Player-scouting datasets are graded on identity/metric/dimension
+        coverage — not on event coordinates/event-types, which they legitimately
+        lack. Reads the persisted semantic schema so it never re-infers."""
+        schema = doc.get("scouting_schema", {}) if isinstance(doc, dict) else {}
+        summary = doc.get("scouting_summary", {}) if isinstance(doc, dict) else {}
+        metrics = schema.get("metrics", []) or []
+        dims = schema.get("dimensions", {}) or {}
+        rows = int(len(frame)) if frame is not None else int(summary.get("entity_count", 0))
+        missing = [m for m in metrics if float(m.get("missing_pct", 0)) > 0]
+        id_ok = bool(schema.get("id_field"))
+        axes = [
+            HealthAxis("identity", "Player Identity", "green" if id_ok else "red",
+                       1.0 if id_ok else 0.0,
+                       "player column present" if id_ok else "no player column"),
+            HealthAxis("metrics", "Scouting Metrics",
+                       "green" if len(metrics) >= 3 else "yellow" if metrics else "red",
+                       1.0 if metrics else 0.0, f"{len(metrics)} metric(s)"),
+            HealthAxis("dimensions", "Dimensions",
+                       "green" if len(dims) >= 2 else "yellow" if dims else "red",
+                       min(len(dims) / 6.0, 1.0), f"{len(dims)} identity/dimension field(s)"),
+            HealthAxis("completeness", "Completeness",
+                       "yellow" if missing else "green",
+                       1.0 - (len(missing) / len(metrics) if metrics else 0.0),
+                       f"{len(missing)} metric(s) with missing values" if missing
+                       else "no missing metric values"),
+            HealthAxis("players", "Players", "green" if rows else "red",
+                       1.0 if rows else 0.0, f"{rows} player row(s)"),
+        ]
+        return DatasetHealth(axes=axes)
 
     def _health(self, frame: pd.DataFrame | None, doc: dict[str, Any]) -> DatasetHealth:
         if frame is None or frame.empty:
@@ -263,6 +410,24 @@ class DataHubService:
 
     # ------------------------------------------------------------ compatibility
     def compatibility(self, dataset_id: str) -> list[CompatibilityResult]:
+        ds = self.repo.get(dataset_id)
+        doc = (ds.document if ds else {}) or {}
+        if doc.get(DATASET_TYPE_KEY) == PLAYER_SCOUTING:
+            schema = doc.get("scouting_schema", {}) if isinstance(doc, dict) else {}
+            has_players = bool(schema.get("id_field"))
+            has_metrics = bool(schema.get("metrics"))
+            ready = has_players and has_metrics
+            return [
+                CompatibilityResult("Scouting", ready,
+                                    "" if ready else "no player identity/metrics"),
+                CompatibilityResult("Players", has_players,
+                                    "" if has_players else "no player identity"),
+                CompatibilityResult("Reports", bool(has_players),
+                                    "" if has_players else "no rows to report on"),
+                CompatibilityResult("Open Play", False, "player-level data, not events"),
+                CompatibilityResult("Set Pieces", False, "player-level data, not events"),
+                CompatibilityResult("Tracking", False, "player-level data, not tracking"),
+            ]
         frame = self.repo.frame(dataset_id)
         health = self.health(dataset_id)
         return self._compatibility(frame, health)

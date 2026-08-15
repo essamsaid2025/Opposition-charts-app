@@ -81,8 +81,8 @@ class DataHubPage(Page):
                     provider_id = None if pick == "auto" else next(
                         (s.provider_id for s in sources if s.id == pick), None) or None
                     data = up.getvalue()
-                    with st.spinner("Detecting provider, validating, cleaning and scoring..."):
-                        result = hub.run_import(data, up.name, provider_id=provider_id)
+                    with st.spinner("Classifying, then validating, cleaning and scoring..."):
+                        result = hub.analyze(data, up.name, provider_id=provider_id)
                     st.session_state[RESULT] = result
                     st.session_state[RAW] = data
                     st.session_state[RAWNAME] = up.name
@@ -92,11 +92,16 @@ class DataHubPage(Page):
 
         result = st.session_state.get(RESULT)
         if result is None:
-            C.render_alert("Upload a file and click Analyze. The Data Hub detects the provider, "
-                           "validates and cleans the data, maps columns, normalizes coordinates "
-                           "and scores quality - then you save it as a reusable dataset.", "info")
+            C.render_alert("Upload a file and click Analyze. The Data Hub detects what the file "
+                           "represents, then validates, cleans, maps and scores it - a match/event "
+                           "file and a player-scouting table each get the right analyzer, and you "
+                           "save either as a reusable dataset.", "info")
             return
-        self._wizard_report(shell, hub, result)
+        # ``analyze`` returns a discriminated result: route to the matching report.
+        if getattr(result, "kind", "event") == "player_scouting":
+            self._scouting_report(shell, hub, result)
+        else:
+            self._wizard_report(shell, hub, result.import_result)
 
     def _wizard_report(self, shell, hub, result) -> None:
         summary = result.summary or {}
@@ -212,6 +217,97 @@ class DataHubPage(Page):
                         st.session_state.pop(key, None)
                     st.session_state[SEL] = ds.id
                     st.toast(f"Saved dataset '{ds.name}'")
+                    st.rerun()
+                except AuthError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(f"Could not save the dataset: {exc}")
+
+    # ============================================================ player-scouting report
+    def _scouting_report(self, shell, hub, result) -> None:
+        """The analysis view for a player-scouting table - the scouting analog of
+        the event wizard report. Same design system; no technical errors."""
+        analysis = result.scouting
+        s = analysis.summary()
+        cls = result.classification
+        C.render_alert(
+            f"{icon('check', 13)} Player scouting dataset detected "
+            f"({cls.confidence:.0%} confidence).", "success")
+
+        C.render_section_title("Dataset intelligence", eyebrow="Player Scouting",
+                               icon_name="users")
+        cards = [
+            C.metric_card_html("Dataset type", "Player Scouting", accent="primary"),
+            C.metric_card_html("Entity", "Player"),
+            C.metric_card_html("Players", f"{s['entity_count']:,}"),
+            C.metric_card_html("Teams", f"{s['teams']:,}"),
+            C.metric_card_html("Metrics", f"{s['metric_count']:,}"),
+            C.metric_card_html("Dimensions", f"{s['dimension_count']:,}"),
+        ]
+        C.render_metric_row(cards)
+        if s.get("competition"):
+            st.caption(f"Competition: {_html.escape(str(s['competition']))}")
+        if analysis.positions:
+            st.caption("Positions: " + _html.escape(", ".join(analysis.positions[:20])))
+        if s.get("value_scale") == "normalized":
+            C.render_alert("Metric values look percentile/rank-normalized (0-1), not raw "
+                           "measurements - preserved as-is, never converted.", "info")
+
+        # data quality (honest partial availability)
+        C.render_section_title("Data quality", eyebrow="Checks", icon_name="shield")
+        st.markdown(f'Grade: {C.badge_html(analysis.quality.grade, _RATING_KIND.get(analysis.quality.grade, "neutral"))}',
+                    unsafe_allow_html=True)
+        for chk in analysis.quality.checks:
+            kind = {"pass": "success", "warn": "warning", "fail": "danger"}.get(chk.status, "info")
+            st.markdown(C.badge_html(chk.label, kind) + " " + _html.escape(chk.detail),
+                        unsafe_allow_html=True)
+
+        # identity/dimension + metric schema
+        C.render_section_title("Schema", eyebrow="Columns", icon_name="layers")
+        dcol, mcol = st.columns(2)
+        with dcol:
+            st.caption("Identity / dimensions")
+            dim_rows = [{"field": k, "column": v} for k, v in analysis.schema.dimensions.items()]
+            if dim_rows:
+                st.dataframe(dim_rows, use_container_width=True, hide_index=True)
+        with mcol:
+            st.caption(f"{analysis.metric_count} metrics")
+            met_rows = [{"metric": m.source.replace("\n", " "), "unit": m.unit,
+                         "missing": f"{m.missing_pct:.0%}"}
+                        for m in analysis.schema.metrics[:40]]
+            if met_rows:
+                st.dataframe(met_rows, use_container_width=True, hide_index=True)
+
+        # preview
+        C.render_section_title("Preview", eyebrow="Rows", icon_name="grid")
+        if analysis.frame is not None:
+            st.dataframe(analysis.frame.head(15), use_container_width=True, hide_index=True)
+
+        # save
+        C.render_section_title("Save dataset", eyebrow="Register", icon_name="download")
+        self._scouting_save_form(shell, hub, analysis, s)
+
+    def _scouting_save_form(self, shell, hub, analysis, summary) -> None:
+        with st.form("_dh_save_scouting"):
+            a, b = st.columns(2)
+            name = a.text_input("Dataset name", value=st.session_state.get(RAWNAME, "scouting dataset"))
+            competition = b.text_input("Competition", value=summary.get("competition", ""))
+            season = st.text_input("Season")
+            tags = st.text_input("Tags (comma separated)")
+            visibility = st.selectbox("Visibility", ["workspace", "private", "club"])
+            description = st.text_area("Description", height=68)
+            if st.form_submit_button("Save dataset", type="primary"):
+                try:
+                    ds = hub.save_scouting_dataset(
+                        shell.user, analysis, name=name or "scouting dataset",
+                        workspace_id=shell.workspace_id,
+                        metadata={"competition": competition, "season": season,
+                                  "tags": [t.strip() for t in tags.split(",") if t.strip()],
+                                  "visibility": visibility, "description": description})
+                    for key in (RESULT, RAW, RAWNAME):
+                        st.session_state.pop(key, None)
+                    st.session_state[SEL] = ds.id
+                    st.toast(f"Saved scouting dataset '{ds.name}' - available in Scouting")
                     st.rerun()
                 except AuthError as exc:
                     st.error(str(exc))

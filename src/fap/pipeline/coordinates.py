@@ -124,10 +124,17 @@ class Tracab(CoordinateSystem):
 # ------------------------------------------------------------------ detection
 def detect_coordinate_system(df: pd.DataFrame) -> tuple[str, float]:
     """Heuristic detection from value ranges. Returns (system_id, confidence)."""
-    xs = pd.concat([pd.to_numeric(df.get(c), errors="coerce")
-                    for c in ("x", "end_x", "x2") if c in df.columns]).dropna()
-    ys = pd.concat([pd.to_numeric(df.get(c), errors="coerce")
-                    for c in ("y", "end_y", "y2") if c in df.columns]).dropna()
+    x_cols = [pd.to_numeric(df.get(c), errors="coerce")
+              for c in ("x", "end_x", "x2") if c in df.columns]
+    y_cols = [pd.to_numeric(df.get(c), errors="coerce")
+              for c in ("y", "end_y", "y2") if c in df.columns]
+    # A coordinate-less frame (e.g. a player-scouting table) has no x/y columns to
+    # concatenate; report "no coordinate signal" instead of raising on an empty
+    # concat. Frames with coordinates are unaffected.
+    if not x_cols or not y_cols:
+        return "0-100", 0.0
+    xs = pd.concat(x_cols).dropna()
+    ys = pd.concat(y_cols).dropna()
     if xs.empty or ys.empty:
         return "0-100", 0.0
     xmin, xmax, ymin, ymax = xs.min(), xs.max(), ys.min(), ys.max()

@@ -70,6 +70,65 @@ class ScoutingService:
         except Exception:
             return False
 
+    # ============================================================ scouting datasets (P0.5)
+    # A player-scouting table (percentile/metric rows, one per player) imported via
+    # the Data Hub is registered as a normal dataset flagged dataset_type=
+    # 'player_scouting'. Scouting discovers those here through the SAME
+    # WorkspaceManager the rest of the platform uses - no second store, no filename
+    # knowledge. The persistent player DB is untouched and stays authoritative.
+    def available_scouting_datasets(self, user: User, *,
+                                    workspace_id: str | None = None) -> list[dict[str, Any]]:
+        """Every registered player-scouting dataset, newest-agnostic. Returns light
+        descriptors (id/name/schema summary) so the UI can offer a picker without
+        loading any frames."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return []
+        from fap.datahub.classification import PLAYER_SCOUTING
+        out: list[dict[str, Any]] = []
+        try:
+            datasets = self._wm.list_datasets(workspace_id=workspace_id)
+        except Exception:
+            return []
+        for ds in datasets:
+            doc = ds.document if isinstance(ds.document, dict) else {}
+            if doc.get("dataset_type") != PLAYER_SCOUTING:
+                continue
+            summary = doc.get("scouting_summary", {}) or {}
+            out.append({
+                "id": ds.id, "name": ds.name,
+                "competition": ds.competition or summary.get("competition", ""),
+                "players": summary.get("entity_count", ds.rows),
+                "teams": summary.get("teams", 0),
+                "metrics": summary.get("metric_count", 0),
+                "grade": summary.get("grade", doc.get("quality_rating", "")),
+            })
+        return out
+
+    def scouting_dataset_schema(self, user: User, dataset_id: str) -> dict[str, Any] | None:
+        """The persisted semantic schema (id field, dimensions, metrics, units,
+        value-scale) of a scouting dataset - what the Scouting analytics need to
+        read the table without re-inferring column meaning."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return None
+        ds = self._wm.get_dataset(dataset_id)
+        if ds is None:
+            return None
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        from fap.datahub.classification import PLAYER_SCOUTING
+        if doc.get("dataset_type") != PLAYER_SCOUTING:
+            return None
+        return doc.get("scouting_schema")
+
+    def scouting_dataset_frame(self, user: User, dataset_id: str):
+        """The raw player-scouting table (one row per player), read from the shared
+        dataset storage. ``None`` if the dataset is missing or not a scouting table."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None or self.scouting_dataset_schema(user, dataset_id) is None:
+            return None
+        return self._wm.dataset_frame(dataset_id)
+
     def player_event_frame(self, user: User, player_id: str):
         """The active dataset's events for this scouting player (canonical match/
         event source), joined in memory to the persistent record by name. ``None``
