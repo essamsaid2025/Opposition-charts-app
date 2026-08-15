@@ -23,7 +23,21 @@ from fap.utils.text import slugify
 
 
 def _themes(shell):
-    tm = getattr(shell.platform, "themes", None) if shell.platform else None
+    """Resolve the figure ThemeManager the same way the event viz workspace does:
+    the service registry is the source of truth (``shell.platform`` in the running
+    app exposes ``.services`` but not always a ``.themes`` attribute); fall back to
+    the attribute for direct-construction contexts (tests)."""
+    plat = getattr(shell, "platform", None)
+    tm = None
+    if plat is not None:
+        services = getattr(plat, "services", None)
+        if services is not None:
+            try:
+                tm = services.get("themes")
+            except Exception:
+                tm = None
+        if tm is None:
+            tm = getattr(plat, "themes", None)
     if tm is None:
         return None, []
     try:
