@@ -609,6 +609,9 @@ class ScoutingPage(Page):
         # ---- dataset status + metrics ----
         self._active_analysis(shell, svc, p)
 
+        # ---- match-level evidence (persistent, active-dataset-independent) ----
+        self._evidence_section(shell, svc, p)
+
         # ---- media / links summary ----
         self._links_panel(shell, svc, p)
 
@@ -626,6 +629,56 @@ class ScoutingPage(Page):
             dup = svc.duplicate_player(shell.user, p.id); st.session_state[SEL] = dup.id; st.rerun()
         if col[2].button("Delete", key="p_del"):
             svc.delete_player(shell.user, p.id); st.session_state.pop(SEL, None); st.rerun()
+
+    def _evidence_section(self, shell, svc, p) -> None:
+        """Match-level evidence: which matches this player has evidence for, across
+        ALL linked datasets (persistent, independent of the active dataset). Clicking
+        a match opens it in the existing event pathway with player scope preserved."""
+        matches = svc.player_matches(shell.user, p.id)
+        with st.expander(f"Evidence — matches ({len(matches)})", expanded=bool(matches)):
+            if not matches:
+                st.caption("No match-level evidence available. Link an event dataset to this "
+                           "player below to build a permanent, per-match evidence trail.")
+            for m in matches:
+                cols = st.columns([5, 1], vertical_alignment="center")
+                title = m["opponent"] or m["match_id"]
+                meta = " · ".join(x for x in (m.get("match_date"), m.get("competition"),
+                                              f"{len(m['datasets'])} dataset(s)") if x)
+                badge = C.badge_html(f"{m['event_count']} tagged actions", "info")
+                cols[0].markdown(
+                    f"**{_html.escape(str(m['match_id']))}**  {_html.escape(str(title))} "
+                    f"&nbsp; {badge}<br>"
+                    f"<span style='color:var(--fap-text-muted)'>{_html.escape(meta)}</span>",
+                    unsafe_allow_html=True)
+                if cols[1].button("Open", key=f"ev_open_{p.id}_{m['match_id']}"):
+                    ds0 = m["datasets"][0]["dataset_id"] if m["datasets"] else None
+                    if ds0:
+                        shell.wm.set_active_dataset(shell.user, ds0)   # query context only
+                        st.session_state["_scout_evidence_scope"] = {
+                            "player_id": p.id, "match_id": m["match_id"], "dataset_id": ds0}
+                        st.rerun()
+
+            # link the currently active event dataset to a match (no fabrication)
+            if self._can_edit:
+                try:
+                    active = shell.wm.active_dataset(shell.user)
+                except Exception:
+                    active = None
+                kind = svc.active_dataset_kind(shell.user)
+                if active is None:
+                    st.caption("No active dataset. Activate an event dataset in the Data Hub to link it.")
+                elif kind == "player_scouting":
+                    st.caption(f"Active dataset '{active.name}' is player-scouting data "
+                               "(metrics, no match events) — not linkable as match evidence.")
+                else:
+                    st.divider()
+                    lc = st.columns([3, 1])
+                    mid = lc[0].text_input("Link active dataset to match id (optional)",
+                                           key=f"ev_mid_{p.id}",
+                                           placeholder="leave blank to use the dataset's own match_id column")
+                    if lc[1].button("Link dataset", key=f"ev_link_{p.id}"):
+                        svc.link_match_evidence(shell.user, p.id, active.id, match_id=mid.strip())
+                        st.rerun()
 
     def _links_panel(self, shell, svc, p) -> None:
         links = svc.list_links(p.id)

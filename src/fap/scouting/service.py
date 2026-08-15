@@ -480,6 +480,181 @@ class ScoutingService:
             if len(ranked) > n else []
         return strengths, dev
 
+    # ============================================================ match & evidence (P4.4)
+    # Evidence is anchored to the persistent player_id and a persistent
+    # (dataset_id, match_id) scope - NEVER to the active dataset. Each linked
+    # dataset's frame is read by dataset_id (survives whatever is active), so
+    # importing/switching a dataset can never hide another dataset's evidence. Links
+    # live additively in document['evidence_links'] (no new table, mirrors the
+    # first-team player_match_links pattern). Player-scouting datasets never yield
+    # event evidence (capability boundary); nothing here fabricates ids.
+    def _evidence_links(self, player):
+        from fap.scouting.evidence import EvidenceLink
+        doc = getattr(player, "document", None) or {}
+        return [EvidenceLink.from_dict(d) for d in (doc.get("evidence_links") or [])]
+
+    def _dataset_frame_for(self, dataset_id: str):
+        return self._wm.dataset_frame(dataset_id) if (self._wm and dataset_id) else None
+
+    def _dataset_meta(self, dataset_id: str) -> dict[str, Any]:
+        ds = self._wm.get_dataset(dataset_id) if self._wm else None
+        if ds is None:
+            return {}
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        dtype = "player_scouting" if doc.get("dataset_type") == PLAYER_SCOUTING else "event"
+        return {"name": ds.name, "dataset_type": dtype, "competition": ds.competition,
+                "season": ds.season, "opponent": ds.opponent, "match_date": ds.match_date}
+
+    def link_match_evidence(self, user: User, player_id: str, dataset_id: str, *,
+                            match_id: str = "", team: str = "", role: str = "",
+                            minutes: int | None = None, note: str = "",
+                            competition: str = "", season: str = "", opponent: str = "",
+                            match_date: str = "", result: str = "") -> dict[str, Any]:
+        """Persistently link a player to a dataset that holds their evidence
+        (optionally pinned to one match_id). Descriptor defaults come from the
+        dataset row. Idempotent per (dataset_id, match_id). Does NOT touch the active
+        dataset or any other link."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import evidence, identity
+        p = self._player_or_raise(player_id)
+        meta = self._dataset_meta(dataset_id)
+        if not meta:
+            raise ValueError(f"dataset {dataset_id!r} not found")
+        keys = identity.identity_keys(p)
+        frame = self._dataset_frame_for(dataset_id)
+        event_count = 0
+        if meta["dataset_type"] == "event" and frame is not None:
+            rows = evidence.event_rows(frame, keys, team=team, match_id=match_id)
+            event_count = 0 if rows is None else int(len(rows))
+        link = evidence.EvidenceLink(
+            id=self._uid(), player_id=player_id, dataset_id=dataset_id,
+            dataset_type=meta["dataset_type"], dataset_name=meta["name"], match_id=match_id,
+            team=team, role=role, minutes=minutes, note=note,
+            competition=competition or meta["competition"], season=season or meta["season"],
+            opponent=opponent or meta["opponent"], match_date=match_date or meta["match_date"],
+            result=result, event_count=event_count, tags=[], created_by=user.email,
+            created_at=_dt_now())
+        links = [l for l in self._evidence_links(p)
+                 if not (l.dataset_id == dataset_id and l.match_id == match_id)]
+        links.append(link)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc["evidence_links"] = [l.to_dict() for l in links]
+        self._save_doc(user, player_id, doc, "scouting.player.evidence_link")
+        self.audit.record(user, "scouting.evidence.link", target_type="player",
+                          target_id=player_id,
+                          detail={"dataset_id": dataset_id, "match_id": match_id or "*"})
+        return link.to_dict()
+
+    def unlink_match_evidence(self, user: User, player_id: str, link_id: str) -> None:
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        links = [l for l in self._evidence_links(p) if l.id != link_id]
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc["evidence_links"] = [l.to_dict() for l in links]
+        self._save_doc(user, player_id, doc, "scouting.player.evidence_unlink")
+
+    def player_matches(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """The matches this player has evidence for, aggregated across ALL linked
+        datasets (read by dataset_id, active-independent). Player-scouting links
+        contribute no event evidence. Enumerates real match_ids from each frame."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import evidence, identity
+        p = self.get_player(player_id)
+        if p is None:
+            return []
+        keys = identity.identity_keys(p)
+        by_match: dict[str, dict[str, Any]] = {}
+        for link in self._evidence_links(p):
+            if link.dataset_type != "event":
+                continue
+            frame = self._dataset_frame_for(link.dataset_id)
+            desc = {"competition": link.competition, "opponent": link.opponent,
+                    "match_date": link.match_date}
+            for m in evidence.matches_in(frame, keys, team=link.team,
+                                         pinned_match_id=link.match_id, descriptor=desc):
+                g = by_match.setdefault(m["match_id"], {
+                    "match_id": m["match_id"], "opponent": "", "match_date": "",
+                    "competition": "", "event_count": 0, "datasets": []})
+                g["datasets"].append({"dataset_id": link.dataset_id,
+                                      "dataset_name": link.dataset_name,
+                                      "event_count": m["event_count"]})
+                g["event_count"] += int(m["event_count"])
+                for k in ("opponent", "match_date", "competition"):
+                    if not g[k] and m.get(k):
+                        g[k] = m[k]
+        return list(by_match.values())
+
+    def player_evidence(self, user: User, player_id: str, *, match_id: str | None = None,
+                        dataset_id: str | None = None, include_frame: bool = False
+                        ) -> dict[str, Any]:
+        """Scoped evidence for a player, read from the linked datasets by dataset_id
+        (NEVER the active dataset). An exact scope is honoured exactly - it never
+        falls back to a wider dataset/match. Returns per-(dataset,match) entries."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        from fap.scouting import evidence, identity
+        p = self.get_player(player_id)
+        if p is None:
+            return {"player_id": player_id, "scope": {}, "matches": [], "total_events": 0}
+        keys = identity.identity_keys(p)
+        links = self._evidence_links(p)
+        if dataset_id is not None:
+            links = [l for l in links if l.dataset_id == dataset_id]      # exact, no fallback
+        entries: list[dict[str, Any]] = []
+        total = 0
+        for link in links:
+            if link.dataset_type != "event":
+                if match_id is None and dataset_id is not None:
+                    entries.append({"dataset_id": link.dataset_id, "match_id": None,
+                                    "event_count": 0, "dataset_type": link.dataset_type,
+                                    "note": "player-scouting dataset - no event evidence"})
+                continue
+            frame = self._dataset_frame_for(link.dataset_id)
+            eff_match = ""
+            if match_id is not None:
+                if link.match_id:                       # dataset pinned to a single match
+                    if link.match_id != match_id:
+                        continue                        # exact scope: skip other matches
+                    rows = evidence.event_rows(frame, keys, team=link.team)
+                    eff_match = link.match_id
+                else:                                   # multi-match dataset: filter its column
+                    rows = evidence.event_rows(frame, keys, team=link.team, match_id=match_id)
+                    eff_match = match_id
+            else:
+                rows = evidence.event_rows(frame, keys, team=link.team, match_id=link.match_id)
+                eff_match = link.match_id or None
+            n = 0 if rows is None else int(len(rows))
+            if match_id is not None and n == 0:
+                continue                                # exact scope requested, nothing here
+            entry = {"dataset_id": link.dataset_id, "dataset_name": link.dataset_name,
+                     "match_id": eff_match, "team": link.team, "event_count": n,
+                     "dataset_type": "event"}
+            if include_frame:
+                entry["frame"] = rows
+            entries.append(entry)
+            total += n
+        return {"player_id": player_id, "scope": {"match_id": match_id, "dataset_id": dataset_id},
+                "matches": entries, "total_events": total}
+
+    def add_evidence_tag(self, user: User, player_id: str, link_id: str, event_id: str,
+                         tag: str, note: str = "") -> dict[str, Any]:
+        """Attach a manual observation tag to a specific event within a linked
+        dataset. Keyed by (player_id, dataset_id, match_id, event_id) via the link -
+        additive metadata, not a second tagging engine."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        links = self._evidence_links(p)
+        target = next((l for l in links if l.id == link_id), None)
+        if target is None:
+            raise ValueError("evidence link not found")
+        rec = {"id": self._uid(), "event_id": str(event_id), "tag": str(tag).strip(),
+               "note": note, "created_by": user.email, "created_at": _dt_now()}
+        target.tags.append(rec)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc["evidence_links"] = [l.to_dict() for l in links]
+        self._save_doc(user, player_id, doc, "scouting.player.evidence_tag")
+        return rec
+
     def status_history(self, player_id: str):
         from fap.scouting import identity
         p = self.get_player(player_id)
