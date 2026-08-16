@@ -51,13 +51,11 @@ def _export_engine():
     return ExportEngine()
 
 
-def _render_and_show(fig, title: str, ex, *, key: str,
-                     save: dict | None = None, viz_id: str = "",
-                     config: dict | None = None) -> None:
-    """Export a figure to PNG (display + download) and PDF (download), then CLOSE
-    it. Figures never enter session state - only bytes do. 'Save to player' persists
-    the PNG as an immutable player asset scoped to THIS player + THIS dataset (via
-    ``save`` context), and also embeds it into the player's report (on_assign)."""
+def _stash_render(fig, title: str, ex, *, stash_key: str, viz_id: str = "",
+                  config: dict | None = None) -> None:
+    """Export a freshly-rendered figure to PNG (+PDF), CLOSE it, and stash the BYTES
+    in session_state. Called only on a Render click. The figure never enters session
+    state - only bytes do (no DataFrame/Figure persisted anywhere)."""
     import matplotlib.pyplot as plt
     try:
         png = ex.export(fig, title, fmt="png").data
@@ -67,6 +65,21 @@ def _render_and_show(fig, title: str, ex, *, key: str,
             pdf = None
     finally:
         plt.close(fig)
+    st.session_state[stash_key] = {"png": png, "pdf": pdf, "title": title,
+                                   "viz_id": viz_id, "config": dict(config or {})}
+
+
+def _show_stash(stash_key: str, *, key: str, save: dict | None = None) -> None:
+    """Render the last-rendered chart's image + download + 'Save to player' buttons
+    EVERY run from the session stash. This is the fix for the nested-button bug: the
+    Save button must exist on the run where it is clicked, so it cannot live inside
+    the one-shot ``if st.button('Render'):`` block. 'Save to player' persists an
+    immutable player asset scoped to THIS player + THIS dataset via ``save``."""
+    data = st.session_state.get(stash_key)
+    if not data:
+        return
+    png, pdf = data["png"], data.get("pdf")
+    title, viz_id, config = data["title"], data.get("viz_id", ""), data.get("config", {})
     st.image(png, use_container_width=True)
     slug = slugify(title) or "chart"
     cols = st.columns(3)
@@ -81,13 +94,17 @@ def _render_and_show(fig, title: str, ex, *, key: str,
         cfg = dict(config or {})
         cfg["theme"] = save.get("theme_id", "")
         cfg["viz"] = viz_id
-        save["svc"].save_player_visualization(
-            save["user"], save["player"].id, png, dataset_id=save["dataset_id"],
-            title=title, viz_id=viz_id, scope={"player": [save["primary"]]},
-            config=cfg, source_name=save["source_name"])
-        if save.get("on_assign") is not None:                # keep report-embed
-            save["on_assign"](png, title, viz_id)
-        st.toast("Saved to the player's dossier (Visual evidence)")
+        try:
+            save["svc"].save_player_visualization(
+                save["user"], save["player"].id, png, dataset_id=save["dataset_id"],
+                title=title, viz_id=viz_id, scope={"player": [save["primary"]]},
+                config=cfg, source_name=save["source_name"])
+            if save.get("on_assign") is not None:            # keep report-embed
+                save["on_assign"](png, title, viz_id)
+            st.toast(f"Saved to {getattr(save['player'], 'name', 'player')} · Visual evidence updated")
+            st.rerun()                                        # refresh the dossier immediately
+        except Exception as exc:                              # surface the real reason
+            C.render_alert(f"Could not save to the player: {exc}", "warning")
 
 
 def render_scouting_viz_workspace(shell, svc, player, ctx, *, key: str,
@@ -227,6 +244,7 @@ def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
                           format_func=lambda s: view.metric(s).name, key=f"{key}_single_{ct}")
         opts["metric"] = mk
 
+    stash_key = f"{key}_vizstash_{ct}"
     if st.button("Render", type="primary", key=f"{key}_render_{ct}"):
         try:
             fig = charts.render(ct, view, theme, opts)
@@ -235,8 +253,11 @@ def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
             return
         title = f"{view.primary} - {viz.CHART_LABELS[ct]}"
         cfg = {k2: opts[k2] for k2 in ("metrics", "metric", "x", "y") if k2 in opts}
-        _render_and_show(fig, title, ex, key=f"{key}_{ct}", save=save,
-                         viz_id=f"scouting_{ct}", config=cfg)
+        _stash_render(fig, title, ex, stash_key=stash_key,
+                      viz_id=f"scouting_{ct}", config=cfg)
+    # rendered image + download + 'Save to player' are drawn UNCONDITIONALLY from the
+    # stash, so the Save button exists on the run where it is clicked (bugfix).
+    _show_stash(stash_key, key=f"{key}_{ct}", save=save)
 
 
 # ------------------------------------------------------------ pizza builder
@@ -293,15 +314,18 @@ def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
         C.render_alert(f"Pizza unavailable: {data['reason']}", "info")
         return
     st.caption(f"{data['note']}  ·  {len(selected)} metrics")
+    stash_key = f"{key}_pzstash"
     if st.button("Render pizza", type="primary", key=f"{key}_pz_render"):
         try:
             fig = charts.pizza_chart(view, selected, theme)
         except Exception as exc:
             C.render_alert(f"Could not render the pizza: {exc}", "warning")
             return
-        _render_and_show(fig, f"{view.primary} - Pizza", ex, key=f"{key}_pz",
-                         save=save, viz_id="scouting_pizza",
-                         config={"metrics": selected, "mode": data.get("mode", "")})
+        _stash_render(fig, f"{view.primary} - Pizza", ex, stash_key=stash_key,
+                      viz_id="scouting_pizza",
+                      config={"metrics": selected, "mode": data.get("mode", "")})
+    # unconditional show so the Save button survives the click-triggered rerun (bugfix)
+    _show_stash(stash_key, key=f"{key}_pz", save=save)
 
 
 # ------------------------------------------------------------ population context
