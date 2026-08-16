@@ -1008,6 +1008,69 @@ class ScoutingService:
             }
         return list(seen.values())
 
+    def scouting_viz_context(self, user: User, player_id: str,
+                             dataset_id: str) -> dict[str, Any] | None:
+        """A player-scoped visualization context for a SPECIFIC linked player-scouting
+        dataset (by id, NEVER the active dataset). Resolves the player's exact row via
+        the P4.2.1/P4.6 dataset-link matcher (confirmed link wins over name matching),
+        so the viz workspace receives ONLY that player as ``primary`` plus the dataset
+        population (for optional comparison). ``None`` if the dataset is missing/not
+        player-scouting or the player cannot be resolved to a row."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        if self._wm is None:
+            return None
+        ds = self._wm.get_dataset(dataset_id)
+        if ds is None:
+            return None
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        if doc.get("dataset_type") != PLAYER_SCOUTING:
+            return None
+        schema = doc.get("scouting_schema") or {}
+        id_field = schema.get("id_field")
+        frame = self._wm.dataset_frame(dataset_id)
+        if not id_field or frame is None or getattr(frame, "empty", True) \
+                or id_field not in getattr(frame, "columns", []):
+            return None
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        key, _ = self._resolve_dataset_key(p, {"id": ds.id, "name": ds.name,
+                                               "schema": schema, "frame": frame})
+        if key is None:
+            return None
+        players = [str(x) for x in frame[id_field].astype(str).str.strip().tolist() if str(x).strip()]
+        return {"id": ds.id, "name": ds.name, "schema": schema, "frame": frame,
+                "players": players, "primary": key,
+                "value_scale": schema.get("value_scale", "raw"),
+                "metric_count": len(schema.get("metrics", []) or []),
+                "linked": dataset_id in self._dataset_links(p)}
+
+    def linked_scouting_datasets(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """Player-scouting datasets available for THIS player's visual analysis:
+        every confirmed link (active-independent) plus, if the active dataset is a
+        player-scouting dataset the player resolves in but hasn't been linked yet, it
+        is offered too (so a freshly-activated dataset is usable and linkable)."""
+        self._require(user, Capability.VIEW_SCOUTING)
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for d in self.player_data_sources(user, player_id):
+            if d["kind"] == "player_scouting":
+                out.append({"dataset_id": d["dataset_id"], "name": d["name"],
+                            "status": d["status"], "metric_count": d.get("metric_count", 0),
+                            "linked": True})
+                seen.add(d["dataset_id"])
+        try:
+            ad = self._wm.active_dataset(user) if self._wm else None
+        except Exception:
+            ad = None
+        if ad is not None and ad.id not in seen:
+            c = self.scouting_viz_context(user, player_id, ad.id)
+            if c is not None:
+                out.append({"dataset_id": ad.id, "name": c["name"], "status": "active_unlinked",
+                            "metric_count": c["metric_count"], "linked": False})
+        return out
+
     def active_scouting_profile(self, user: User, player_id: str) -> dict[str, Any] | None:
         """The player's metric profile from the ACTIVE player-scouting dataset (the
         working-context convenience). ``None`` when the active dataset is not

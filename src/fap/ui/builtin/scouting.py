@@ -379,31 +379,58 @@ class ScoutingPage(Page):
             self._reports(shell, svc, p)
 
     def _tab_visualization(self, shell, svc, p) -> None:
-        """Visualization workspace, routed by dataset CAPABILITY:
-        - a player-scouting dataset -> the Player Scouting Visualization workspace
-          (metric charts + pizza, no event data required);
-        - an event dataset -> the existing event visualization engine.
-        When the scout can edit, each rendered chart can be assigned (frozen) to
-        the player's report."""
-        def _assign(png, title, viz_id):
-            # P4.6: persist as a player VISUAL ASSET (immutable PNG + dataset_id +
-            # player-only scope, survives active-dataset changes and reload) AND keep
-            # embedding it into the player's report (existing behaviour).
-            svc.save_player_visualization(shell.user, p.id, png, title=title, viz_id=viz_id)
+        """Player-scoped Visual Analysis. The scouting chart workspace runs over the
+        player's LINKED player-scouting dataset (resolved by dataset_id, NEVER the
+        active dataset), so Pizza/mplsoccer-Pizza/Radar/Bar/Scatter etc. stay
+        available for this player even when a different dataset is active. An event
+        dataset (if the player has one) still gets the event visualization engine."""
+        # keep report-embed on save (persistent asset is saved inside the workspace)
+        def _embed(png, title, viz_id):
             svc.assign_chart(shell.user, p.id, png, title=title, viz_id=viz_id)
+        on_assign = _embed if self._can_edit else None
 
-        on_assign = _assign if self._can_edit else None
-        if svc.active_dataset_kind(shell.user) == "player_scouting":
+        linked = svc.linked_scouting_datasets(shell.user, p.id)
+        if linked:
+            ids = [d["dataset_id"] for d in linked]
+            names = {d["dataset_id"]: d for d in linked}
+            if len(ids) > 1:
+                chosen = st.selectbox(
+                    "Dataset", ids, key=f"scviz_ds_{p.id}",
+                    format_func=lambda i: f"{names[i]['name']} · {names[i]['metric_count']} metrics"
+                    + ("" if names[i]["linked"] else " · (active, not linked)"))
+            else:
+                chosen = ids[0]
+                d0 = names[chosen]
+                st.caption(f"Dataset: **{d0['name']}** · {d0['metric_count']} metrics"
+                           + ("" if d0["linked"] else " · active (not linked yet)"))
+            if not names[chosen]["linked"] and self._can_edit:
+                if st.button("Link this dataset to the player", key=f"scviz_link_{p.id}"):
+                    ctx0 = svc.scouting_viz_context(shell.user, p.id, chosen)
+                    if ctx0:
+                        svc.link_dataset_identity(shell.user, p.id, ctx0["primary"], method="manual")
+                        st.rerun()
+            ctx = svc.scouting_viz_context(shell.user, p.id, chosen)
+            if ctx is None:
+                C.render_alert("The linked dataset is unavailable or the player row could not be "
+                               "resolved. Saved visual evidence remains available below.", "warning")
+                return
             from fap.ui.components.scouting_viz_workspace import render_scouting_viz_workspace
-            render_scouting_viz_workspace(shell, svc, p, key=f"sc_pviz_{p.id}",
+            render_scouting_viz_workspace(shell, svc, p, ctx, key=f"sc_pviz_{p.id}",
                                           on_assign=on_assign)
             return
-        from fap.ui.components.viz_workspace import render_visualization_workspace
-        frame = svc.player_event_frame(shell.user, p.id)
-        render_visualization_workspace(shell, frame=frame, player_name=p.name,
-                                       key=f"sc_viz_{p.id}", on_assign=on_assign)
-        if self._can_edit:
-            self._assigned_charts_panel(shell, svc, p)
+
+        # no player-scouting dataset linked/active: event path if the player has events
+        if svc.active_dataset_kind(shell.user) == "event":
+            from fap.ui.components.viz_workspace import render_visualization_workspace
+            frame = svc.player_event_frame(shell.user, p.id)
+            render_visualization_workspace(shell, frame=frame, player_name=p.name,
+                                           key=f"sc_viz_{p.id}", on_assign=on_assign)
+            if self._can_edit:
+                self._assigned_charts_panel(shell, svc, p)
+            return
+        C.render_alert("No player-scouting or event dataset is linked to this player yet. Activate a "
+                       "dataset in the Data Hub and link it here — the visualizations then stay "
+                       "available regardless of the active dataset.", "info")
 
     def _data_sources_section(self, shell, svc, p, dash) -> None:
         """Every dataset PERSISTENTLY linked to this player, read by dataset_id and

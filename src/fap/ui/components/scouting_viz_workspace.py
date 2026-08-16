@@ -52,9 +52,12 @@ def _export_engine():
 
 
 def _render_and_show(fig, title: str, ex, *, key: str,
-                     on_assign: Callable | None = None, viz_id: str = "") -> None:
+                     save: dict | None = None, viz_id: str = "",
+                     config: dict | None = None) -> None:
     """Export a figure to PNG (display + download) and PDF (download), then CLOSE
-    it. Figures never enter session state - only bytes do."""
+    it. Figures never enter session state - only bytes do. 'Save to player' persists
+    the PNG as an immutable player asset scoped to THIS player + THIS dataset (via
+    ``save`` context), and also embeds it into the player's report (on_assign)."""
     import matplotlib.pyplot as plt
     try:
         png = ex.export(fig, title, fmt="png").data
@@ -73,37 +76,39 @@ def _render_and_show(fig, title: str, ex, *, key: str,
         cols[1].download_button("Download PDF", pdf, file_name=f"{slug}.pdf",
                                 mime="application/pdf", key=f"{key}_pdf",
                                 use_container_width=True)
-    if on_assign is not None and cols[2].button("Save to player", key=f"{key}_assign",
-                                                use_container_width=True):
-        on_assign(png, title, viz_id)
+    if save is not None and cols[2].button("Save to player", key=f"{key}_assign",
+                                            use_container_width=True):
+        cfg = dict(config or {})
+        cfg["theme"] = save.get("theme_id", "")
+        cfg["viz"] = viz_id
+        save["svc"].save_player_visualization(
+            save["user"], save["player"].id, png, dataset_id=save["dataset_id"],
+            title=title, viz_id=viz_id, scope={"player": [save["primary"]]},
+            config=cfg, source_name=save["source_name"])
+        if save.get("on_assign") is not None:                # keep report-embed
+            save["on_assign"](png, title, viz_id)
         st.toast("Saved to the player's dossier (Visual evidence)")
 
 
-def render_scouting_viz_workspace(shell, svc, player, *, key: str,
+def render_scouting_viz_workspace(shell, svc, player, ctx, *, key: str,
                                   on_assign: Callable | None = None) -> None:
-    """The full workspace for one scouting player over the active player-scouting
-    dataset. ``player`` is the scouting DB record; the dataset row is resolved by
-    name inside the adapter."""
-    ctx = svc.active_scouting_dataset(shell.user)
-    if ctx is None or ctx.get("frame") is None:
-        C.render_alert("Activate a player-scouting dataset in the Data Hub to visualize "
-                       "player metrics here.", "info")
+    """The full player-scoped viz workspace over a LINKED player-scouting dataset.
+
+    ``ctx`` is a resolved context from ``ScoutingService.scouting_viz_context`` -
+    read by dataset_id (NEVER the active dataset), with ``primary`` = the player's
+    exact dataset row resolved through the P4.2.1/P4.6 matcher (so 'Mamadu Bah'
+    already maps to 'S. Mamadu bah'). The player-scoped view is built for that ONE
+    player (never the whole population)."""
+    if ctx is None or ctx.get("frame") is None or not ctx.get("primary"):
+        C.render_alert("No player row resolved in the linked dataset yet.", "info")
         return
     frame = ctx["frame"]
     schema = ctx["schema"]
     population = ctx["players"]
+    primary = ctx["primary"]
     tm, theme_ids = _themes(shell)
     if tm is None or not theme_ids:
         C.render_alert("Chart themes are unavailable in this session.", "warning")
-        return
-
-    # resolve the primary player's exact name against the dataset (adapter-safe)
-    names = {player.name.lower().strip()} | {
-        str(a).lower().strip() for a in (player.document.get("aliases") or []) if a}
-    primary = next((p for p in population if p.lower().strip() in names), None)
-    if primary is None:
-        C.render_alert(f"{player.name} is not in the active player-scouting dataset. "
-                       "Notes, ratings and tags are still available.", "info")
         return
 
     # ---- controls: theme + comparison players ----
@@ -125,10 +130,16 @@ def render_scouting_viz_workspace(shell, svc, player, *, key: str,
         C.render_alert("This dataset has no numeric scouting metrics to visualize.", "warning")
         return
 
+    # save-context: every saved chart is a persistent player asset scoped to THIS
+    # player + THIS dataset (never the active dataset, never all players).
+    save = {"user": shell.user, "svc": svc, "player": player, "dataset_id": ctx["id"],
+            "source_name": ctx["name"], "primary": primary, "theme_id": theme_id,
+            "on_assign": on_assign} if on_assign is not None else None
+
     # ---- player header ----
     dims = view.dimensions.get(view.primary, {})
     C.render_section_title(
-        view.primary, eyebrow="Player Visualizations",
+        view.primary, eyebrow="Visual Analysis",
         subtitle="  ·  ".join(str(dims[k]) for k in ("team", "position", "league")
                               if dims.get(k)) or ctx["name"], icon_name="scouting")
     st.caption(f"Dataset: {view.dataset_name}  ·  {view.population} players  ·  "
@@ -141,9 +152,9 @@ def render_scouting_viz_workspace(shell, svc, player, *, key: str,
     with tab_explorer:
         _metric_explorer(view, key)
     with tab_viz:
-        _viz_workspace(view, theme, frame, ex, key, on_assign)
+        _viz_workspace(view, theme, frame, ex, key, save)
     with tab_pizza:
-        _pizza_builder(shell, svc, view, theme, ex, key, on_assign)
+        _pizza_builder(shell, svc, view, theme, ex, key, save)
     with tab_pop:
         _population_context(view, key)
 
@@ -181,7 +192,7 @@ def _metric_explorer(view: viz.ScoutingView, key: str) -> None:
 
 # ------------------------------------------------------------ visualization workspace
 def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
-                   on_assign) -> None:
+                   save) -> None:
     avail = viz.chart_availability(view, selected=st.session_state.get(f"{key}_metrics"))
     options = list(viz.CHART_TYPES)
     labels = {ct: viz.CHART_LABELS[ct] + ("" if avail[ct][0] else "  (unavailable)")
@@ -223,13 +234,14 @@ def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
             C.render_alert(f"Could not render this chart: {exc}", "warning")
             return
         title = f"{view.primary} - {viz.CHART_LABELS[ct]}"
-        _render_and_show(fig, title, ex, key=f"{key}_{ct}", on_assign=on_assign,
-                         viz_id=f"scouting_{ct}")
+        cfg = {k2: opts[k2] for k2 in ("metrics", "metric", "x", "y") if k2 in opts}
+        _render_and_show(fig, title, ex, key=f"{key}_{ct}", save=save,
+                         viz_id=f"scouting_{ct}", config=cfg)
 
 
 # ------------------------------------------------------------ pizza builder
 def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
-                   on_assign) -> None:
+                   save) -> None:
     st.caption("Manually choose the metrics on the pizza. Presets only appear when "
                "matching metrics exist; the analyst always controls the final set.")
     sources = view.sources()
@@ -288,7 +300,8 @@ def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
             C.render_alert(f"Could not render the pizza: {exc}", "warning")
             return
         _render_and_show(fig, f"{view.primary} - Pizza", ex, key=f"{key}_pz",
-                         on_assign=on_assign, viz_id="scouting_pizza")
+                         save=save, viz_id="scouting_pizza",
+                         config={"metrics": selected, "mode": data.get("mode", "")})
 
 
 # ------------------------------------------------------------ population context
