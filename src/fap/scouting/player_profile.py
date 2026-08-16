@@ -135,6 +135,7 @@ def player_snapshot(player: Any) -> dict[str, Any]:
         "market_value": _num(getattr(player, "market_value", None)),
         "status": identity.normalize_status(getattr(player, "status", "")),
         "priority": identity.normalize_priority(getattr(player, "priority", "")),
+        "analyst_rating": identity.analyst_rating_of(player),
         "recruitment_profile": identity.recruitment_profile_of(player),
         "age_group": identity.age_group_of(player),
         "tags": list(getattr(player, "tags", []) or []),

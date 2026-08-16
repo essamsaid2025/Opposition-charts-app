@@ -22,6 +22,10 @@ from fap.ui.page import Page, page_registry
 SEL = "_scout_player_id"
 OPEN_REPORT = "_open_report_id"        # the Report Studio's navigation key (reused)
 
+# analyst A-F rating -> badge kind (A/B strong, C positive, D watch, E/F negative)
+_RATING_KIND = {"A": "success", "B": "success", "C": "info", "D": "warning",
+                "E": "danger", "F": "danger"}
+
 
 def _initials(name: str) -> str:
     parts = [p for p in str(name or "").replace(".", " ").split() if p]
@@ -164,12 +168,14 @@ class ScoutingPage(Page):
                                subtitle="Search the canonical player registry - by identity, "
                                "pathway, status, priority and recruitment profile.",
                                icon_name="scouting")
-        c = st.columns([3, 1, 1])
+        c = st.columns([3, 1, 1, 1])
         query = c[0].text_input("Search (name / alias / club)", key="scout_q")
         ptype = c[1].selectbox("Pathway", ["all", "first_team", "academy", "trialist"],
                                format_func=lambda x: "All" if x == "all" else identity.type_label(x),
                                key="scout_ptype")
         pos = c[2].text_input("Position", key="scout_pos")
+        rating = c[3].selectbox("Rating", ["any"] + list(identity.ANALYST_RATINGS),
+                                format_func=lambda x: "Any" if x == "any" else x, key="scout_rating")
         c2 = st.columns([1, 1, 2, 1])
         status = c2[0].selectbox("Status", ["any"] + list(identity.RECRUITMENT_STATUSES),
                                  format_func=lambda x: "Any" if x == "any" else identity.status_label(x),
@@ -189,6 +195,8 @@ class ScoutingPage(Page):
             filters["status"] = status
         if priority != "any":
             filters["priority"] = priority
+        if rating != "any":
+            filters["rating"] = rating
         rows = svc.player_registry(
             shell.user, filters=filters, workspace_id=shell.workspace_id,
             profile_id=prof_id or None, min_fit=(min_fit if (prof_id and min_fit) else None))
@@ -327,9 +335,13 @@ class ScoutingPage(Page):
                 f"{' · ' + str(r['age']) if r.get('age') else ''}"
                 f"{' · ' + r['age_group'] if r.get('age_group') else ''}</span>",
                 unsafe_allow_html=True)
+            rating = r.get("analyst_rating") or ""
+            rating_html = (" " + C.badge_html(f"Rating {rating}", _RATING_KIND.get(rating, "neutral"))
+                           if rating else "")
             cols[2].markdown(
                 f"{C.badge_html(identity.type_label(r['player_type']), type_kind)} "
-                f"{C.badge_html(identity.status_label(r['status']) or '—', 'warning')}{fit_html}",
+                f"{C.badge_html(identity.status_label(r['status']) or '—', 'warning')}"
+                f"{rating_html}{fit_html}",
                 unsafe_allow_html=True)
             if cols[3].button("Open", key=f"open_{r['id']}", use_container_width=True):
                 st.session_state[SEL] = r["id"]
@@ -398,6 +410,9 @@ class ScoutingPage(Page):
         prio_lbl = identity.priority_label(prio)
         if prio_lbl:
             badges += " " + C.badge_html(prio_lbl, prio_kind)
+        rating = snap.get("analyst_rating") or ""
+        if rating:
+            badges += " " + C.badge_html(f"Rating {rating}", _RATING_KIND.get(rating, "neutral"))
         if ptype == "academy" and snap.get("age_group"):
             badges += " " + C.badge_html(snap["age_group"], "info")
 
@@ -477,9 +492,12 @@ class ScoutingPage(Page):
             fit_v, fit_k = "Unavailable", "muted"
         else:
             fit_v, fit_k = "No profile", "muted"
+        rating = snap.get("analyst_rating") or ""
+        rating_kind = {"A": "good", "B": "good", "D": "warn", "E": "warn", "F": "warn"}.get(rating, "")
         items = [
             ("Recruitment profile", _html.escape(prof_name), "" if prof_name != "—" else "muted"),
             ("Profile fit", fit_v, fit_k),
+            ("Analyst rating", rating or "—", rating_kind if rating else "muted"),
             ("Status", identity.status_label(snap.get("status")) or "—", ""),
             ("Priority", identity.priority_label(snap.get("priority")) or "—",
              "warn" if snap.get("priority") in ("high", "critical") else "muted"
@@ -978,7 +996,14 @@ class ScoutingPage(Page):
             priority = rc[1].selectbox("Priority", priorities,
                                        index=priorities.index(snap["priority"]) if snap["priority"] in priorities else 0,
                                        format_func=lambda x: identity.priority_label(x) or "—", key="ep_priority")
-            source = rc[2].text_input("Source", value=snap["source"], key="ep_source")
+            ratings = [""] + list(identity.ANALYST_RATINGS)
+            cur_rating = snap.get("analyst_rating") or ""
+            rating = rc[2].selectbox(
+                "Analyst rating (A–F)", ratings,
+                index=ratings.index(cur_rating) if cur_rating in ratings else 0,
+                format_func=lambda x: identity.rating_label(x) or "— not rated", key="ep_rating",
+                help="The analyst's manual recruitment verdict — distinct from the data-driven profile fit.")
+            source = st.text_input("Source", value=snap["source"], key="ep_source")
 
             edited = {"dob": dob, "height_cm": height, "weight_kg": weight,
                       "preferred_foot": foot, "contract_expires": contract}
@@ -995,6 +1020,7 @@ class ScoutingPage(Page):
                     secondary_nationalities=[s.strip() for s in secondary_nat.split(",") if s.strip()])
                 svc.set_recruitment_status(shell.user, p.id, status)
                 svc.set_priority(shell.user, p.id, priority)
+                svc.set_analyst_rating(shell.user, p.id, rating)
                 svc.set_display_name(shell.user, p.id, display_name)
                 svc.set_source(shell.user, p.id, source)
                 svc.set_aliases(shell.user, p.id, [a.strip() for a in alias_str.split(",") if a.strip()])
@@ -1357,40 +1383,100 @@ class ScoutingPage(Page):
                 st.rerun()
 
     def _reports(self, shell, svc, p) -> None:
-        n_charts = len(svc.list_assigned_charts(p.id))
-        st.caption(f"{icon('grid', 13)} {n_charts} chart(s) assigned to this player — new "
-                   f"reports embed them automatically; use **Add charts** to add them to an "
-                   f"existing report.")
+        # ---- two clearly-separated generation options ----
+        if self._can_report:
+            self._generate_report_panel(shell, svc, p)
+            st.divider()
+
+        # ---- existing reports (premium + standard) ----
         links = svc.list_reports(p.id)
         if not links:
-            C.render_empty_state("No reports yet", "Generate a scouting report — assigned charts "
-                                 "are included and it opens in Report Studio.", icon_name="reports")
+            C.render_empty_state("No reports yet", "Generate a Premium Player Report or a Standard "
+                                 "report above.", icon_name="reports")
         for link in links:
-            cols = st.columns([3, 1, 1, 1], vertical_alignment="center")
-            cols[0].markdown(f"{icon('reports', 14)} {link.title} · {link.created_at}",
-                             unsafe_allow_html=True)
-            if cols[1].button("Open", key=f"open_rep_{link.id}", use_container_width=True):
-                st.session_state[OPEN_REPORT] = link.report_id
-                shell.goto("report_editor")           # reuse the existing Report Studio
-            if self._can_report and cols[2].button("Add charts", key=f"addc_{link.id}",
-                                                    use_container_width=True):
-                added = svc.add_charts_to_report(shell.user, link.report_id, p.id)
-                st.toast(f"Added {added} chart(s) to the report" if added
-                         else "No assigned charts to add")
-                st.rerun()
-            if self._can_export:
-                self._download_report(shell, svc, link)
-        if self._can_report:
-            st.divider()
-            if st.button("Generate scouting report", type="primary", key="gen_rep",
-                         use_container_width=True):
-                link = svc.create_report(shell.user, p.id)
-                st.session_state[OPEN_REPORT] = link.report_id
-                shell.goto("report_editor")           # open the auto-generated report in Studio
+            info = svc.premium_report_info(link.report_id)
+            with st.container(border=True):
+                cols = st.columns([3, 1, 1], vertical_alignment="center")
+                badge = (C.badge_html("Premium", "warning") if info.get("is_premium")
+                         else C.badge_html("Standard", "neutral"))
+                extra = ""
+                if info.get("is_premium"):
+                    bits = [x for x in (f"Source: {info['source']}" if info.get("source") else "",
+                                        f"Rating: {info['rating']}" if info.get("rating") else "") if x]
+                    extra = ("<br><span style='color:var(--fap-text-muted)'>"
+                             + " · ".join(bits) + "</span>") if bits else ""
+                cols[0].markdown(f"{icon('reports', 14)} **{_html.escape(link.title)}** {badge}"
+                                 f"<br><span style='color:var(--fap-text-muted)'>{link.created_at}</span>"
+                                 f"{extra}", unsafe_allow_html=True)
+                if cols[1].button("Open", key=f"open_rep_{link.id}", use_container_width=True):
+                    st.session_state[OPEN_REPORT] = link.report_id
+                    shell.goto("report_editor")       # reuse the existing Report Studio
+                if self._can_report and not info.get("is_premium") and cols[2].button(
+                        "Add charts", key=f"addc_{link.id}", use_container_width=True):
+                    added = svc.add_charts_to_report(shell.user, link.report_id, p.id)
+                    st.toast(f"Added {added} chart(s) to the report" if added
+                             else "No assigned charts to add")
+                    st.rerun()
+                if self._can_export:
+                    self._download_report(shell, svc, link, premium=info.get("is_premium", False))
 
-    def _download_report(self, shell, svc, link) -> None:
-        """Render a linked report to a file and offer it for download (charts
-        embedded by the reports engine). Uses the existing export pipeline."""
+    def _generate_report_panel(self, shell, svc, p) -> None:
+        """Two clearly-separated options: the new recruitment-focused Premium Player
+        Report, and the EXISTING Standard report (unchanged)."""
+        st.markdown("#### Generate player report")
+        left, right = st.columns(2)
+        with left:
+            with st.container(border=True):
+                st.markdown(f"**{icon('star', 15)} Premium Player Report**", unsafe_allow_html=True)
+                st.caption("Professional recruitment dossier: branded cover, A–F rating, "
+                           "recruitment fit, automatic player-scoped charts, strengths / areas "
+                           "to monitor, all notes, video QR codes and evidence.")
+                linked = svc.linked_scouting_datasets(shell.user, p.id)
+                ds_id = ""
+                if linked:
+                    ids = [d["dataset_id"] for d in linked]
+                    names = {d["dataset_id"]: d for d in linked}
+                    ds_id = st.selectbox(
+                        "Data source", ids, key=f"prem_ds_{p.id}",
+                        format_func=lambda i: f"{names[i]['name']} · {names[i]['metric_count']} metrics")
+                else:
+                    st.caption("No linked scouting dataset — the report generates without charts.")
+                inc = st.checkbox("Include automatic charts", value=True, key=f"prem_charts_{p.id}")
+                brand = None
+                with st.expander("Report brand colours (optional)"):
+                    st.caption("Applies only to this report's cover — never the app or chart themes.")
+                    use_brand = st.checkbox("Apply custom brand colours", key=f"prem_brand_{p.id}")
+                    bc = st.columns(3)
+                    primary = bc[0].color_picker("Primary", "#E07B2B", key=f"prem_pc_{p.id}")
+                    secondary = bc[1].color_picker("Secondary", "#0B1F3A", key=f"prem_sc_{p.id}")
+                    accent = bc[2].color_picker("Accent", "#E07B2B", key=f"prem_ac_{p.id}")
+                    if use_brand:
+                        brand = {"primary": primary, "secondary": secondary, "accent": accent}
+                if st.button("Generate Premium Report", type="primary",
+                             key=f"gen_premium_{p.id}", use_container_width=True):
+                    try:
+                        link = svc.create_premium_report(
+                            shell.user, p.id, dataset_id=ds_id, include_charts=inc, brand=brand)
+                        st.toast(f"Premium report generated for {p.name}")
+                        st.rerun()
+                    except Exception as exc:
+                        C.render_alert(f"Could not generate the premium report: {exc}", "warning")
+        with right:
+            with st.container(border=True):
+                st.markdown(f"**{icon('reports', 15)} Standard Report**", unsafe_allow_html=True)
+                n_charts = len(svc.list_assigned_charts(p.id))
+                st.caption(f"The existing report generator and Studio layout. "
+                           f"{n_charts} assigned chart(s) are embedded automatically.")
+                if st.button("Generate Standard Report", key=f"gen_standard_{p.id}",
+                             use_container_width=True):
+                    link = svc.create_report(shell.user, p.id)
+                    st.session_state[OPEN_REPORT] = link.report_id
+                    shell.goto("report_editor")       # open the auto-generated report in Studio
+
+    def _download_report(self, shell, svc, link, *, premium: bool = False) -> None:
+        """Render a linked report to a file and offer it for download. Premium reports
+        render through the premium pipeline (cover photo/logo resolver + embedded
+        charts/QR); Standard reports use the existing export pipeline."""
         formats = svc.report_formats() or ["html"]
         pick_key = f"fmt_{link.id}"
         fmt = st.session_state.get(pick_key, "pdf" if "pdf" in formats else formats[0])
@@ -1398,7 +1484,8 @@ class ScoutingPage(Page):
         fmt = cols[0].selectbox("Format", formats, index=formats.index(fmt) if fmt in formats else 0,
                                 key=pick_key, label_visibility="collapsed")
         try:
-            rendered = svc.render_report(shell.user, link.report_id, fmt)
+            rendered = (svc.render_premium_report(shell.user, link.report_id, fmt) if premium
+                        else svc.render_report(shell.user, link.report_id, fmt))
             cols[1].download_button(
                 "Download report", data=rendered.content, file_name=rendered.filename,
                 mime=rendered.mime, key=f"dl_{link.id}_{fmt}", use_container_width=True)

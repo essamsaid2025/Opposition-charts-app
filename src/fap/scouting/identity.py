@@ -146,6 +146,34 @@ def academy_profile_of(player: Any) -> dict[str, Any]:
     return dict(ac) if isinstance(ac, dict) else {}
 
 
+# ---------------------------------------------------------------- analyst rating (A-F)
+# The scout's/analyst's recruitment JUDGEMENT — deliberately distinct from the
+# data-driven recruitment FIT. Never computed from percentiles or fit; always
+# manually assigned. Stored in document['analyst_rating'].
+ANALYST_RATINGS: tuple[str, ...] = ("A", "B", "C", "D", "E", "F")
+RATING_MEANINGS: dict[str, str] = {
+    "A": "Exceptional / highest recommendation", "B": "Strong",
+    "C": "Positive / monitor", "D": "Doubtful",
+    "E": "Low priority", "F": "Not recommended"}
+
+
+def normalize_rating(value: str | None) -> str:
+    """Canonical A-F rating, or "" when unset/invalid (never fabricated)."""
+    v = str(value or "").strip().upper()
+    return v if v in ANALYST_RATINGS else ""
+
+
+def analyst_rating_of(player: Any) -> str:
+    doc = getattr(player, "document", None) or {}
+    return normalize_rating(doc.get("analyst_rating"))
+
+
+def rating_label(value: str | None) -> str:
+    """'B — Strong' for display, or "" when unset."""
+    r = normalize_rating(value)
+    return f"{r} — {RATING_MEANINGS[r]}" if r else ""
+
+
 # ---------------------------------------------------------------- identity helpers
 def _clean(s: Any) -> str:
     return str(s or "").strip()
@@ -240,5 +268,6 @@ __all__ = [
     "PLAYER_TYPES", "TYPE_PREFIX", "TYPE_LABEL", "AGE_GROUPS", "normalize_player_type",
     "player_type_of", "type_label", "format_operational_id", "operational_id_of",
     "age_group_of", "recruitment_profile_of", "status_history_of", "pathway_history_of",
-    "academy_profile_of",
+    "academy_profile_of", "ANALYST_RATINGS", "RATING_MEANINGS", "normalize_rating",
+    "analyst_rating_of", "rating_label",
 ]

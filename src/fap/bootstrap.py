@@ -306,7 +306,8 @@ def _scouting(reg: "ServiceRegistry"):
         db, permissions=reg.get("permissions"),
         audit=AuditService(AuditRepository(db)), reports=reg.get("reports"),
         images=reg.get("image_storage"), videos=reg.get("video_storage"),
-        attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"))
+        attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"),
+        themes=reg.get("themes"))
 
 
 def _players(reg: "ServiceRegistry"):

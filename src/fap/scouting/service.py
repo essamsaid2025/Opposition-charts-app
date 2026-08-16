@@ -40,7 +40,7 @@ CHART_MEDIA_KIND = "report_chart"
 class ScoutingService:
     def __init__(self, db: Any, *, permissions: Any, audit: Any, reports: Any = None,
                  images: Any = None, videos: Any = None, attachments: Any = None,
-                 workspaces: Any = None) -> None:
+                 workspaces: Any = None, themes: Any = None) -> None:
         self._db = db
         self.players = PlayerRepository(db)
         self.notes = NoteRepository(db)
@@ -56,6 +56,7 @@ class ScoutingService:
         self._video_storage = videos
         self._attach_storage = attachments
         self._wm = workspaces
+        self._themes = themes
 
     # ---------------------------------------------------------------- guards
     def _require(self, user: User, cap: Capability, scope: str | None = None) -> None:
@@ -313,6 +314,20 @@ class ScoutingService:
         self._require(user, Capability.EDIT_SCOUTING)
         return self._set_doc(user, player_id, "scouting.player.profile",
                              recruitment_profile=str(profile_id or "").strip())
+
+    def set_analyst_rating(self, user: User, player_id: str, rating: str) -> Player:
+        """Persist the analyst's A-F recruitment judgement (document['analyst_rating']).
+        This is deliberately NOT derived from any dataset/fit score - it is the scout's
+        manual verdict. An empty string clears it; any other non-A-F value is rejected
+        (never coerced into a different meaning). Audited."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        from fap.scouting import identity
+        raw = str(rating or "").strip().upper()
+        if raw and raw not in identity.ANALYST_RATINGS:
+            raise ValueError(f"invalid analyst rating {rating!r}; expected one of "
+                             f"{', '.join(identity.ANALYST_RATINGS)} or empty")
+        return self._set_doc(user, player_id, "scouting.player.analyst_rating",
+                             analyst_rating=raw)
 
     def set_age_group(self, user: User, player_id: str, age_group: str) -> Player:
         self._require(user, Capability.EDIT_SCOUTING)
@@ -787,23 +802,32 @@ class ScoutingService:
             status["proposed"] = result.candidate.to_dict()
         return status
 
-    def profile_fit_for(self, user: User, player_id: str, profile_id: str) -> dict[str, Any] | None:
-        """Transparent profile-fit for a player against the ACTIVE player-scouting
-        dataset. ``None`` when no scouting dataset is active or the player cannot be
-        resolved to a row; ``available: False`` when the dataset lacks enough
-        compatible metrics."""
+    def profile_fit_for(self, user: User, player_id: str, profile_id: str,
+                         dataset_id: str = "") -> dict[str, Any] | None:
+        """Transparent profile-fit for a player. By default it reads the ACTIVE
+        player-scouting dataset; pass ``dataset_id`` to score against a SPECIFIC
+        linked dataset instead (active-independent — used by the premium report so a
+        report never depends on whatever is active). ``None`` when no dataset is
+        available or the player cannot be resolved to a row; ``available: False`` when
+        the dataset lacks enough compatible metrics."""
         self._require(user, Capability.VIEW_SCOUTING)
         from fap.scouting import profiles, viz
         profile = profiles.get_profile(profile_id)
         if profile is None:
             return None
-        ctx = self.active_scouting_dataset(user)
-        if ctx is None or ctx.get("frame") is None:
-            return None
-        p = self.get_player(player_id)
-        if p is None:
-            return None
-        primary, _ = self._resolve_dataset_key(p, ctx)
+        if dataset_id:
+            ctx = self.scouting_viz_context(user, player_id, dataset_id)
+            if ctx is None or ctx.get("frame") is None:
+                return None
+            primary = ctx.get("primary")
+        else:
+            ctx = self.active_scouting_dataset(user)
+            if ctx is None or ctx.get("frame") is None:
+                return None
+            p = self.get_player(player_id)
+            if p is None:
+                return None
+            primary, _ = self._resolve_dataset_key(p, ctx)
         if primary is None:
             return None
         view = viz.build_view(ctx["frame"], ctx["schema"], [primary],
@@ -858,6 +882,8 @@ class ScoutingService:
                 continue
             if f.get("recruitment_profile") and identity.recruitment_profile_of(p) != f["recruitment_profile"]:
                 continue
+            if f.get("rating") and identity.analyst_rating_of(p) != identity.normalize_rating(f["rating"]):
+                continue
             if query and not self._matches_query(p, query):
                 continue
             fit = None
@@ -875,6 +901,7 @@ class ScoutingService:
                 "nationality": p.nationality or p.country,
                 "status": identity.normalize_status(p.status),
                 "priority": identity.normalize_priority(p.priority),
+                "analyst_rating": identity.analyst_rating_of(p),
                 "recruitment_profile": identity.recruitment_profile_of(p),
                 "profile_fit": fit, "profile_image_id": p.profile_image_id,
                 "favorite": p.favorite,
@@ -1750,6 +1777,230 @@ class ScoutingService:
 
     def list_reports(self, player_id: str) -> list[ScoutingReportLink]:
         return self.links.list(player_id)
+
+    # ================================================================ premium player report (P4.7)
+    # A recruitment dossier built on the EXISTING report engine (ReportsManager +
+    # exporter registry). It is player-scoped and active-dataset-INDEPENDENT: charts
+    # and fit read the player's LINKED scouting dataset by dataset_id, never whatever
+    # is active. Nothing is fabricated - missing data yields a clean empty section.
+    def _best_premium_dataset(self, user: User, player_id: str) -> str:
+        """The most relevant LINKED player-scouting dataset id (linked wins over an
+        active-but-unlinked resolvable one), or "" when none is available."""
+        try:
+            linked = self.linked_scouting_datasets(user, player_id)
+        except Exception:
+            return ""
+        for d in linked:
+            if d.get("linked"):
+                return d["dataset_id"]
+        return linked[0]["dataset_id"] if linked else ""
+
+    def _premium_scope(self, user: User, player_id: str, dataset_id: str):
+        """(ctx, player-scoped view) for the chosen dataset, read by dataset_id and
+        independent of the active dataset. (None, None) when unresolved."""
+        if not dataset_id:
+            return None, None
+        ctx = self.scouting_viz_context(user, player_id, dataset_id)
+        if ctx is None or ctx.get("frame") is None or not ctx.get("primary"):
+            return None, None
+        from fap.scouting import viz
+        view = viz.build_view(ctx["frame"], ctx["schema"], [ctx["primary"]],
+                              dataset_id=ctx["id"], dataset_name=ctx["name"])
+        return ctx, view
+
+    def _premium_chart_images(self, view, *, theme_id: str = "opta_light",
+                              dpi: int = 150) -> dict[str, bytes]:
+        """A small professional set (Pizza/Radar/Bar) of PLAYER-SCOPED charts rendered
+        via the EXISTING scouting chart engine. Empty when metrics/themes are
+        unavailable - never a fabricated chart. Figures are closed immediately."""
+        if view is None or self._themes is None or not getattr(view, "metrics", None):
+            return {}
+        from fap.scouting import charts, viz
+        import matplotlib.pyplot as plt
+        from fap.visuals.export import ExportEngine
+        try:
+            theme = self._themes.get(theme_id)
+        except Exception:
+            return {}
+        ex = ExportEngine()
+        out: dict[str, bytes] = {}
+        sug = viz.suggest_pizza_metrics(view, 8)
+        avail = viz.chart_availability(view, selected=sug)
+
+        def _try(key: str, factory) -> None:
+            try:
+                fig = factory()
+                png = ex.export(fig, key, fmt="png").data
+                plt.close(fig)
+                if png:
+                    out[key] = png
+            except Exception:
+                pass
+        if avail.get("pizza", (False,))[0] and len(sug) >= 3:
+            _try("pizza", lambda: charts.pizza_chart(view, sug, theme))
+        if avail.get("radar", (False,))[0] and len(sug) >= 3:
+            _try("radar", lambda: charts.radar_chart(view, sug, theme))
+        _try("bar", lambda: charts.bar_chart(view, view.sources()[:10], theme))
+        return out
+
+    @staticmethod
+    def _view_percentiles(view):
+        if view is None:
+            return [], []
+        ranked = [(m.name, m.percentile(view.primary)) for m in view.metrics
+                  if m.percentile(view.primary) is not None]
+        ranked.sort(key=lambda t: t[1], reverse=True)
+        strengths = [{"name": nm, "percentile": round(pct)} for nm, pct in ranked[:5]]
+        dev = [{"name": nm, "percentile": round(pct)} for nm, pct in ranked[-5:][::-1]] \
+            if len(ranked) > 5 else []
+        return strengths, dev
+
+    def _premium_videos(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """Video evidence entries. A QR is produced ONLY for a real external URL; an
+        uploaded/local video carries no fake QR. Key actions come from the video's
+        PERSISTED dataset_id (never the active dataset), capped to a concise subset."""
+        import base64
+        from fap.reports.blocks import qr_png
+        out: list[dict[str, Any]] = []
+        for v in self.list_videos(player_id):
+            url = (v.url or "").strip()
+            is_ext = v.kind == "external" and url.lower().startswith(("http://", "https://"))
+            entry: dict[str, Any] = {
+                "title": v.title or v.provider or "Video", "provider": v.provider,
+                "url": url if is_ext else "", "match_id": v.match_id, "dataset_name": "",
+                "is_external": is_ext, "key_actions": []}
+            if getattr(v, "dataset_id", ""):
+                try:
+                    ds = self._wm.get_dataset(v.dataset_id) if self._wm else None
+                    entry["dataset_name"] = ds.name if ds else ""
+                except Exception:
+                    pass
+            if is_ext:
+                png = qr_png(url)
+                if png:
+                    entry["qr_b64"] = base64.b64encode(png).decode("ascii")
+            try:
+                if v.match_id and getattr(v, "dataset_id", ""):
+                    import pandas as pd
+                    ev = self.video_events(user, player_id, v)
+                    if ev is not None and not ev.empty:
+                        ev = ev.copy()
+                        ev["_m"] = pd.to_numeric(ev.get("minute", 0), errors="coerce").fillna(0).astype(int)
+                        ev["_s"] = pd.to_numeric(ev.get("second", 0), errors="coerce").fillna(0).astype(int)
+                        ev = ev.sort_values(["_m", "_s"]).head(8)
+                        entry["key_actions"] = [
+                            {"time": f"{int(r['_m']):02d}:{int(r['_s']):02d}",
+                             "event_type": str(r.get("event_type", "event"))}
+                            for _, r in ev.iterrows()]
+            except Exception:
+                pass
+            out.append(entry)
+        return out
+
+    def _player_brand(self, player: Player) -> dict[str, str]:
+        doc = player.document if isinstance(player.document, dict) else {}
+        b = doc.get("report_brand")
+        return {k: str(v) for k, v in b.items()} if isinstance(b, dict) else {}
+
+    def set_report_brand(self, user: User, player_id: str, *, primary: str = "",
+                         secondary: str = "", accent: str = "") -> Player:
+        """Persist optional report-only brand colours (document['report_brand']). These
+        apply ONLY to this player's generated report cover - never the app/chart themes."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        brand = {k: v.strip() for k, v in (("primary", primary), ("secondary", secondary),
+                                           ("accent", accent)) if v and v.strip()}
+        return self._set_doc(user, player_id, "scouting.player.report_brand", report_brand=brand)
+
+    def _premium_report_data(self, user: User, p: Player, dataset_id: str,
+                             source_name: str, view) -> dict[str, Any]:
+        from fap.scouting import identity, player_profile
+        from fap.scouting import profiles as _profiles
+        snap = player_profile.player_snapshot(p)
+        prof_id = snap.get("recruitment_profile")
+        prof_obj = _profiles.get_profile(prof_id) if prof_id else None
+        fit = self.profile_fit_for(user, p.id, prof_id, dataset_id=dataset_id) if prof_id else None
+        strengths, dev = self._view_percentiles(view)
+        notes = [{"date": n.updated_at, "author": n.author, "text": n.body}
+                 for n in self.list_notes(p.id)]
+        return {
+            "player_id": p.id, "name": p.name, "display_name": snap.get("display_name"),
+            "operational_id": snap.get("operational_id"), "player_type": snap.get("player_type"),
+            "type_label": snap.get("type_label"), "position": p.position,
+            "positions": snap.get("positions") or [], "club": snap.get("club"),
+            "league": snap.get("league"), "nationality": snap.get("nationality"),
+            "age": snap.get("age"), "foot": snap.get("preferred_foot"),
+            "height_cm": snap.get("height_cm"), "weight_kg": snap.get("weight_kg"),
+            "contract": snap.get("contract_expires"), "shirt": snap.get("shirt_number"),
+            "recruitment_profile_name": prof_obj.name if prof_obj else "",
+            "status_label": identity.status_label(snap.get("status")) or "",
+            "priority_label": identity.priority_label(snap.get("priority")) or "",
+            "analyst_rating": snap.get("analyst_rating"), "fit": fit,
+            "strengths": strengths, "dev_areas": dev, "notes": notes,
+            "videos": self._premium_videos(user, p.id),
+            "matches": self.player_matches(user, p.id),
+            "source_name": source_name, "source_dataset_id": dataset_id,
+            "analyst": user.name or user.email, "generated_at": _dt_now()[:10],
+            "profile_image_id": p.profile_image_id, "club_logo_id": p.club_logo_id}
+
+    def create_premium_report(self, user: User, player_id: str, *, dataset_id: str = "",
+                              include_charts: bool = True, brand: dict[str, str] | None = None,
+                              title: str = "") -> ScoutingReportLink:
+        """Generate a Premium Player Report (recruitment dossier) and persist it via the
+        EXISTING reports engine, linked to the player. Additive to the Standard report.
+        Charts + fit are scoped to the chosen LINKED dataset (active-independent)."""
+        self._require(user, Capability.CREATE_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        from fap.scouting import premium_report
+        p = self._player_or_raise(player_id)
+        ds_id = dataset_id or self._best_premium_dataset(user, player_id)
+        ctx, view = self._premium_scope(user, player_id, ds_id) if ds_id else (None, None)
+        source_name = ctx["name"] if ctx else ""
+        chart_images = self._premium_chart_images(view) if include_charts else {}
+        data = self._premium_report_data(user, p, ds_id, source_name, view)
+        title = title or f"Premium Player Report — {p.name}"
+        cover = {"title": title, "subtitle": f"{p.position} · {p.club}".strip(" ·"),
+                 "club": p.club, "competition": p.league, "analyst": user.name or user.email}
+        record = self._auto_report(user, p, title, cover, self._player_frame(p))
+        data["report_id"] = record.id
+        doc = premium_report.build_premium_document(
+            data, chart_images=chart_images, brand=brand or self._player_brand(p),
+            options={"include_charts": include_charts})
+        self._reports.save_document(user, record.id, doc)
+        link = ScoutingReportLink(id=self._uid(), player_id=player_id, report_id=record.id,
+                                  title=title, created_by=user.email)
+        self.links.add(link)
+        self.audit.record(user, "scouting.report.premium", target_type="player",
+                          target_id=player_id,
+                          detail={"report_id": record.id, "dataset_id": ds_id,
+                                  "charts": len(chart_images)})
+        return link
+
+    def render_premium_report(self, user: User, report_id: str, fmt: str = "pdf"):
+        """Render a premium report to a downloadable file. Uses the EXISTING exporter
+        registry with an image resolver so the cover player photo + club logo resolve
+        (charts/QR are already embedded as image bytes). Returns a RenderedReport."""
+        self._require(user, Capability.EXPORT_REPORT)
+        if self._reports is None:
+            raise ValueError("Reports engine is not configured.")
+        doc = self._reports.document(report_id)
+        if doc is None:
+            raise ValueError(f"report {report_id!r} not found")
+        from fap.reports.renderer import ReportRenderer
+        rendered = ReportRenderer().render(doc, fmt, None, image_resolver=self.image_bytes)
+        self.audit.record(user, "scouting.report.premium_export", target_type="report",
+                          target_id=report_id, detail={"format": fmt})
+        return rendered
+
+    def premium_report_info(self, report_id: str) -> dict[str, Any]:
+        """Lightweight metadata for the reports list: whether a linked report is a
+        premium dossier, its analyst rating and source dataset (read from the doc meta)."""
+        from fap.scouting import premium_report
+        doc = self._reports.document(report_id) if self._reports is not None else None
+        meta = (getattr(doc, "meta", None) or {}) if doc else {}
+        return {"is_premium": meta.get("kind") == premium_report.META_KIND,
+                "rating": meta.get("analyst_rating", ""),
+                "source": meta.get("source_dataset_name", "")}
 
     # ================================================================ watchlists
     def create_watchlist(self, user: User, name: str) -> Watchlist:
