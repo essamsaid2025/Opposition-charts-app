@@ -341,12 +341,15 @@ class FirstTeamPlayersPage(Page):
             st.rerun()
         ov = svc.overview(shell.user, player_id)
         p = ov["player"]
-        self._header(svc, p, ov)
+        intel = svc.player_intelligence(shell.user, player_id)
+        self._hero(shell, svc, p, ov, intel)
+        self._intel_strip(shell, svc, p, ov, intel)
 
-        tabs = st.tabs(["Overview", "Analysis", "Statistics", "Visualization", "Career", "Matches",
-                        "Training", "Medical", "Videos", "Reports", "Settings"])
+        tabs = st.tabs(["Dashboard", "Analysis", "Statistics", "Visualization", "Career", "Matches",
+                        "Training", "Medical", "Videos & Evidence", "Notes & Files", "Reports",
+                        "Settings"])
         with tabs[0]:
-            self._tab_overview(shell, svc, player_id, ov)
+            self._tab_dashboard(shell, svc, player_id, ov, intel)
         with tabs[1]:
             self._tab_analysis(shell, svc, player_id, ov)
         with tabs[2]:
@@ -364,8 +367,10 @@ class FirstTeamPlayersPage(Page):
         with tabs[8]:
             self._tab_videos(shell, svc, player_id)
         with tabs[9]:
-            self._tab_reports(shell, svc, player_id)
+            self._tab_notes_files(shell, svc, player_id, p)
         with tabs[10]:
+            self._tab_reports(shell, svc, player_id)
+        with tabs[11]:
             self._tab_settings(shell, svc, player_id, p)
 
     # ---- Visualization workspace (reuses the shared player-scoped viz engine) ----
@@ -458,78 +463,220 @@ class FirstTeamPlayersPage(Page):
                 if self._can_edit and st.button("Remove", key=f"ftvz_del_{player_id}_{a['id']}"):
                     svc.delete_player_visualization(shell.user, player_id, a["id"]); st.rerun()
 
-    # ---- professional header -------------------------------------------
-    def _header(self, svc, p, ov) -> None:
-        with st.container(border=True):
-            head = st.columns([1, 3, 2], vertical_alignment="center")
-            with head[0]:
-                photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
-                if photo:
-                    st.image(photo, use_container_width=True)
-                else:
-                    st.markdown(C.avatar_html(initials=self._initials(p), size=104),
-                                unsafe_allow_html=True)
-            with head[1]:
-                num = (f'<span class="fap-badge neutral">#{p.shirt_number}</span>'
-                       if p.shirt_number is not None else "")
-                role = (C.status_badge_html("captain") if p.captain
-                        else C.status_badge_html("vice") if p.vice_captain else "")
-                avail = "injured" if ov.get("injury") else p.availability
-                flag = (p.flag + " ") if p.flag else ""
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">'
-                    f'{num}{role}'
-                    f'<span style="font-size:1.5rem;font-weight:800;letter-spacing:-.02em">{p.name}</span>'
-                    f'</div>'
-                    f'<div style="color:var(--fap-text-muted);font-size:.86rem;margin-bottom:6px">'
-                    f'{icon("map-pin",13)} {p.primary_position or "—"} &nbsp; '
-                    f'{icon("flag",13)} {flag}{p.nationality or "—"} &nbsp; '
-                    f'{icon("user",13)} {ov["age"] if ov["age"] is not None else "—"} yrs &nbsp; '
-                    f'{icon("target",13)} {p.foot.title() or "—"} foot</div>'
-                    f'{_avail_badge(avail)}', unsafe_allow_html=True)
-            with head[2]:
-                c = ov["contract"]
-                st.metric("Career minutes", ov["career_totals"]["minutes"])
-                st.metric("Contract ends", (c.contract_end if c and c.contract_end else "—"))
+    # ---- premium performance hero (FT-P7) ------------------------------
+    _RATING_KIND = {"A": "success", "B": "success", "C": "info", "D": "warning",
+                    "E": "danger", "F": "danger"}
 
-    # ---- Overview (live dashboard) --------------------------------------
-    def _tab_overview(self, shell, svc, player_id, ov) -> None:
+    def _hero(self, shell, svc, p, ov, intel) -> None:
+        """The premium first-team performance hero: dark charcoal (reuses the shared
+        dossier hero), photo/crest, identity, squad badges and the A-F PERFORMANCE
+        rating (never a recruitment fit). All values come from real data."""
+        rating = intel.get("rating") or ""
+        badges = ""
+        if p.shirt_number is not None:
+            badges += C.badge_html(f"#{p.shirt_number}", "neutral") + " "
+        if p.captain:
+            badges += C.status_badge_html("captain") + " "
+        elif p.vice_captain:
+            badges += C.status_badge_html("vice") + " "
+        badges += _avail_badge("injured" if ov.get("injury") else p.availability)
+        if rating:
+            badges += " " + C.badge_html(f"Rating {rating}", self._RATING_KIND.get(rating, "neutral"))
+        ds_n = intel.get("counts", {}).get("data_sources", 0)
+        if ds_n:
+            badges += " " + C.badge_html(f"{ds_n} data source" + ("s" if ds_n != 1 else ""), "info")
+
+        pos = ", ".join([p.primary_position] + list(p.secondary_positions or [])).strip(", ") or "—"
+        pos_line = "  ·  ".join(x for x in (pos, ov.get("club") or "") if x) or pos
+        ctx = [("Age", str(ov["age"]) if ov.get("age") is not None else "—"),
+               ("Nationality", _html.escape(p.nationality or "—")),
+               ("Foot", (p.foot or "").title() or "—"),
+               ("Shirt", f"#{p.shirt_number}" if p.shirt_number is not None else "—")]
+        C.render_player_hero(
+            _html.escape(p.name), position_line=_html.escape(pos_line),
+            photo_uri=_photo_uri(svc, p.profile_image_id), initials=self._initials(p),
+            logo_uri=_photo_uri(svc, p.club_logo_id), badges_html=badges,
+            operational_id=_html.escape(f"ID {p.id[:8]}"), context=ctx)
+
+    def _intel_strip(self, shell, svc, p, ov, intel) -> None:
+        counts = intel.get("counts", {})
+        C.render_snapshot_counts([
+            (icon("datasets", 16), str(counts.get("data_sources", 0)), "Data sources"),
+            (icon("match", 16), str(counts.get("matches", 0)), "Matches"),
+            (icon("video", 16), str(counts.get("videos", 0)), "Videos"),
+            (icon("grid", 16), str(counts.get("visuals", 0)), "Saved visuals"),
+            (icon("text", 16), str(counts.get("notes", 0)), "Notes"),
+            (icon("reports", 16), str(counts.get("reports", 0)), "Reports"),
+        ])
+
+    # ---- Dashboard (premium performance intelligence, FT-P7) ------------
+    def _tab_dashboard(self, shell, svc, player_id, ov, intel) -> None:
+        # squad status (first-team performance department)
         c = ov["contract"]
-        wl = ov["workload"]
-        r1 = st.columns(4)
-        r1[0].metric("Availability", ov["availability"])
-        r1[1].metric("Medical", ov["medical_status"])
-        r1[2].metric("Training", ov["training_status"])
-        r1[3].metric("Contract ends", (c.contract_end if c and c.contract_end else "—"))
-        r2 = st.columns(4)
-        r2[0].metric("Career minutes", ov["career_totals"]["minutes"])
-        r2[1].metric("Goals", ov["career_totals"]["goals"])
-        r2[2].metric("Assists", ov["career_totals"]["assists"])
-        r2[3].metric("Matches linked", ov["matches"])
-        st.subheader("Workload")
-        w = st.columns(4)
-        w[0].metric("Load 7d", wl["load_7d"]); w[1].metric("Load 28d", wl["load_28d"])
-        w[2].metric("Sprint 7d", wl["sprint_7d"]); w[3].metric("Sessions 7d", wl["sessions_7d"])
+        s = st.columns(4)
+        s[0].metric("Availability", ov["availability"])
+        s[1].metric("Medical", ov["medical_status"])
+        s[2].metric("Training", ov["training_status"])
+        s[3].metric("Contract ends", (c.contract_end if c and c.contract_end else "—"))
+        if ov.get("injury"):
+            C.render_alert(f"Current injury: {ov['injury'].injury} — expected return "
+                           f"{ov['injury'].expected_return or 'TBD'}", "warning")
+
+        # overview: player profile + current intelligence
+        left, right = st.columns(2)
+        with left:
+            self._dashboard_profile(p=ov["player"], ov=ov)
+        with right:
+            self._dashboard_current_intel(intel, ov)
+
+        # performance analytics (linked-dataset, active-independent)
+        C.render_dossier_label("Performance analytics", icon=icon("analysis", 13))
+        self._dashboard_performance(shell, svc, player_id)
+
+        # surfaced evidence (read-only previews; full tools live in their tabs)
+        self._dashboard_visual_preview(shell, svc, player_id, intel.get("visuals", []))
+        self._dashboard_match_video(intel)
+        self._dashboard_notes(intel.get("notes", []))
+
+        C.render_dossier_label("Recent intelligence", icon=icon("clock", 13))
+        self._timeline(svc, shell, player_id)
+
+    def _dashboard_profile(self, *, p, ov) -> None:
+        C.render_dossier_label("Player profile", icon=icon("user", 13))
+
+        def _v(x):
+            return "—" if x in (None, "", []) else str(x)
+        tiles = [
+            C.dossier_stat_html("Age", _v(ov.get("age")), icon=icon("calendar", 15)),
+            C.dossier_stat_html("Foot", (p.foot or "").title() or "—", icon=icon("ball", 15)),
+            C.dossier_stat_html("Height", f"{p.height}" if p.height else "—",
+                                sub="cm" if p.height else "", icon=icon("line-straight", 15)),
+            C.dossier_stat_html("Weight", f"{p.weight}" if p.weight else "—",
+                                sub="kg" if p.weight else "", icon=icon("layers", 15)),
+            C.dossier_stat_html("Position", _html.escape(p.primary_position or "—"),
+                                icon=icon("map-pin", 15)),
+            C.dossier_stat_html("Nationality", _html.escape(p.nationality or "—"), icon=icon("flag", 15)),
+            C.dossier_stat_html("Shirt", f"#{p.shirt_number}" if p.shirt_number is not None else "—",
+                                icon=icon("jersey", 15)),
+            C.dossier_stat_html("Contract", _v(ov["contract"].contract_end if ov.get("contract") else ""),
+                                icon=icon("book", 15)),
+        ]
+        C.render_dossier_grid(tiles)
+
+    def _dashboard_current_intel(self, intel, ov) -> None:
+        C.render_dossier_label("Current intelligence", icon=icon("scouting", 13))
+        counts = intel.get("counts", {})
+        rating = intel.get("rating") or ""
+        acts = intel.get("activity", [])
+        items = [
+            ("Performance rating", rating or "—",
+             {"A": "good", "B": "good", "D": "warn", "E": "warn", "F": "warn"}.get(rating, "")
+             if rating else "muted", icon("star", 14)),
+            ("Data sources", str(counts.get("data_sources", 0)), "", icon("datasets", 14)),
+            ("Matches", str(counts.get("matches", 0)), "", icon("match", 14)),
+            ("Videos", str(counts.get("videos", 0)), "", icon("video", 14)),
+            ("Saved visuals", str(counts.get("visuals", 0)), "", icon("grid", 14)),
+            ("Last updated", (acts[0]["at"][:10] if acts else "—"), "" if acts else "muted",
+             icon("clock", 14)),
+        ]
+        C.render_intel_strip(items)
+
+    def _dashboard_performance(self, shell, svc, player_id) -> None:
+        linked = svc.linked_player_scouting_datasets(shell.user, player_id)
+        if not linked:
+            C.render_alert("No player-metric dataset linked yet. Open the Visualization tab to link "
+                           "one for Pizza / Radar / Bar / Scatter and Save-to-Player.", "info")
+            return
+        ids = [d["dataset_id"] for d in linked]
+        names = {d["dataset_id"]: d for d in linked}
+        chosen = st.selectbox("Data source", ids, key=f"ftdash_ds_{player_id}",
+                              format_func=lambda i: f"{names[i]['name']} · {names[i]['metric_count']} metrics"
+                              + ("" if names[i]["linked"] else " · (active, not linked)"))
+        prof = svc.player_dataset_profile(shell.user, player_id, chosen)
+        if prof["status"] != "metrics_available":
+            msg = {"linked_no_row": "Player row not found in this dataset.",
+                   "not_scouting": "This source is not a player-metric dataset.",
+                   "unavailable": "Source unavailable — no metric evidence."}.get(
+                       prof["status"], "No sufficient dataset evidence available.")
+            C.render_alert(msg, "info")
+            return
+        st.caption(f"{icon('datasets', 13)} {prof['metric_count']} metrics · player row "
+                   f"**{_html.escape(str(prof['entity_key']))}** · active-independent",
+                   unsafe_allow_html=True)
+        strengths, dev = svc.player_percentile_highlights(shell.user, player_id, chosen)
         cc = st.columns(2)
         with cc[0]:
-            st.subheader("Recent form")
-            form = ov["recent_form"]
-            if form:
-                st.dataframe([{"Availability": f["availability"] or "—", "Role": f["role"] or "—",
-                               "Minutes": f["minutes"]} for f in form],
-                             use_container_width=True, hide_index=True)
-            else:
-                st.caption("No linked matches yet.")
+            st.markdown(f"{icon('arrow-up', 13)} **Top percentiles**", unsafe_allow_html=True)
+            if not strengths:
+                st.caption("No percentile evidence available.")
+            for x in strengths:
+                st.markdown(f"{C.badge_html(str(x['percentile']), 'success')} {_html.escape(x['name'])}",
+                            unsafe_allow_html=True)
         with cc[1]:
-            st.subheader("Fixtures")
-            lm = ov["last_match"]
-            st.markdown(f"**Last match:** {('%d min · %s' % (lm.minutes or 0, lm.role or '—')) if lm else '—'}")
-            st.markdown("**Next match:** — (fixtures feed not connected)")
-        if ov.get("injury"):
-            st.warning(f"Current injury: {ov['injury'].injury} — expected return "
-                       f"{ov['injury'].expected_return or 'TBD'}")
-        st.subheader("Timeline")
-        self._timeline(svc, shell, player_id)
+            st.markdown(f"{icon('warning', 13)} **Areas to monitor**", unsafe_allow_html=True)
+            if not dev:
+                st.caption("—")
+            for x in dev:
+                st.markdown(f"{C.badge_html(str(x['percentile']), 'warning')} {_html.escape(x['name'])}",
+                            unsafe_allow_html=True)
+        st.caption("Data-derived observations — analyst interpretation may differ. "
+                   "Full charts + Save-to-Player in the Visualization tab.")
+
+    def _dashboard_visual_preview(self, shell, svc, player_id, visuals) -> None:
+        C.render_dossier_label(f"Visual evidence ({len(visuals)})", icon=icon("grid", 13))
+        if not visuals:
+            st.caption("No saved visualizations yet.")
+            return
+        cols = st.columns(3)
+        for i, a in enumerate(list(reversed(visuals))[:6]):
+            with cols[i % 3]:
+                png = svc.player_visualization_bytes(player_id, a["id"])
+                if png:
+                    st.image(png, use_container_width=True)
+                scope = a.get("scope", {}).get("player") or []
+                gone = False
+                if a.get("dataset_id"):
+                    try:
+                        gone = shell.wm.get_dataset(a["dataset_id"]) is None
+                    except Exception:
+                        gone = False
+                st.caption(f"**{_html.escape(a.get('title', 'Visualization'))}** · "
+                           f"{_html.escape(a.get('source_dataset_name') or 'dataset')}"
+                           + (" · source unavailable — retained" if gone else "")
+                           + (f" · {_html.escape(', '.join(map(str, scope)))}" if scope else ""))
+        st.caption("Open the Visualization tab to add or remove saved charts.")
+
+    def _dashboard_match_video(self, intel) -> None:
+        matches = intel.get("matches", [])
+        videos = intel.get("videos", [])
+        C.render_dossier_label(f"Match & video intelligence ({len(matches)} / {len(videos)})",
+                               icon=icon("match", 13))
+        if not matches and not videos:
+            st.caption("No match or video evidence yet.")
+            return
+        for m in matches[:3]:
+            bits = [m.get("dataset_name") or "dataset",
+                    f"{m['event_count']} events" if m.get("exists") else "dataset unavailable",
+                    f"{m['videos']} video(s)" if m.get("videos") else "",
+                    "synced" if m.get("synced") else ""]
+            st.markdown(C.evidence_card_html(_html.escape(str(m.get("match_id") or "match")),
+                                             _html.escape(" · ".join(x for x in bits if x)),
+                                             icon=icon("match", 16)), unsafe_allow_html=True)
+        st.caption("Open Videos & Evidence for the click-to-seek event timeline.")
+
+    def _dashboard_notes(self, notes) -> None:
+        C.render_dossier_label(f"Analyst observations ({len(notes)})", icon=icon("text", 13))
+        if not notes:
+            st.caption("No analyst notes recorded yet.")
+            return
+        for n in notes[:4]:
+            doc = n.document or {}
+            head = self._NOTE_LABELS.get(n.kind, "Note").upper()
+            body = (n.body or "")[:160] + ("…" if len(n.body or "") > 160 else "")
+            st.markdown(C.evidence_card_html(
+                f"{head}" + (f" · {_html.escape(doc.get('title'))}" if doc.get("title") else ""),
+                _html.escape(body), icon=icon("text", 16)), unsafe_allow_html=True)
+        st.caption("View all notes → Notes & Files tab.")
 
     _TL_STYLE = {"signing": ("edit", "info"), "contract": ("calendar", "neutral"),
                  "loan": ("link", "info"), "injury": ("cross-medical", "danger"),
@@ -748,29 +895,374 @@ class FirstTeamPlayersPage(Page):
 
     # ---- Videos (grouped timeline) -------------------------------------
     def _tab_videos(self, shell, svc, player_id) -> None:
+        """Videos & Match Evidence (FT-P5). Each video's action list comes from its
+        PERSISTED (dataset_id, match_id) via the shared video-sync component — never
+        the active dataset. Reuses the platform video engine; no second player."""
+        from fap.ui.builtin import video_sync as VS
+        C.render_section_title("Videos & Match Evidence", eyebrow="Match Analysis",
+                               subtitle="Footage linked to its match dataset — actions and "
+                               "seek stay bound to the video, independent of the active dataset.",
+                               icon_name="video")
         videos = svc.list_videos(player_id)
-        groups = {"training": "Training", "match": "Matches", "tagged": "Tagged clips",
-                  "coach": "Coach clips", "opponent": "Opponent clips", "external": "External"}
-        by_kind = {k: [v for v in videos if v.kind == k] for k in groups}
-        for k, label in groups.items():
-            items = by_kind[k]
-            if items:
-                st.markdown(f"**{label}**")
-                for v in items:
-                    link = f"[{v.title or v.url}]({v.url})" if v.url else (v.title or v.filename)
-                    st.markdown(f"{icon('video', 13)} {link}", unsafe_allow_html=True)
         if not videos:
-            st.info("No videos yet.")
+            st.info("No videos yet. Add match footage below and link it to its event dataset.")
+        for v in videos:
+            with st.container(border=True):
+                self._ft_video_card(shell, svc, player_id, v, VS)
         if self._can_edit:
             with st.expander("Add video"):
-                with st.form("ftp_vid", clear_on_submit=True):
-                    a, b = st.columns(2)
-                    kind = a.selectbox("Group", list(groups), format_func=lambda k: groups[k])
-                    title = b.text_input("Title")
-                    url = st.text_input("Link (YouTube / Hudl / Veo / …)")
-                    if st.form_submit_button("Add"):
-                        svc.add_video(shell.user, player_id, url=url, kind=kind, title=title)
+                st.markdown("**Add external video** (YouTube / Vimeo / Hudl / Veo)")
+                url = st.text_input("Video URL", key=f"ftv_url_{player_id}")
+                if st.button("Add link", key=f"ftv_link_{player_id}") and url.strip():
+                    svc.add_video(shell.user, player_id, url=url.strip(), kind="match"); st.rerun()
+                up = st.file_uploader("Or upload video", type=["mp4", "mov", "mkv", "webm", "avi"],
+                                      key=f"ftv_up_{player_id}")
+                if up is not None and st.button("Upload video", key=f"ftv_upbtn_{player_id}"):
+                    svc.add_video(shell.user, player_id, data=up.getvalue(), filename=up.name,
+                                  mime=up.type or "video/mp4", kind="match", title=up.name)
+                    st.rerun()
+        st.divider()
+        self._ft_match_history(shell, svc, player_id)
+
+    _MAX_INLINE_VIDEO = 25 * 1024 * 1024
+
+    def _vs_colors(self):
+        return {"accent": "#E07B2B", "muted": "#8A93A2"}
+
+    def _ft_video_card(self, shell, svc, player_id, v, VS) -> None:
+        sync = svc.video_sync_of(player_id, v.id)
+        mode = VS.component_mode(v)                       # upload|youtube|vimeo, or None
+        has_dataset = bool(sync.get("dataset_id"))
+        has_match = bool(sync.get("match_id"))
+        has_offset = sync.get("sync_offset_seconds") is not None
+        label = v.provider or ("uploaded" if v.kind == "upload" else "video")
+        st.markdown(f"{icon('video', 14)} **{_html.escape(v.title or v.url or 'Video')}** · {label}",
+                    unsafe_allow_html=True)
+        if mode is None:                                  # source can't be seeked -> plain
+            self._ft_video_static(svc, v)
+            st.caption("Click-to-seek isn't available for this source — standard link/playback shown.")
+        elif not (has_dataset and has_match):             # seekable but not linked
+            self._ft_video_static(svc, v)
+            C.render_alert("Dataset not linked. Link this footage to its match dataset to load "
+                           "the player's actions — it then stays bound regardless of the active "
+                           "dataset.", "info")
+            if self._can_edit:
+                self._ft_match_linker(shell, svc, player_id, v)
+        elif not has_offset:                              # linked, not calibrated
+            self._ft_calibrate(shell, svc, player_id, v, VS, sync)
+        else:                                             # fully synced -> player + timeline
+            self._ft_seek(shell, svc, player_id, v, VS, sync)
+        note = sync.get("note", "")
+        if self._can_edit:
+            with st.expander("Match / video note"):
+                txt = st.text_area("Note (about this match/clip — kept separate from player notes)",
+                                   value=note, key=f"ftv_note_{v.id}")
+                if st.button("Save note", key=f"ftv_notebtn_{v.id}"):
+                    svc.set_video_note(shell.user, player_id, v.id, txt); st.rerun()
+        elif note:
+            st.caption(f"Note: {_html.escape(note)}")
+        if self._can_edit and st.button("Delete video", key=f"ftv_del_{v.id}"):
+            svc.delete_video(shell.user, player_id, v.id); st.rerun()
+
+    @staticmethod
+    def _ft_video_static(svc, v) -> None:
+        if v.kind == "external" or not v.file_id:
+            if v.url:
+                st.markdown(f"{v.url}")
+        else:
+            data = svc.video_bytes(v.id)
+            if data and (v.mime or "").startswith("video/"):
+                st.video(data)
+
+    def _ft_component_src(self, svc, v, VS):
+        mode = VS.component_mode(v)
+        if mode == "upload":
+            data = svc.video_bytes(v.id)
+            if not data or len(data) > self._MAX_INLINE_VIDEO:
+                return None, ""
+            mime = v.mime or "video/mp4"
+            return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}", mime
+        if mode == "youtube":
+            return VS.youtube_id(v.url), ""
+        if mode == "vimeo":
+            return VS.vimeo_id(v.url), ""
+        return None, ""
+
+    def _ft_match_linker(self, shell, svc, player_id, v) -> None:
+        with st.expander("Link to match / dataset", expanded=True):
+            try:
+                active = shell.wm.active_dataset(shell.user)
+            except Exception:
+                active = None
+            # only offer EVENT datasets; the active dataset is just a convenient default
+            ds_options = []
+            try:
+                for d in shell.wm.list_datasets(workspace_id=shell.workspace_id):
+                    doc = d.document if isinstance(d.document, dict) else {}
+                    from fap.datahub.classification import PLAYER_SCOUTING
+                    if doc.get("dataset_type") != PLAYER_SCOUTING:
+                        ds_options.append(d)
+            except Exception:
+                ds_options = []
+            if not ds_options:
+                st.caption("No event datasets available. Import/activate a match event dataset in "
+                           "the Data Hub, then link it here.")
+                return
+            names = {d.id: d.name for d in ds_options}
+            default_i = next((i for i, d in enumerate(ds_options) if active and d.id == active.id), 0)
+            ds_id = st.selectbox("Event dataset", [d.id for d in ds_options], index=default_i,
+                                 format_func=lambda i: names.get(i, i), key=f"ftv_ds_{v.id}")
+            frame = svc._event_frame_for(ds_id)
+            match_ids = []
+            if frame is not None and "match_id" in getattr(frame, "columns", []):
+                match_ids = sorted({str(m).strip() for m in frame["match_id"] if str(m).strip()})
+            chosen = st.selectbox("Match", ["(choose)"] + match_ids, key=f"ftv_m_{v.id}")
+            manual = st.text_input("…or type a match id", key=f"ftv_mtxt_{v.id}")
+            target = manual.strip() or ("" if chosen == "(choose)" else chosen)
+            if st.button("Link match", key=f"ftv_lm_{v.id}") and target:
+                svc.link_video_to_match(shell.user, player_id, v.id, dataset_id=ds_id, match_id=target)
+                st.rerun()
+
+    def _ft_calibrate(self, shell, svc, player_id, v, VS, sync) -> None:
+        src, mime = self._ft_component_src(svc, v, VS)
+        if not src:
+            self._ft_video_static(svc, v)
+            st.caption("This file is too large for the interactive player — calibration unavailable.")
+            return
+        rendered, intent = VS.video_sync(mode=VS.component_mode(v), src=src, mime=mime,
+                                         calibrate=True, key=f"ftvs_{v.id}", colors=self._vs_colors())
+        if not rendered:
+            self._ft_video_static(svc, v)
+            return
+        st.caption(f"Linked to match **{sync.get('match_id')}**. Scrub to kickoff, then click "
+                   f"**Mark kickoff** in the player.")
+        if self._can_edit and st.button("Unlink match", key=f"ftv_ul_{v.id}"):
+            svc.unlink_video(shell.user, player_id, v.id); st.rerun()
+        if intent and self._can_edit and intent.get("nonce"):
+            if st.session_state.get(f"ftvs_mark_{v.id}") != intent["nonce"]:
+                st.session_state[f"ftvs_mark_{v.id}"] = intent["nonce"]
+                svc.set_video_sync(shell.user, player_id, v.id, sync.get("match_id", ""),
+                                   float(intent["time"]))
+                st.toast(f"Kickoff marked at {intent['time']:.1f}s"); st.rerun()
+
+    def _ft_seek(self, shell, svc, player_id, v, VS, sync) -> None:
+        src, mime = self._ft_component_src(svc, v, VS)
+        if not src:
+            self._ft_video_static(svc, v)
+            st.caption("This file is too large for the interactive player — standard playback shown.")
+            return
+        seek_key = f"ftvs_seek_{v.id}"
+        seek = st.session_state.get(seek_key) or {}
+        rendered, _ = VS.video_sync(mode=VS.component_mode(v), src=src, mime=mime,
+                                    seek_to=seek.get("time"), seek_nonce=seek.get("nonce", ""),
+                                    key=f"ftvs_{v.id}", colors=self._vs_colors())
+        if not rendered:
+            self._ft_video_static(svc, v)
+            return
+        ds_name = ""
+        try:
+            ds = shell.wm.get_dataset(sync.get("dataset_id", ""))
+            ds_name = ds.name if ds else ""
+        except Exception:
+            ds_name = ""
+        st.caption(f"Synced to match **{sync.get('match_id')}**"
+                   + (f" · dataset **{_html.escape(ds_name)}**" if ds_name else "")
+                   + f" (kickoff {float(sync['sync_offset_seconds']):.1f}s). Click an event to jump "
+                   "the video — actions stay from this dataset regardless of the active dataset.")
+        if self._can_edit:
+            c1, c2 = st.columns(2)
+            if c1.button("Recalibrate kickoff", key=f"ftv_recal_{v.id}", use_container_width=True):
+                svc.set_video_sync(shell.user, player_id, v.id, sync.get("match_id", ""), None); st.rerun()
+            if c2.button("Unlink match", key=f"ftv_unlink_{v.id}", use_container_width=True):
+                svc.unlink_video(shell.user, player_id, v.id)
+                st.session_state.pop(seek_key, None); st.rerun()
+        self._ft_event_timeline(shell, svc, player_id, v, seek_key, VS, sync)
+
+    def _ft_event_timeline(self, shell, svc, player_id, v, seek_key, VS, sync) -> None:
+        import uuid as _uuid
+        import pandas as pd
+        ev = svc.video_events(shell.user, player_id, v)
+        if ev is None:
+            C.render_alert("The linked dataset is unavailable or holds no events for this match.", "info")
+            return
+        ev = ev.copy()
+        if ev.empty:
+            C.render_alert(f"No events for match {sync.get('match_id')} for this player in the "
+                           "linked dataset.", "info")
+            return
+        ev["_m"] = pd.to_numeric(ev.get("minute", 0), errors="coerce").fillna(0).astype(int)
+        ev["_s"] = pd.to_numeric(ev.get("second", 0), errors="coerce").fillna(0).astype(int)
+        ev = ev.sort_values(["_m", "_s"])
+        types = sorted({str(t) for t in ev.get("event_type", pd.Series(dtype=str)) if str(t).strip()})
+        pick = st.multiselect("Event types", types, default=types, key=f"ftv_evt_{v.id}")
+        if pick:
+            ev = ev[ev["event_type"].astype(str).isin(pick)]
+        st.caption(f"{len(ev)} event(s) — click to seek:")
+        shown, ncol = ev.head(60), 3
+        cols = st.columns(ncol)
+        for i, (_, row) in enumerate(shown.iterrows()):
+            m, s = int(row["_m"]), int(row["_s"])
+            lbl = f"{m:02d}:{s:02d} · {str(row.get('event_type', 'event'))}"
+            if cols[i % ncol].button(lbl, key=f"ftv_ev_{v.id}_{i}", use_container_width=True):
+                t = VS.event_video_time(sync["sync_offset_seconds"], m, s)
+                st.session_state[seek_key] = {"time": t, "nonce": _uuid.uuid4().hex}
+                st.rerun()
+        if len(ev) > 60:
+            st.caption(f"Showing the first 60 of {len(ev)} — narrow by event type above.")
+
+    def _ft_match_history(self, shell, svc, player_id) -> None:
+        matches = svc.player_matches(shell.user, player_id)
+        C.render_dossier_label(f"Match history ({len(matches)})", icon=icon("match", 13))
+        if not matches:
+            st.caption("No match evidence yet. Link a video to its event dataset above.")
+            return
+        for m in matches:
+            title = m.get("match_id") or "match"
+            bits = [m.get("dataset_name") or "dataset",
+                    f"{m['event_count']} events" if m.get("exists") else "dataset unavailable",
+                    f"{m['videos']} video(s)" if m.get("videos") else "",
+                    "synced" if m.get("synced") else ""]
+            st.markdown(C.evidence_card_html(_html.escape(str(title)),
+                                             _html.escape(" · ".join(x for x in bits if x)),
+                                             icon=icon("match", 16)), unsafe_allow_html=True)
+
+    # ---- Notes & Files (dossier: typed notes, attachments, links) ------
+    _NOTE_LABELS = {"player": "Player", "match": "Match", "video": "Video", "event": "Event"}
+    _DOC_CATEGORIES = ("report", "match_report", "performance", "contract", "video", "other")
+
+    def _tab_notes_files(self, shell, svc, player_id, p) -> None:
+        self._ft_notes_section(shell, svc, player_id)
+        st.divider()
+        self._ft_attachments_section(shell, svc, player_id)
+        st.divider()
+        self._ft_links_section(shell, svc, player_id, p)
+
+    def _ft_notes_section(self, shell, svc, player_id) -> None:
+        C.render_section_title("Notes", eyebrow="Analyst observations",
+                               subtitle="Player, match and video notes — anchored to the player.",
+                               icon_name="text")
+        notes = svc.list_notes(player_id)
+        flt = st.radio("Filter", ["all"] + list(self._NOTE_LABELS),
+                       format_func=lambda k: "All" if k == "all" else self._NOTE_LABELS[k],
+                       horizontal=True, key=f"ftn_flt_{player_id}")
+        shown = [n for n in notes if flt == "all" or n.kind == flt]
+        if not shown:
+            st.caption("No analyst notes have been recorded for this player yet."
+                       if not notes else "No notes of this type yet.")
+        for n in shown:
+            with st.container(border=True):
+                doc = n.document or {}
+                head = self._NOTE_LABELS.get(n.kind, "Note").upper()
+                sub = " · ".join(x for x in (doc.get("title"), doc.get("match_id") and f"match {doc['match_id']}",
+                                             doc.get("video_id") and f"video {doc['video_id']}",
+                                             doc.get("category")) if x)
+                st.markdown(f"{icon('text', 13)} **{head}**"
+                            + (f" — {_html.escape(sub)}" if sub else ""), unsafe_allow_html=True)
+                st.markdown(_html.escape(n.body or "_empty_"))
+                st.caption(f"{n.author or '—'} · {n.updated_at or n.created_at}")
+                if self._can_edit:
+                    cc = st.columns([1, 1, 6])
+                    if cc[0].button("Edit", key=f"ftn_edit_{n.id}"):
+                        st.session_state[f"ftn_editing_{player_id}"] = n.id
+                    if cc[1].button("Delete", key=f"ftn_del_{n.id}"):
+                        svc.delete_note(shell.user, n.id); st.rerun()
+                    if st.session_state.get(f"ftn_editing_{player_id}") == n.id:
+                        newbody = st.text_area("Edit note", value=n.body, key=f"ftn_body_{n.id}")
+                        if st.button("Save", key=f"ftn_save_{n.id}"):
+                            svc.update_note(shell.user, n.id, body=newbody)
+                            st.session_state.pop(f"ftn_editing_{player_id}", None); st.rerun()
+        if self._can_edit:
+            with st.expander("+ Add note"):
+                a, b = st.columns([1, 2])
+                kind = a.selectbox("Type", list(self._NOTE_LABELS),
+                                   format_func=lambda k: self._NOTE_LABELS[k], key=f"ftn_kind_{player_id}")
+                title = b.text_input("Title (optional)", key=f"ftn_title_{player_id}")
+                ref = ""
+                if kind == "match":
+                    ref = st.text_input("Match id (optional)", key=f"ftn_match_{player_id}")
+                elif kind == "video":
+                    vids = svc.list_videos(player_id)
+                    ref = st.selectbox("Video (optional)", [""] + [v.id for v in vids],
+                                       format_func=lambda i: "—" if not i else next(
+                                           (v.title or v.url or i for v in vids if v.id == i), i),
+                                       key=f"ftn_vid_{player_id}")
+                body = st.text_area("Note", key=f"ftn_new_{player_id}")
+                if st.button("Add note", type="primary", key=f"ftn_addbtn_{player_id}") and body.strip():
+                    svc.add_note(shell.user, player_id, body.strip(), kind=kind, title=title,
+                                 match_id=ref if kind == "match" else "",
+                                 video_id=ref if kind == "video" else "")
+                    st.rerun()
+
+    def _ft_attachments_section(self, shell, svc, player_id) -> None:
+        C.render_dossier_label("Documents & attachments", icon=icon("folder", 13))
+        docs = svc.list_documents(player_id)
+        if not docs:
+            st.caption("No documents attached to this player yet.")
+        for d in docs:
+            cc = st.columns([4, 1, 1], vertical_alignment="center")
+            kb = f"{d.size_bytes // 1024} KB" if d.size_bytes else ""
+            cc[0].markdown(f"{icon('folder', 14)} **{_html.escape(d.filename or 'file')}** "
+                           f"<span style='color:var(--fap-text-muted)'>"
+                           f"{_html.escape((d.kind or 'document').upper())}"
+                           + (f" · {kb}" if kb else "") + f" · {d.created_at}</span>",
+                           unsafe_allow_html=True)
+            data = svc.document_bytes(d.id)
+            if data:
+                cc[1].download_button("Download", data, file_name=d.filename or "file",
+                                      key=f"ftd_dl_{d.id}", use_container_width=True)
+            if self._can_edit and cc[2].button("Remove", key=f"ftd_del_{d.id}",
+                                               use_container_width=True):
+                svc.delete_document(shell.user, d.id); st.rerun()
+        if self._can_edit:
+            with st.expander("+ Upload document"):
+                up = st.file_uploader("File", type=["pdf", "docx", "xlsx", "csv", "png", "jpg",
+                                                    "jpeg", "pptx", "txt"], key=f"ftd_up_{player_id}")
+                cat = st.selectbox("Category", self._DOC_CATEGORIES,
+                                   format_func=lambda c: c.replace("_", " ").title(),
+                                   key=f"ftd_cat_{player_id}")
+                if up is not None and st.button("Upload", key=f"ftd_upbtn_{player_id}"):
+                    svc.add_document(shell.user, player_id, up.getvalue(), up.name,
+                                     mime=up.type or "", kind=cat)
+                    st.rerun()
+
+    def _ft_links_section(self, shell, svc, player_id, p) -> None:
+        C.render_dossier_label("External links", icon=icon("link", 13))
+        links = svc.list_links(player_id)
+        if not links:
+            st.caption("No external profiles linked yet.")
+        for l in links:
+            cc = st.columns([5, 1], vertical_alignment="center")
+            cat = f" · {_html.escape(l['category'])}" if l.get("category") else ""
+            cc[0].markdown(f"{icon('link', 13)} [{_html.escape(l.get('title') or l['url'])}]({l['url']})"
+                           f"<span style='color:var(--fap-text-muted)'>{cat}</span>",
+                           unsafe_allow_html=True)
+            if self._can_edit and cc[1].button("Remove", key=f"ftl_del_{l['id']}",
+                                               use_container_width=True):
+                svc.delete_link(shell.user, player_id, l["id"]); st.rerun()
+        if self._can_edit:
+            with st.expander("+ Add link"):
+                a, b, c = st.columns([3, 2, 1])
+                url = a.text_input("URL", key=f"ftl_url_{player_id}", placeholder="fbref.com/…")
+                title = b.text_input("Label", key=f"ftl_title_{player_id}")
+                cat = c.text_input("Type", key=f"ftl_cat_{player_id}", placeholder="stats")
+                if st.button("Add link", key=f"ftl_add_{player_id}") and url.strip():
+                    try:
+                        svc.add_link(shell.user, player_id, url.strip(), title=title.strip(),
+                                     category=cat.strip())
                         st.rerun()
+                    except ValueError as exc:
+                        C.render_alert(f"Could not add link: {exc}", "warning")
+            st.divider()
+            st.markdown("**Club logo**")
+            logo = svc.image_bytes(p.club_logo_id) if p.club_logo_id else None
+            lc = st.columns([1, 4], vertical_alignment="center")
+            if logo:
+                lc[0].image(logo, width=64)
+            up = lc[1].file_uploader("Set / replace club logo", type=["png", "jpg", "jpeg", "webp"],
+                                     key=f"ftlogo_{player_id}")
+            if up is not None and lc[1].button("Save logo", key=f"ftlogo_btn_{player_id}"):
+                svc.set_club_logo(shell.user, player_id, up.getvalue(), up.type or "image/png")
+                st.rerun()
 
     # ---- Reports (ReportsManager) --------------------------------------
     def _tab_reports(self, shell, svc, player_id) -> None:
@@ -849,6 +1341,17 @@ class FirstTeamPlayersPage(Page):
         if p.profile_image_id and st.button("Remove image", key="ftp_img_del"):
             svc.update_player(shell.user, player_id, profile_image_id="")
             st.rerun()
+
+        st.divider()
+        st.markdown("**Performance rating** (A–F analyst assessment — not a recruitment fit)")
+        from fap.scouting import identity as _idn
+        ratings = [""] + list(_idn.ANALYST_RATINGS)
+        cur = svc.performance_rating_of(p)
+        newr = st.selectbox("Rating", ratings, index=ratings.index(cur) if cur in ratings else 0,
+                            format_func=lambda x: x or "— not rated", key="ftp_rating")
+        if st.button("Save rating", key="ftp_rating_save"):
+            svc.set_performance_rating(shell.user, player_id, newr)
+            st.success("Saved."); st.rerun()
 
         st.divider()
         st.markdown("**Danger zone**")

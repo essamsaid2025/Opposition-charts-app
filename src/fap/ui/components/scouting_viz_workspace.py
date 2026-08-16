@@ -300,23 +300,26 @@ def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
         key=f"{key}_pz_ms")
     st.session_state[state_key] = selected
 
-    # saved presets (reuse existing preset persistence)
-    with st.expander("Saved selections"):
-        sc = st.columns([2, 1])
-        pname = sc[0].text_input("Name", key=f"{key}_pz_name", placeholder="e.g. CF template")
-        if sc[1].button("Save selection", key=f"{key}_pz_save", use_container_width=True):
-            if selected and pname.strip():
-                svc.save_scouting_view_preset(shell.user, pname.strip(),
-                                              {"chart": "pizza", "metrics": selected})
-                st.toast(f"Saved '{pname.strip()}'")
-        saved = svc.list_scouting_view_presets(shell.user)
-        if saved:
-            pick = st.selectbox("Load", saved, format_func=lambda p: p["name"],
-                                key=f"{key}_pz_load_sel")
-            if st.button("Load selection", key=f"{key}_pz_load"):
-                st.session_state[state_key] = [s for s in pick["config"].get("metrics", [])
-                                               if s in sources]
-                st.rerun()
+    # saved presets (reuse the service's preset persistence when it offers it; the
+    # feature simply hides for a consumer that doesn't - e.g. First Team - so the
+    # workspace stays service-agnostic).
+    if hasattr(svc, "list_scouting_view_presets") and hasattr(svc, "save_scouting_view_preset"):
+        with st.expander("Saved selections"):
+            sc = st.columns([2, 1])
+            pname = sc[0].text_input("Name", key=f"{key}_pz_name", placeholder="e.g. CF template")
+            if sc[1].button("Save selection", key=f"{key}_pz_save", use_container_width=True):
+                if selected and pname.strip():
+                    svc.save_scouting_view_preset(shell.user, pname.strip(),
+                                                  {"chart": "pizza", "metrics": selected})
+                    st.toast(f"Saved '{pname.strip()}'")
+            saved = svc.list_scouting_view_presets(shell.user)
+            if saved:
+                pick = st.selectbox("Load", saved, format_func=lambda p: p["name"],
+                                    key=f"{key}_pz_load_sel")
+                if st.button("Load selection", key=f"{key}_pz_load"):
+                    st.session_state[state_key] = [s for s in pick["config"].get("metrics", [])
+                                                   if s in sources]
+                    st.rerun()
 
     data = viz.pizza_values(view, selected)
     if not data["available"]:

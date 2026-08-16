@@ -347,7 +347,8 @@ class NoteRepository(_ChildRepo):
             """INSERT INTO ft_player_notes (id, player_id, body, kind, pinned, private, author, document)
                VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(id) DO UPDATE SET body=excluded.body, kind=excluded.kind,
-                 pinned=excluded.pinned, private=excluded.private, updated_at=datetime('now')""",
+                 pinned=excluded.pinned, private=excluded.private, document=excluded.document,
+                 updated_at=datetime('now')""",
             (n.id, n.player_id, n.body, n.kind, int(n.pinned), int(n.private), n.author,
              json.dumps(n.document)))
 

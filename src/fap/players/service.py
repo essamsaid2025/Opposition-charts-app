@@ -334,16 +334,247 @@ class PlayersService:
         return self._file_storage.load(v.file_id) if (v and v.file_id and self._file_storage) else None
 
     # ================================================================ notes
-    def add_note(self, user: User, player_id: str, body: str, *, kind: str = "note",
-                 pinned: bool = False, private: bool = False) -> PlayerNote:
+    # note kinds distinguish the analyst's observation surfaces (FT-P6)
+    NOTE_KINDS = ("player", "match", "video", "event")
+
+    def add_note(self, user: User, player_id: str, body: str, *, kind: str = "player",
+                 title: str = "", category: str = "", match_id: str = "", video_id: str = "",
+                 tags: list[str] | None = None, pinned: bool = False,
+                 private: bool = False) -> PlayerNote:
+        """Add a typed analyst note (player / match / video / event). Extra metadata
+        (title, category, match_id, video_id, tags) is stored in the note's own
+        ``document`` JSON — no schema change. The note is anchored to ``player_id``."""
         self._require(user, Capability.EDIT_PLAYERS)
-        n = PlayerNote(id=self._uid(), player_id=player_id, body=body, kind=kind, pinned=pinned,
-                       private=private, author=user.email)
+        doc = {k: v.strip() for k, v in (("title", title), ("category", category),
+                                         ("match_id", match_id), ("video_id", video_id)) if v.strip()}
+        clean_tags = [str(t).strip() for t in (tags or []) if str(t).strip()]
+        if clean_tags:
+            doc["tags"] = clean_tags
+        n = PlayerNote(id=self._uid(), player_id=player_id, body=body,
+                       kind=(kind or "player"), pinned=pinned, private=private,
+                       author=user.email, document=doc)
         self.notes.add(n)
+        self.audit.record(user, "players.note.add", target_type="player", target_id=player_id,
+                          detail={"kind": n.kind})
         return n
 
-    def list_notes(self, player_id: str) -> list[PlayerNote]:
-        return self.notes.list(player_id)
+    def update_note(self, user: User, note_id: str, *, body: str | None = None,
+                    kind: str | None = None, title: str | None = None,
+                    category: str | None = None, match_id: str | None = None,
+                    video_id: str | None = None, tags: list[str] | None = None,
+                    pinned: bool | None = None) -> PlayerNote:
+        self._require(user, Capability.EDIT_PLAYERS)
+        n = self.notes.get(note_id)
+        if n is None:
+            raise ValueError(f"note {note_id!r} not found")
+        if body is not None:
+            n.body = body
+        if kind is not None:
+            n.kind = kind or "player"
+        if pinned is not None:
+            n.pinned = bool(pinned)
+        doc = dict(n.document or {})
+        for key, val in (("title", title), ("category", category), ("match_id", match_id),
+                         ("video_id", video_id)):
+            if val is not None:
+                if str(val).strip():
+                    doc[key] = str(val).strip()
+                else:
+                    doc.pop(key, None)
+        if tags is not None:
+            clean = [str(t).strip() for t in tags if str(t).strip()]
+            doc["tags"] = clean if clean else None
+            if not doc["tags"]:
+                doc.pop("tags", None)
+        n.document = doc
+        self.notes.add(n)                                 # UPSERT (document included)
+        self.audit.record(user, "players.note.edit", target_type="player",
+                          target_id=n.player_id, detail={"note_id": note_id})
+        return n
+
+    def delete_note(self, user: User, note_id: str) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        n = self.notes.get(note_id)
+        self.notes.delete(note_id)
+        self.audit.record(user, "players.note.delete", target_type="player",
+                          target_id=(n.player_id if n else ""), detail={"note_id": note_id})
+
+    def list_notes(self, player_id: str, *, kind: str = "") -> list[PlayerNote]:
+        notes = self.notes.list(player_id)
+        return [n for n in notes if n.kind == kind] if kind else notes
+
+    # ---- attachments: delete (add_document/list_documents/document_bytes exist) ----
+    def delete_document(self, user: User, doc_id: str) -> None:
+        """Remove a player attachment: delete the FileStorage blob and the row. The
+        binary always lived in FileStorage, never in Player.document."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        d = self.documents.get(doc_id)
+        if d is not None and getattr(d, "file_id", "") and self._file_storage is not None:
+            try:
+                self._file_storage.delete(d.file_id)
+            except Exception:
+                pass
+        self.documents.delete(doc_id)
+        self.audit.record(user, "players.document.delete", target_type="player",
+                          target_id=(d.player_id if d else ""), detail={"doc_id": doc_id})
+
+    # ---- media: delete image + set club logo (add_image/image_bytes exist) ----
+    def delete_image(self, user: User, image_row_id: str) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        im = self.images.get(image_row_id)
+        if im is not None and getattr(im, "image_id", "") and self._image_storage is not None:
+            try:
+                self._image_storage.delete(im.image_id)
+            except Exception:
+                pass
+        self.images.delete(image_row_id)
+        if im is not None:
+            p = self.get_player(im.player_id)
+            if p is not None and p.profile_image_id == im.image_id:
+                self.update_player(user, im.player_id, profile_image_id="")
+        self.audit.record(user, "players.image.delete", target_type="player",
+                          target_id=(im.player_id if im else ""), detail={"image_row_id": image_row_id})
+
+    def set_club_logo(self, user: User, player_id: str, data: bytes, mime: str) -> Player:
+        self._require(user, Capability.EDIT_PLAYERS)
+        if self._image_storage is None:
+            raise ValueError("Image storage is not configured.")
+        image_id = self._uid()
+        self._image_storage.save(image_id, data, mime)
+        self.audit.record(user, "players.logo.set", target_type="player", target_id=player_id)
+        return self.update_player(user, player_id, club_logo_id=image_id)
+
+    # ---- external links (player-owned, in document['links']; active-independent) ----
+    @staticmethod
+    def _safe_url(url: str) -> str:
+        """A validated http(s) URL, or "" when unsafe/empty. Rejects javascript:/data:/
+        vbscript:/file: schemes; a scheme-less host defaults to https://."""
+        u = str(url or "").strip()
+        if not u:
+            return ""
+        low = u.lower()
+        if low.startswith(("javascript:", "data:", "vbscript:", "file:", "about:")):
+            return ""
+        if not low.startswith(("http://", "https://")):
+            u = "https://" + u
+        return u
+
+    def _links(self, player) -> list[dict[str, Any]]:
+        doc = getattr(player, "document", None) or {}
+        return list(doc.get("links") or [])
+
+    def list_links(self, player_id: str) -> list[dict[str, Any]]:
+        p = self.get_player(player_id)
+        return self._links(p) if p else []
+
+    def add_link(self, user: User, player_id: str, url: str, *, title: str = "",
+                 category: str = "") -> dict[str, Any]:
+        self._require(user, Capability.EDIT_PLAYERS)
+        safe = self._safe_url(url)
+        if not safe:
+            raise ValueError("invalid or unsafe URL")
+        p = self._player_or_raise(player_id)
+        links = self._links(p)
+        link = {"id": self._uid(), "url": safe, "title": (title.strip() or safe),
+                "category": category.strip(), "created_at": _now(), "created_by": user.email}
+        links.append(link)
+        self._set_doc(user, player_id, "players.link.add", links=links)
+        return link
+
+    def delete_link(self, user: User, player_id: str, link_id: str) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        p = self._player_or_raise(player_id)
+        links = [l for l in self._links(p) if l.get("id") != link_id]
+        self._set_doc(user, player_id, "players.link.delete", links=links)
+
+    # ============================================================ intelligence dashboard (FT-P7)
+    # A performance dossier aggregator over the existing FT-P2..P6 data. The A-F rating
+    # here is a first-team PERFORMANCE rating (document['performance_rating']) — a
+    # distinct concept from scouting's recruitment rating; it reuses only the neutral
+    # A-F vocabulary. Nothing here depends on the active dataset.
+    def performance_rating_of(self, player) -> str:
+        from fap.scouting import identity
+        doc = getattr(player, "document", None) or {}
+        return identity.normalize_rating(doc.get("performance_rating"))
+
+    def set_performance_rating(self, user: User, player_id: str, rating: str) -> Player:
+        """The analyst's A-F PERFORMANCE rating (not a recruitment fit). '' clears it;
+        any non-A-F value is rejected. Audited."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        from fap.scouting import identity
+        raw = str(rating or "").strip().upper()
+        if raw and raw not in identity.ANALYST_RATINGS:
+            raise ValueError(f"invalid performance rating {rating!r}; expected A-F or empty")
+        return self._set_doc(user, player_id, "players.performance_rating",
+                             performance_rating=raw)
+
+    def player_percentile_highlights(self, user: User, player_id: str, dataset_id: str,
+                                     n: int = 5) -> tuple[list[dict], list[dict]]:
+        """(strengths, areas-to-monitor) as top/bottom metric percentiles for the
+        player in a SPECIFIC linked dataset (by id, active-independent). Observation
+        only — empty when the player row can't be resolved."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        ctx = self.player_viz_context(user, player_id, dataset_id)
+        if ctx is None:
+            return [], []
+        from fap.scouting import viz
+        view = viz.build_view(ctx["frame"], ctx["schema"], [ctx["primary"]],
+                              dataset_id=ctx["id"], dataset_name=ctx["name"])
+        key = ctx["primary"]
+        ranked = [(m.name, m.percentile(key)) for m in view.metrics if m.percentile(key) is not None]
+        ranked.sort(key=lambda t: t[1], reverse=True)
+        strengths = [{"name": nm, "percentile": round(pct)} for nm, pct in ranked[:n]]
+        dev = [{"name": nm, "percentile": round(pct)} for nm, pct in ranked[-n:][::-1]] \
+            if len(ranked) > n else []
+        return strengths, dev
+
+    def _recent_activity(self, player, videos, visuals, notes) -> list[dict[str, Any]]:
+        """Recent player activity from REAL persisted timestamps only (never fabricated).
+        Merges note/visual/video created_at + dataset-link confirmed_at, newest first."""
+        acts: list[dict[str, Any]] = []
+        for n in notes:
+            acts.append({"kind": "note", "label": "Note added",
+                         "detail": n.kind, "at": n.created_at or ""})
+        for a in visuals:
+            acts.append({"kind": "visual", "label": "Visualization saved",
+                         "detail": a.get("title", ""), "at": a.get("created_at", "")})
+        for v in videos:
+            acts.append({"kind": "video", "label": "Video added",
+                         "detail": v.title or "", "at": v.created_at or ""})
+        for _ds, link in (self._dataset_links(player) or {}).items():
+            acts.append({"kind": "dataset", "label": "Dataset linked",
+                         "detail": (link or {}).get("dataset_name", ""),
+                         "at": (link or {}).get("confirmed_at", "")})
+        acts = [a for a in acts if a["at"]]
+        acts.sort(key=lambda t: t["at"], reverse=True)
+        return acts[:8]
+
+    def player_intelligence(self, user: User, player_id: str) -> dict[str, Any]:
+        """Everything the premium first-team dashboard needs, aggregated from the
+        existing FT services (counts + rating + linked datasets + recent notes/activity).
+        Active-dataset independent; never fabricates."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        p = self.get_player(player_id)
+        if p is None:
+            return {}
+        datasets = self.linked_player_scouting_datasets(user, player_id)
+        matches = self.player_matches(user, player_id)
+        videos = self.list_videos(player_id)
+        visuals = self.list_player_visualizations(player_id)
+        notes = self.list_notes(player_id)
+        docs = self.list_documents(player_id)
+        links = self.list_links(player_id)
+        try:
+            reports = self.player_reports(user, player_id).get("reports", [])
+        except Exception:
+            reports = []
+        return {
+            "rating": self.performance_rating_of(p),
+            "counts": {"data_sources": len(datasets), "matches": len(matches),
+                       "videos": len(videos), "visuals": len(visuals), "notes": len(notes),
+                       "attachments": len(docs), "links": len(links), "reports": len(reports)},
+            "datasets": datasets, "matches": matches, "videos": videos, "visuals": visuals,
+            "notes": notes, "activity": self._recent_activity(p, videos, visuals, notes)}
 
     # ================================================================ career
     def add_career(self, user: User, player_id: str, **fields: Any) -> PlayerCareer:
@@ -704,6 +935,171 @@ class PlayersService:
         self.players.save(p)
         self.audit.record(user, "players.visualization.delete", target_type="player",
                           target_id=player_id, detail={"asset_id": asset_id})
+
+    # ============================================================ video evidence + timeline (FT-P5)
+    # PLAYER → VIDEO → DATASET_ID → MATCH_ID → EVENTS → VIDEO TIMESTAMP. The video's
+    # (dataset_id, match_id, sync_offset_seconds, team, note) are stored additively in
+    # Player.document['video_sync'][video_id] (ft_player_videos has no sync columns —
+    # document is the established FT boundary, no migration). Event actions ALWAYS come
+    # from the video's PERSISTED dataset_id via WorkspaceManager.dataset_frame — the
+    # active dataset has ZERO influence. Reuses the domain-neutral evidence.event_rows +
+    # identity.identity_keys + the shared video_sync component (no second video engine).
+    def _video_sync(self, player) -> dict[str, Any]:
+        doc = getattr(player, "document", None) or {}
+        vs = doc.get("video_sync")
+        return dict(vs) if isinstance(vs, dict) else {}
+
+    def video_sync_of(self, player_id: str, video_id: str) -> dict[str, Any]:
+        """The persisted (dataset_id, match_id, sync_offset_seconds, team, note) for a
+        video, or {} for a legacy/unlinked video (NEVER the active dataset)."""
+        p = self.get_player(player_id)
+        return dict(self._video_sync(p).get(video_id) or {}) if p else {}
+
+    def _write_video_sync(self, user: User, player_id: str, video_id: str,
+                          patch: dict[str, Any], action: str) -> dict[str, Any]:
+        vs = self._video_sync(self._player_or_raise(player_id))
+        cur = dict(vs.get(video_id) or {})
+        cur.update(patch)
+        cur["updated_at"] = _now()
+        vs[video_id] = cur
+        self._set_doc(user, player_id, action, video_sync=vs)
+        return cur
+
+    def link_video_to_match(self, user: User, player_id: str, video_id: str, *,
+                            dataset_id: str, match_id: str = "", team: str = "") -> dict[str, Any]:
+        """Persist a video's evidence source (dataset_id, match_id[, team]). The action
+        list then ALWAYS comes from this dataset by id; the active dataset never
+        influences it. Kickoff offset is left for calibration."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        return self._write_video_sync(user, player_id, video_id,
+                                      {"dataset_id": str(dataset_id or ""),
+                                       "match_id": str(match_id or ""), "team": str(team or "")},
+                                      "players.video.link")
+
+    def set_video_sync(self, user: User, player_id: str, video_id: str, match_id: str,
+                       sync_offset_seconds: float | None) -> dict[str, Any]:
+        """Record the video's match association + kickoff offset (calibration). Clearing
+        the match (empty match_id) also drops the persisted dataset link (mirrors the
+        scouting semantics)."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        patch: dict[str, Any] = {"match_id": str(match_id or ""),
+                                 "sync_offset_seconds": None if sync_offset_seconds is None
+                                 else float(sync_offset_seconds)}
+        if not str(match_id or "").strip():
+            patch["dataset_id"] = ""
+        return self._write_video_sync(user, player_id, video_id, patch, "players.video.sync")
+
+    def unlink_video(self, user: User, player_id: str, video_id: str) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        self._write_video_sync(user, player_id, video_id,
+                               {"dataset_id": "", "match_id": "", "sync_offset_seconds": None},
+                               "players.video.unlink")
+
+    def set_video_note(self, user: User, player_id: str, video_id: str, note: str) -> dict[str, Any]:
+        """A match/video-level note — kept distinct from global player notes and event
+        evidence (stored on the video's sync record)."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        return self._write_video_sync(user, player_id, video_id, {"note": str(note or "")},
+                                      "players.video.note")
+
+    def delete_video(self, user: User, player_id: str, video_id: str) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        v = self.videos.get(video_id)
+        if v is not None and getattr(v, "file_id", "") and self._file_storage is not None:
+            try:
+                self._file_storage.delete(v.file_id)
+            except Exception:
+                pass
+        self.videos.delete(video_id)
+        p = self._player_or_raise(player_id)
+        vs = self._video_sync(p)
+        if video_id in vs:
+            vs.pop(video_id, None)
+            self._set_doc(user, player_id, "players.video.delete", video_sync=vs)
+        else:
+            self.audit.record(user, "players.video.delete", target_type="player",
+                              target_id=player_id, detail={"video_id": video_id})
+
+    def _event_frame_for(self, dataset_id: str):
+        """A frame for an EVENT dataset read BY ID (never active), or None when the
+        dataset is missing or is a player-scouting (metric) dataset."""
+        if self._wm is None or not dataset_id:
+            return None
+        ds = self._wm.get_dataset(dataset_id)
+        if ds is None:
+            return None
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        if doc.get("dataset_type") == PLAYER_SCOUTING:
+            return None
+        try:
+            return self._wm.dataset_frame(dataset_id)
+        except Exception:
+            return None
+
+    def video_events(self, user: User, player_id: str, video) -> "pd.DataFrame | None":
+        """The event/action rows for a LINKED video, read from the video's PERSISTED
+        ``dataset_id`` (via WorkspaceManager.dataset_frame), NEVER the active dataset.
+        Scoped by player identity (name+aliases) + the video's match_id via the
+        domain-neutral ``evidence.event_rows``. ``None`` when the video is unlinked
+        (legacy) or the dataset is missing/not event data — the caller shows an honest
+        state and an explicit linking action; it never falls back to the active dataset."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        vid_id = getattr(video, "id", None) or str(video)
+        sync = self.video_sync_of(player_id, vid_id)
+        ds_id = sync.get("dataset_id") or ""
+        if not ds_id:
+            return None
+        frame = self._event_frame_for(ds_id)
+        if frame is None:
+            return None
+        from fap.scouting import evidence, identity
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        keys = identity.identity_keys(p)
+        return evidence.event_rows(frame, keys, team=sync.get("team", "") or "",
+                                   match_id=sync.get("match_id", "") or "")
+
+    def player_matches(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """Match history for the player, aggregated across linked videos + explicit
+        match links, deduped by (dataset_id, match_id). Event counts are read by
+        dataset_id (active-independent); a missing dataset is reported, never dropped."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        p = self.get_player(player_id)
+        if p is None:
+            return []
+        from fap.scouting import evidence, identity
+        keys = identity.identity_keys(p)
+        seen: dict[tuple, dict[str, Any]] = {}
+
+        def _entry(ds_id: str, match_id: str, team: str) -> dict[str, Any]:
+            k = (ds_id, match_id or "")
+            e = seen.get(k)
+            if e is None:
+                ds = self._wm.get_dataset(ds_id) if self._wm else None
+                frame = self._event_frame_for(ds_id)
+                ec = 0
+                if frame is not None:
+                    rows = evidence.event_rows(frame, keys, team=team or "", match_id=match_id or "")
+                    ec = 0 if rows is None else int(len(rows))
+                e = {"dataset_id": ds_id, "dataset_name": ds.name if ds else "",
+                     "match_id": match_id or "", "team": team or "", "event_count": ec,
+                     "exists": ds is not None, "videos": 0, "synced": False}
+                seen[k] = e
+            return e
+        for _vid, sync in self._video_sync(p).items():
+            ds_id = sync.get("dataset_id") or ""
+            if not ds_id:
+                continue
+            e = _entry(ds_id, sync.get("match_id") or "", sync.get("team") or "")
+            e["videos"] += 1
+            if sync.get("sync_offset_seconds") is not None:
+                e["synced"] = True
+        for l in self.match_links.list(player_id):
+            if l.dataset_id:
+                _entry(l.dataset_id, l.match_id or "", "")
+        return list(seen.values())
 
     # ================================================================ promote (read-only bridge)
     def promote_from_scouting(self, user: User, scout_player_id: str) -> Player:
