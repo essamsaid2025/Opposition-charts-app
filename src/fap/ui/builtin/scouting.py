@@ -28,6 +28,32 @@ def _initials(name: str) -> str:
     return ("".join(p[0] for p in parts[:2]) or "?").upper()
 
 
+def _img_data_uri(data) -> str:
+    """A data: URI for stored image bytes (mime sniffed from the magic number), or
+    "" when the bytes are missing/undecodable — so the hero silently falls back to
+    an initials avatar and never renders a broken image or raises."""
+    if not data:
+        return ""
+    try:
+        b = bytes(data)
+        if b[:8].startswith(b"\x89PNG"):
+            mime = "image/png"
+        elif b[:3] == b"\xff\xd8\xff":
+            mime = "image/jpeg"
+        elif b[:6] in (b"GIF87a", b"GIF89a"):
+            mime = "image/gif"
+        elif b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+            mime = "image/webp"
+        elif b.lstrip()[:4] == b"<svg" or b.lstrip()[:5] == b"<?xml":
+            mime = "image/svg+xml"
+        else:
+            mime = "image/png"
+        import base64
+        return f"data:{mime};base64,{base64.b64encode(b).decode('ascii')}"
+    except Exception:
+        return ""
+
+
 def _safe_image(container, data, *, width) -> bool:
     """Render an image, tolerating broken/undecodable bytes (spec: media fallbacks
     must never error). Returns True if it displayed."""
@@ -311,72 +337,158 @@ class ScoutingPage(Page):
 
     # ------------------------------------------------------------ player detail
     def _player_detail(self, shell, svc, player_id) -> None:
+        """The premium recruitment dossier: a persistent hero + snapshot + intelligence
+        strip (always visible, above the fold) over five sections — Overview, Analysis,
+        Evidence, Media, Reports. Every section reuses the existing services; nothing
+        here depends on the active dataset."""
         p = svc.view_player(shell.user, player_id)
         if p is None:
             st.session_state.pop(SEL, None)
             st.rerun()
-        top = st.columns([1, 5, 1], vertical_alignment="center")
+            return
+        dash = svc.player_dashboard(shell.user, p.id)
+
+        # ---- top bar: Back | Favorite ----
+        top = st.columns([1, 6, 1], vertical_alignment="center")
         if top[0].button("Back", key="scout_back", use_container_width=True):
             st.session_state.pop(SEL, None)
             st.rerun()
-        from fap.scouting import identity
-        from fap.scouting import profiles as _profiles
-        op = identity.operational_id_of(p)
-        prof = identity.recruitment_profile_of(p)
-        prof_obj = _profiles.get_profile(prof)
-        prof_name = prof_obj.name if prof_obj else ""
-        type_kind = "info" if identity.player_type_of(p) == "first_team" else "neutral"
-        top[1].subheader(f"{p.name}  ·  {p.position or '—'}  ·  {p.club or '—'}")
-        badges = (
-            C.badge_html(identity.type_label(identity.player_type_of(p)), type_kind) + " "
-            + C.badge_html(identity.status_label(p.status) or "—", "warning") + " "
-            + C.badge_html(identity.priority_label(p.priority) or "No priority", "neutral"))
-        if op:
-            badges += f" &nbsp; <span style='color:var(--fap-text-muted)'>{_html.escape(op)}</span>"
-        if prof_name:
-            badges += f" &nbsp; <b>{_html.escape(prof_name)}</b>"
-        top[1].markdown(badges, unsafe_allow_html=True)
-        logo = svc.image_bytes(p.club_logo_id) if p.club_logo_id else None
-        _safe_image(top[2], logo, width=48)
         if self._can_edit and top[2].button("Favorite" if not p.favorite else "Unfavorite",
                                             key="scout_fav_btn", use_container_width=True,
                                             type="primary" if not p.favorite else "secondary"):
             svc.set_favorite(shell.user, p.id, not p.favorite)
             st.rerun()
 
-        hcols = st.columns([1, 5], vertical_alignment="center")
-        data = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
-        if not _safe_image(hcols[0], data, width=120):
-            hcols[0].markdown(_AVATAR.format(_initials(p.name)).replace("56px", "120px")
-                              .replace("18px", "38px"), unsafe_allow_html=True)
-        # live recruitment-profile fit against the active scouting dataset (if any)
-        if prof:
-            fit = svc.profile_fit_for(shell.user, p.id, prof)
-            if fit and fit.get("available"):
-                score = fit["score"]
-                hcols[1].markdown(
-                    f"**{prof_name} fit** &nbsp; {C.badge_html(f'{score:.0f}%', 'success')}"
-                    f" &nbsp; <span style='color:var(--fap-text-muted)'>{fit['mode']} · "
-                    f"{len(fit['matched'])} metrics</span>", unsafe_allow_html=True)
-            elif fit is not None:
-                hcols[1].caption(f"{prof_name} fit unavailable: {fit.get('reason', '')}")
+        # ---- hero + snapshot + recruitment intelligence (always visible) ----
+        self._hero(shell, svc, p, dash)
+        self._snapshot_strip(svc, p, dash)
+        self._intel_strip(shell, svc, p, dash)
 
-        tabs = st.tabs(["Profile", "Visualization", "Notes", "Images", "Videos",
-                        "Attachments", "Reports"])
+        # ---- five professional sections ----
+        tabs = st.tabs(["Overview", "Analysis", "Evidence", "Media", "Reports"])
         with tabs[0]:
-            self._profile(shell, svc, p)
+            self._tab_overview(shell, svc, p, dash)
         with tabs[1]:
-            self._tab_visualization(shell, svc, p)
+            self._tab_analysis(shell, svc, p)
         with tabs[2]:
-            self._notes(shell, svc, p)
+            self._tab_evidence(shell, svc, p, dash)
         with tabs[3]:
-            self._images(shell, svc, p)
+            self._tab_media(shell, svc, p)
         with tabs[4]:
-            self._videos(shell, svc, p)
-        with tabs[5]:
-            self._attachments(shell, svc, p)
-        with tabs[6]:
-            self._reports(shell, svc, p)
+            self._tab_reports(shell, svc, p)
+
+    # ---- hero ---------------------------------------------------------------
+    def _hero(self, shell, svc, p, dash) -> None:
+        from fap.scouting import identity
+        from fap.scouting import profiles as _profiles
+        snap = dash["snapshot"]
+        op = identity.operational_id_of(p)
+        prof = identity.recruitment_profile_of(p)
+        prof_obj = _profiles.get_profile(prof)
+        prof_name = prof_obj.name if prof_obj else ""
+        ptype = identity.player_type_of(p)
+        type_kind = "info" if ptype == "first_team" else "neutral"
+        prio = snap.get("priority") or ""
+        prio_kind = {"critical": "danger", "high": "warning"}.get(prio, "neutral")
+
+        badges = C.badge_html(identity.type_label(ptype), type_kind)
+        status_lbl = identity.status_label(snap.get("status")) if ptype == "first_team" else ""
+        if status_lbl:
+            badges += " " + C.badge_html(status_lbl, "warning")
+        prio_lbl = identity.priority_label(prio)
+        if prio_lbl:
+            badges += " " + C.badge_html(prio_lbl, prio_kind)
+        if ptype == "academy" and snap.get("age_group"):
+            badges += " " + C.badge_html(snap["age_group"], "info")
+
+        photo = _img_data_uri(svc.image_bytes(p.profile_image_id)) if p.profile_image_id else ""
+        logo = _img_data_uri(svc.image_bytes(p.club_logo_id)) if p.club_logo_id else ""
+        pos_line = "  ·  ".join(x for x in (p.position, p.club) if x) or "—"
+        ctx = [("Club", _html.escape(str(snap.get("club") or "—"))),
+               ("Position", _html.escape(", ".join(snap.get("positions") or []) or (p.position or "—"))),
+               ("Age", str(snap.get("age")) if snap.get("age") else "—"),
+               ("Nationality", _html.escape(str(snap.get("nationality") or "—")))]
+        C.render_player_hero(
+            _html.escape(snap.get("display_name") or p.name), position_line=_html.escape(pos_line),
+            photo_uri=photo, initials=_initials(p.name), logo_uri=logo, badges_html=badges,
+            operational_id=_html.escape(op or ""), profile_name=_html.escape(prof_name),
+            context=ctx)
+
+    # ---- compact snapshot ---------------------------------------------------
+    def _snapshot_strip(self, svc, p, dash) -> None:
+        snap = dash["snapshot"]
+
+        def _v(x):
+            return "—" if x in (None, "", []) else str(x)
+        age_sub = "" if snap["age_derived"] else "stored" if snap["age"] else ""
+        tiles = [
+            C.dossier_stat_html("Age", _v(snap["age"]), sub=age_sub),
+            C.dossier_stat_html("Height", f"{snap['height_cm']}" if snap["height_cm"] else "—",
+                                sub="cm" if snap["height_cm"] else ""),
+            C.dossier_stat_html("Weight", f"{snap['weight_kg']}" if snap["weight_kg"] else "—",
+                                sub="kg" if snap["weight_kg"] else ""),
+            C.dossier_stat_html("Foot", snap["preferred_foot"].title()),
+            C.dossier_stat_html("Positions", _html.escape(", ".join(snap["positions"]) or "—")),
+            C.dossier_stat_html("Nationality", _html.escape(_v(snap["nationality"]))),
+            C.dossier_stat_html("Contract", _html.escape(_v(snap["contract_expires"]))),
+            C.dossier_stat_html("Shirt", f"#{snap['shirt_number']}" if snap["shirt_number"] else "—"),
+        ]
+        C.render_dossier_grid(tiles)
+
+    # ---- recruitment intelligence ------------------------------------------
+    def _intel_strip(self, shell, svc, p, dash) -> None:
+        from fap.scouting import identity
+        from fap.scouting import profiles as _profiles
+        snap = dash["snapshot"]
+        ptype = identity.player_type_of(p)
+        # data coverage from the dashboard's data sources (metrics when available)
+        cov = "—"
+        for d in dash.get("data_sources", []):
+            if d["kind"] == "player_scouting" and d.get("status") == "metrics_available":
+                cov = f"{d.get('metric_count', 0)} metrics"
+                break
+
+        if ptype == "academy":
+            ac = dash.get("academy", {}) or {}
+            def _pot(v):
+                return (f"{int(v)}", "good") if v else ("—", "muted")
+            tech_v, tech_k = _pot(ac.get("technical_potential"))
+            tact_v, tact_k = _pot(ac.get("tactical_potential"))
+            phys_v, phys_k = _pot(ac.get("physical_potential"))
+            items = [
+                ("Pathway", identity.type_label(ptype), ""),
+                ("Age group", snap.get("age_group") or "—", "" if snap.get("age_group") else "muted"),
+                ("Stage", _html.escape(ac.get("stage") or "—"), "" if ac.get("stage") else "muted"),
+                ("Technical", tech_v, tech_k), ("Tactical", tact_v, tact_k),
+                ("Physical", phys_v, phys_k),
+                ("Data coverage", cov, "" if cov != "—" else "muted"),
+            ]
+            C.render_dossier_label("Development intelligence")
+            C.render_intel_strip(items)
+            return
+
+        prof = identity.recruitment_profile_of(p)
+        prof_obj = _profiles.get_profile(prof)
+        prof_name = prof_obj.name if prof_obj else "—"
+        fit = dash.get("fit")
+        if fit and fit.get("available"):
+            fit_v, fit_k = f"{fit['score']:.0f}%", "good"
+        elif fit is not None:
+            fit_v, fit_k = "Unavailable", "muted"
+        else:
+            fit_v, fit_k = "No profile", "muted"
+        items = [
+            ("Recruitment profile", _html.escape(prof_name), "" if prof_name != "—" else "muted"),
+            ("Profile fit", fit_v, fit_k),
+            ("Status", identity.status_label(snap.get("status")) or "—", ""),
+            ("Priority", identity.priority_label(snap.get("priority")) or "—",
+             "warn" if snap.get("priority") in ("high", "critical") else "muted"
+             if not snap.get("priority") else ""),
+            ("Pathway", identity.type_label(ptype), ""),
+            ("Data coverage", cov, "" if cov != "—" else "muted"),
+        ]
+        C.render_dossier_label("Recruitment intelligence")
+        C.render_intel_strip(items)
 
     def _tab_visualization(self, shell, svc, p) -> None:
         """Player-scoped Visual Analysis. The scouting chart workspace runs over the
@@ -640,43 +752,21 @@ class ScoutingPage(Page):
                 else:
                     st.info("This visualization could not be rendered from the current events.")
 
-    def _profile(self, shell, svc, p) -> None:
-        """The premium player dashboard - a professional scouting dossier, not a
-        CRUD form. Built from ``player_dashboard`` (snapshot + dataset state + fit +
-        percentile highlights + counts). Missing data shows 'Not available'."""
+    # ============================================================ OVERVIEW tab
+    def _tab_overview(self, shell, svc, p, dash) -> None:
+        """The dossier landing: recruitment intelligence detail, the scouting summary
+        (observed strengths / areas to monitor), data coverage, the persistent data
+        sources, and — for editors — the full identity/recruitment/academy/history
+        editors and admin actions. The hero/snapshot/intel already sit above."""
         from fap.scouting import identity
-        dash = svc.player_dashboard(shell.user, p.id)
         snap = dash["snapshot"]
 
-        # ---- profile snapshot (compact cards) ----
-        def _v(x):
-            return "—" if x in (None, "", []) else x
-        cards = [
-            C.metric_card_html("Age", _v(snap["age"]), hint="from DOB" if snap["age_derived"] else "not derived"),
-            C.metric_card_html("Height", f"{snap['height_cm']} cm" if snap["height_cm"] else "—"),
-            C.metric_card_html("Weight", f"{snap['weight_kg']} kg" if snap["weight_kg"] else "—"),
-            C.metric_card_html("Foot", snap["preferred_foot"].title()),
-            C.metric_card_html("Positions", ", ".join(snap["positions"]) or "—"),
-            C.metric_card_html("Contract", _v(snap["contract_expires"])),
-        ]
-        C.render_metric_row(cards)
-        line = f"**Nationality** {_v(snap['nationality'])}"
-        if snap["secondary_nationalities"]:
-            line += f" ( + {', '.join(snap['secondary_nationalities'])})"
-        line += f" &nbsp; · &nbsp; **Club** {_v(snap['club'])} &nbsp; · &nbsp; **League** {_v(snap['league'])}"
-        if snap["shirt_number"]:
-            line += f" &nbsp; · &nbsp; **#{snap['shirt_number']}**"
-        if snap["agent"]:
-            line += f" &nbsp; · &nbsp; **Agent** {_html.escape(str(snap['agent']))}"
-        st.markdown(line, unsafe_allow_html=True)
-
-        # ---- recruitment profile + fit ----
+        # ---- recruitment profile + fit detail (transparent, never fabricated) ----
         if dash["fit"] is not None:
             fit = dash["fit"]
             with st.container(border=True):
                 if fit.get("available"):
-                    score = fit["score"]
-                    badge = C.badge_html(f"Fit {score:.0f}", "success")
+                    badge = C.badge_html(f"Fit {fit['score']:.0f}", "success")
                     st.markdown(
                         f"**{_html.escape(fit['profile'])}** &nbsp; {badge} &nbsp; "
                         f"<span style='color:var(--fap-text-muted)'>{fit['mode']} · "
@@ -685,8 +775,9 @@ class ScoutingPage(Page):
                 else:
                     st.caption(f"{fit['profile']} fit unavailable — {fit.get('reason', '')}")
 
-        # ---- scouting summary: strengths / development (observation, from percentiles) ----
+        # ---- scouting summary: strengths / areas to monitor (observation only) ----
         if dash["strengths"]:
+            C.render_dossier_label("Scouting summary")
             sc_cols = st.columns(2)
             with sc_cols[0]:
                 st.markdown("**Strengths** (top percentiles)")
@@ -699,25 +790,20 @@ class ScoutingPage(Page):
                     for s in dash["dev_areas"]:
                         st.markdown(f"{C.badge_html(str(s['percentile']), 'warning')} {_html.escape(s['name'])}",
                                     unsafe_allow_html=True)
-            st.caption("Observation from dataset percentiles — analyst interpretation is kept separate (Notes).")
+            st.caption("Observation from dataset percentiles — analyst interpretation is kept "
+                       "separate (Notes below).")
 
-        # ---- data sources: every LINKED dataset (persistent, active-independent) ----
+        # ---- data sources (persistent, active-independent) ----
         self._data_sources_section(shell, svc, p, dash)
 
-        # ---- saved visual evidence (persistent player assets) ----
-        self._visual_evidence_section(shell, svc, p, dash)
-
-        # ---- dataset status + metrics (active working context) ----
-        self._active_analysis(shell, svc, p)
-
-        # ---- match-level evidence (persistent, active-dataset-independent) ----
-        self._evidence_section(shell, svc, p)
-
-        # ---- media / links summary ----
-        self._links_panel(shell, svc, p)
+        # ---- scouting notes (analyst interpretation) ----
+        with st.expander(f"Scouting notes ({dash['counts']['notes']})",
+                         expanded=bool(dash["counts"]["notes"])):
+            self._notes(shell, svc, p)
 
         if not self._can_edit:
             return
+        # ---- editors + admin (kept out of the way, below the dossier) ----
         self._edit_profile_form(shell, svc, p, snap)
         self._recruitment_block(shell, svc, p)
         if identity.player_type_of(p) == "academy":
@@ -730,6 +816,52 @@ class ScoutingPage(Page):
             dup = svc.duplicate_player(shell.user, p.id); st.session_state[SEL] = dup.id; st.rerun()
         if col[2].button("Delete", key="p_del"):
             svc.delete_player(shell.user, p.id); st.session_state.pop(SEL, None); st.rerun()
+
+    # ============================================================ ANALYSIS tab
+    def _tab_analysis(self, shell, svc, p) -> None:
+        """Visual analysis: the player-scoped scouting visualization workspace (Metric
+        Explorer / Visualizations / Pizza Builder / Population Context) plus the active
+        dataset's metric or event analysis. The chart engine/themes are untouched."""
+        self._tab_visualization(shell, svc, p)
+        st.divider()
+        self._active_analysis(shell, svc, p)
+
+    # ============================================================ EVIDENCE tab
+    def _tab_evidence(self, shell, svc, p, dash) -> None:
+        """The evidence centre: match-level evidence across linked datasets, the saved
+        visual evidence (immutable PNG assets), and the synced match videos with their
+        click-to-seek action lists — all read by their persisted dataset_id."""
+        self._evidence_section(shell, svc, p)
+        self._visual_evidence_section(shell, svc, p, dash)
+        C.render_dossier_label(f"Match videos ({dash['counts']['videos']})")
+        self._videos(shell, svc, p)
+
+    # ============================================================ MEDIA tab
+    def _tab_media(self, shell, svc, p) -> None:
+        """The media centre: player photo + club crest, the image gallery, external
+        scouting links and attachments. Match videos live under Evidence (next to
+        their action lists)."""
+        pcols = st.columns([1, 1, 4], vertical_alignment="center")
+        photo = svc.image_bytes(p.profile_image_id) if p.profile_image_id else None
+        if not _safe_image(pcols[0], photo, width=96):
+            pcols[0].markdown(_AVATAR.format(_initials(p.name)).replace("56px", "96px")
+                              .replace("18px", "32px"), unsafe_allow_html=True)
+        pcols[0].caption("Player photo")
+        logo = svc.image_bytes(p.club_logo_id) if p.club_logo_id else None
+        if _safe_image(pcols[1], logo, width=64):
+            pcols[1].caption("Club logo")
+        else:
+            pcols[1].caption("No club logo")
+        pcols[2].caption("Set the player photo and club logo from the Overview → Edit profile "
+                         "panel. Additional imagery can be uploaded below.")
+        C.render_dossier_label("Player imagery")
+        self._images(shell, svc, p)
+        self._links_panel(shell, svc, p)
+        self._attachments(shell, svc, p)
+
+    # ============================================================ REPORTS tab
+    def _tab_reports(self, shell, svc, p) -> None:
+        self._reports(shell, svc, p)
 
     def _evidence_section(self, shell, svc, p) -> None:
         """Match-level evidence: which matches this player has evidence for, across

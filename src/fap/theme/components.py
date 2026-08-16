@@ -278,6 +278,62 @@ def player_card_html(name: str, *, number: str | int | None = None,
             f'{badge_row}<div class="meta">{meta_row}</div></div></div>')
 
 
+# ---------------------------------------------------------------- scouting dossier
+def player_hero_html(name: str, *, position_line: str = "", photo_uri: str = "",
+                     initials: str = "?", logo_uri: str = "", badges_html: str = "",
+                     operational_id: str = "", profile_name: str = "",
+                     context: Sequence[tuple[str, str]] = ()) -> str:
+    """The Scouting player hero: prominent photo (or initials), name + position,
+    a recruitment badge strip (pathway/status/priority + profile), the operational
+    id, a football-context line and an optional club crest. Pure HTML — layout and
+    theming live in the ``_scouting_dossier`` stylesheet."""
+    if photo_uri:
+        media = f'<img src="{photo_uri}" alt="" />'
+    else:
+        media = f'<span class="ini">{(initials or "?")[:3].upper()}</span>'
+    prof = f'<span class="prof">{profile_name}</span>' if profile_name else ""
+    badges = f'<div class="badges">{badges_html}{prof}</div>' if (badges_html or prof) else ""
+    idrow = f'<div class="idrow">{operational_id}</div>' if operational_id else ""
+    ctx = ""
+    if context:
+        ctx = '<div class="ctx">' + "".join(
+            f'<span><b>{lbl}</b> {val}</span>' for lbl, val in context if val) + "</div>"
+    pos = f'<div class="pos">{position_line}</div>' if position_line else ""
+    logo = f'<div class="club"><img src="{logo_uri}" alt="" /></div>' if logo_uri else ""
+    return (f'<div class="fap-player-hero"><div class="ph">{media}</div>'
+            f'<div class="hero-main"><div class="nm">{name}</div>{pos}'
+            f'{badges}{idrow}{ctx}</div>{logo}</div>')
+
+
+def dossier_stat_html(label: str, value: str, *, sub: str = "") -> str:
+    """One compact snapshot cell (label over value) — a dossier field, not a KPI
+    card. ``sub`` renders a muted unit/qualifier next to the value."""
+    sub_html = f' <small>{sub}</small>' if sub else ""
+    return (f'<div class="fap-dstat"><div class="l">{label}</div>'
+            f'<div class="v">{value}{sub_html}</div></div>')
+
+
+def dossier_grid_html(tiles: Sequence[str]) -> str:
+    """A seamless compact grid of snapshot cells (thin 1px dividers)."""
+    return f'<div class="fap-dossier-grid">{"".join(tiles)}</div>'
+
+
+def intel_strip_html(items: Sequence[tuple[str, str, str]]) -> str:
+    """The recruitment-intelligence strip. ``items`` are (label, value, kind);
+    kind ∈ {'', 'good', 'warn', 'muted'} tints the value (fit/coverage)."""
+    cells = []
+    for label, value, kind in items:
+        k = f" {kind}" if kind in ("good", "warn", "muted") else ""
+        cells.append(f'<div class="fap-intel{k}"><div class="l">{label}</div>'
+                     f'<div class="v">{value}</div></div>')
+    return f'<div class="fap-intel-strip">{"".join(cells)}</div>'
+
+
+def dossier_label_html(text: str) -> str:
+    """A thin uppercase section label used between dossier blocks."""
+    return f'<div class="fap-dossier-label">{text}</div>'
+
+
 # ---------------------------------------------------------------- misc chrome
 def chip_html(text: str, *, icon_name: str = "", active: bool = False) -> str:
     glyph = icon(icon_name, 13) if icon_name else ""
@@ -348,6 +404,22 @@ def render_skeleton_cards(count: int = 3) -> None:
 
 def render_player_card(name: str, **kwargs) -> None:
     _write(player_card_html(name, **kwargs))
+
+
+def render_player_hero(name: str, **kwargs) -> None:
+    _write(player_hero_html(name, **kwargs))
+
+
+def render_dossier_grid(tiles: Sequence[str]) -> None:
+    _write(dossier_grid_html(tiles))
+
+
+def render_intel_strip(items: Sequence[tuple[str, str, str]]) -> None:
+    _write(intel_strip_html(items))
+
+
+def render_dossier_label(text: str) -> None:
+    _write(dossier_label_html(text))
 
 
 def render_empty_state(title: str, description: str = "", *, icon_name: str = "inbox",

@@ -1064,6 +1064,74 @@ def _overlays() -> str:
 """
 
 
+def _scouting_dossier() -> str:
+    """The Scouting player-dossier surfaces: the recruitment hero, the compact
+    snapshot grid and the recruitment-intelligence strip. Centralized here (never
+    inline in the page) so the dossier stays on-theme in one place."""
+    return """
+/* ---- player hero (recruitment identity) ------------------------------- */
+.fap-player-hero { display: flex; gap: var(--fap-space-4); align-items: flex-start;
+  background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-radius: var(--fap-radius-xl); padding: 18px 20px; box-shadow: var(--fap-shadow-xs);
+  margin-bottom: var(--fap-space-3); }
+.fap-player-hero .ph { width: 108px; height: 108px; border-radius: var(--fap-radius-lg);
+  overflow: hidden; flex: 0 0 auto; background: var(--fap-surface-alt);
+  border: 1px solid var(--fap-border); display: flex; align-items: center; justify-content: center; }
+.fap-player-hero .ph img { width: 100%; height: 100%; object-fit: cover; }
+.fap-player-hero .ph .ini { font-size: 2.1rem; font-weight: 800; color: var(--fap-text-muted);
+  letter-spacing: -0.02em; }
+.fap-player-hero .hero-main { flex: 1 1 auto; min-width: 0; }
+.fap-player-hero .nm { font-size: 1.85rem; font-weight: var(--fap-weight-black);
+  letter-spacing: -0.02em; line-height: 1.1; color: var(--fap-text); }
+.fap-player-hero .pos { color: var(--fap-text-muted); font-weight: 600; margin-top: 2px;
+  font-size: 0.92rem; }
+.fap-player-hero .badges { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;
+  align-items: center; }
+.fap-player-hero .badges .prof { font-weight: 700; color: var(--fap-text); }
+.fap-player-hero .idrow { margin-top: 8px; font-family: var(--fap-font-mono);
+  color: var(--fap-text-muted); font-size: 0.8rem; letter-spacing: 0.02em; }
+.fap-player-hero .ctx { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 16px;
+  color: var(--fap-text); font-size: 0.85rem; }
+.fap-player-hero .ctx span b { color: var(--fap-text-subtle); font-weight: 600; }
+.fap-player-hero .club { flex: 0 0 auto; width: 54px; height: 54px; display: flex;
+  align-items: center; justify-content: center; }
+.fap-player-hero .club img { max-width: 54px; max-height: 54px; object-fit: contain; }
+
+/* ---- compact snapshot grid (dossier, not KPI cards) ------------------- */
+.fap-dossier-grid { display: grid; gap: 1px; background: var(--fap-border);
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-lg); overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); margin-bottom: var(--fap-space-3); }
+.fap-dstat { background: var(--fap-surface); padding: 10px 14px; }
+.fap-dstat .l { color: var(--fap-text-subtle); font-size: 0.64rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; }
+.fap-dstat .v { color: var(--fap-text); font-size: 1.0rem; font-weight: 700; margin-top: 3px;
+  font-feature-settings: var(--fap-feature-tabular); line-height: 1.2; }
+.fap-dstat .v small { color: var(--fap-text-subtle); font-weight: 600; font-size: 0.72rem; }
+
+/* ---- recruitment intelligence strip ----------------------------------- */
+.fap-intel-strip { display: grid; gap: 1px; background: var(--fap-border);
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-lg); overflow: hidden;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); margin-bottom: var(--fap-space-3); }
+.fap-intel { background: var(--fap-surface); padding: 12px 14px; }
+.fap-intel .l { color: var(--fap-text-subtle); font-size: 0.62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; }
+.fap-intel .v { color: var(--fap-text); font-size: 1.12rem; font-weight: 800; margin-top: 3px;
+  letter-spacing: -0.01em; line-height: 1.15; }
+.fap-intel.good .v { color: var(--fap-success); }
+.fap-intel.warn .v { color: var(--fap-warning); }
+.fap-intel.muted .v { color: var(--fap-text-muted); font-weight: 700; font-size: 0.98rem; }
+
+/* ---- dossier section label (thin, uppercase) -------------------------- */
+.fap-dossier-label { color: var(--fap-text-muted); font-size: 0.72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; margin: 4px 0 8px; }
+
+@media (max-width: 640px) {
+  .fap-player-hero { flex-wrap: wrap; }
+  .fap-player-hero .club { order: -1; }
+}
+"""
+
+
 def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """The complete application stylesheet for ``mode`` (light|dark|auto).
 
@@ -1073,8 +1141,8 @@ def build_css(brand: Branding | None = None, mode: str = "auto") -> str:
     """
     brand = brand or DEFAULT_BRANDING
     body = "".join((_chrome(), _base(brand), _sidebar(), _components(), _forms(),
-                    _tables(), _studio(), _dashboard(), _overlays(), _a11y_and_motion(),
-                    _responsive(brand), _app_shell()))
+                    _tables(), _studio(), _dashboard(), _scouting_dossier(), _overlays(),
+                    _a11y_and_motion(), _responsive(brand), _app_shell()))
 
     if mode == "light":
         roots = f":root, :root[data-theme=light] {{{_variables(brand, 'light')}\n}}"
