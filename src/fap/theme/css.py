@@ -1069,61 +1069,102 @@ def _scouting_dossier() -> str:
     snapshot grid and the recruitment-intelligence strip. Centralized here (never
     inline in the page) so the dossier stays on-theme in one place."""
     return """
-/* ---- player hero (recruitment identity) ------------------------------- */
-.fap-player-hero { display: flex; gap: var(--fap-space-4); align-items: flex-start;
-  background: var(--fap-surface); border: 1px solid var(--fap-border);
-  border-radius: var(--fap-radius-xl); padding: 18px 20px; box-shadow: var(--fap-shadow-xs);
-  margin-bottom: var(--fap-space-3); }
-.fap-player-hero .ph { width: 108px; height: 108px; border-radius: var(--fap-radius-lg);
-  overflow: hidden; flex: 0 0 auto; background: var(--fap-surface-alt);
-  border: 1px solid var(--fap-border); display: flex; align-items: center; justify-content: center; }
+/* ---- player hero: DARK recruitment identity (same family as the nav rail) */
+.fap-player-hero { position: relative; display: flex; gap: var(--fap-space-4); align-items: center;
+  background: var(--fap-rail-bg); border: 1px solid var(--fap-rail-border);
+  border-radius: var(--fap-radius-xl); padding: 20px 22px 20px 26px; box-shadow: var(--fap-shadow-md);
+  margin-bottom: var(--fap-space-3); overflow: hidden; }
+.fap-player-hero::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+  background: var(--fap-primary); }
+.fap-player-hero .ph { width: 128px; height: 128px; border-radius: var(--fap-radius-lg);
+  overflow: hidden; flex: 0 0 auto; background: rgba(255,255,255,0.06);
+  border: 1px solid var(--fap-rail-border); display: flex; align-items: center; justify-content: center; }
 .fap-player-hero .ph img { width: 100%; height: 100%; object-fit: cover; }
-.fap-player-hero .ph .ini { font-size: 2.1rem; font-weight: 800; color: var(--fap-text-muted);
+.fap-player-hero .ph .ini { font-size: 2.4rem; font-weight: 800; color: var(--fap-rail-muted);
   letter-spacing: -0.02em; }
 .fap-player-hero .hero-main { flex: 1 1 auto; min-width: 0; }
-.fap-player-hero .nm { font-size: 1.85rem; font-weight: var(--fap-weight-black);
-  letter-spacing: -0.02em; line-height: 1.1; color: var(--fap-text); }
-.fap-player-hero .pos { color: var(--fap-text-muted); font-weight: 600; margin-top: 2px;
-  font-size: 0.92rem; }
-.fap-player-hero .badges { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px;
+.fap-player-hero .nm { font-size: 2rem; font-weight: var(--fap-weight-black);
+  letter-spacing: -0.02em; line-height: 1.08; color: var(--fap-rail-text); }
+.fap-player-hero .pos { color: var(--fap-rail-muted); font-weight: 600; margin-top: 3px;
+  font-size: 0.95rem; }
+.fap-player-hero .badges { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px;
   align-items: center; }
-.fap-player-hero .badges .prof { font-weight: 700; color: var(--fap-text); }
-.fap-player-hero .idrow { margin-top: 8px; font-family: var(--fap-font-mono);
-  color: var(--fap-text-muted); font-size: 0.8rem; letter-spacing: 0.02em; }
-.fap-player-hero .ctx { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 16px;
-  color: var(--fap-text); font-size: 0.85rem; }
-.fap-player-hero .ctx span b { color: var(--fap-text-subtle); font-weight: 600; }
-.fap-player-hero .club { flex: 0 0 auto; width: 54px; height: 54px; display: flex;
-  align-items: center; justify-content: center; }
-.fap-player-hero .club img { max-width: 54px; max-height: 54px; object-fit: contain; }
+.fap-player-hero .badges .prof { font-weight: 700; color: var(--fap-rail-text); margin-left: 2px; }
+.fap-player-hero .fap-badge.neutral { background: rgba(255,255,255,0.10);
+  color: var(--fap-rail-text); border-color: rgba(255,255,255,0.16); }
+.fap-player-hero .idrow { margin-top: 9px; font-family: var(--fap-font-mono);
+  color: var(--fap-rail-muted); font-size: 0.8rem; letter-spacing: 0.03em; }
+.fap-player-hero .ctx { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 4px 18px;
+  color: var(--fap-rail-text); font-size: 0.85rem; }
+.fap-player-hero .ctx span b { color: var(--fap-rail-muted); font-weight: 600; }
+.fap-player-hero .club { flex: 0 0 auto; width: 64px; height: 64px; display: flex;
+  align-items: center; justify-content: center; background: #fff; border-radius: var(--fap-radius-md);
+  padding: 6px; }
+.fap-player-hero .club img { max-width: 100%; max-height: 100%; object-fit: contain; }
 
-/* ---- compact snapshot grid (dossier, not KPI cards) ------------------- */
+/* ---- intelligence snapshot: counts row (real persisted totals) -------- */
+.fap-snap-counts { display: flex; flex-wrap: wrap; background: var(--fap-surface);
+  border: 1px solid var(--fap-border); border-radius: var(--fap-radius-lg); overflow: hidden;
+  margin-bottom: var(--fap-space-3); }
+.fap-snap-count { flex: 1 1 0; min-width: 108px; display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 16px; border-left: 1px solid var(--fap-border); }
+.fap-snap-count:first-child { border-left: none; }
+.fap-snap-count .ic { color: var(--fap-primary); display: inline-flex; }
+.fap-snap-count .v { font-size: 1.4rem; font-weight: 800; color: var(--fap-text); line-height: 1;
+  font-feature-settings: var(--fap-feature-tabular); margin-top: 3px; }
+.fap-snap-count .l { color: var(--fap-text-subtle); font-size: 0.62rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+
+/* ---- compact snapshot grid (icon + label + value) --------------------- */
 .fap-dossier-grid { display: grid; gap: 1px; background: var(--fap-border);
   border: 1px solid var(--fap-border); border-radius: var(--fap-radius-lg); overflow: hidden;
-  grid-template-columns: repeat(auto-fit, minmax(116px, 1fr)); margin-bottom: var(--fap-space-3); }
-.fap-dstat { background: var(--fap-surface); padding: 10px 14px; }
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); margin-bottom: var(--fap-space-3); }
+.fap-dstat { background: var(--fap-surface); padding: 11px 14px; }
+.fap-dstat .ic { display: inline-flex; color: var(--fap-primary); opacity: 0.9; margin-bottom: 6px; }
 .fap-dstat .l { color: var(--fap-text-subtle); font-size: 0.64rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.05em; }
-.fap-dstat .v { color: var(--fap-text); font-size: 1.0rem; font-weight: 700; margin-top: 3px;
+.fap-dstat .v { color: var(--fap-text); font-size: 1.02rem; font-weight: 700; margin-top: 2px;
   font-feature-settings: var(--fap-feature-tabular); line-height: 1.2; }
 .fap-dstat .v small { color: var(--fap-text-subtle); font-weight: 600; font-size: 0.72rem; }
 
-/* ---- recruitment intelligence strip ----------------------------------- */
+/* ---- recruitment intelligence strip (icons + fit emphasis) ------------ */
 .fap-intel-strip { display: grid; gap: 1px; background: var(--fap-border);
   border: 1px solid var(--fap-border); border-radius: var(--fap-radius-lg); overflow: hidden;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); margin-bottom: var(--fap-space-3); }
-.fap-intel { background: var(--fap-surface); padding: 12px 14px; }
+  grid-template-columns: repeat(auto-fit, minmax(134px, 1fr)); margin-bottom: var(--fap-space-3); }
+.fap-intel { background: var(--fap-surface); padding: 12px 14px; position: relative; }
+.fap-intel .ic { display: inline-flex; color: var(--fap-text-muted); margin-bottom: 6px; }
 .fap-intel .l { color: var(--fap-text-subtle); font-size: 0.62rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.06em; }
-.fap-intel .v { color: var(--fap-text); font-size: 1.12rem; font-weight: 800; margin-top: 3px;
+.fap-intel .v { color: var(--fap-text); font-size: 1.12rem; font-weight: 800; margin-top: 2px;
   letter-spacing: -0.01em; line-height: 1.15; }
 .fap-intel.good .v { color: var(--fap-success); }
 .fap-intel.warn .v { color: var(--fap-warning); }
 .fap-intel.muted .v { color: var(--fap-text-muted); font-weight: 700; font-size: 0.98rem; }
+.fap-intel .bar { margin-top: 8px; height: 5px; border-radius: var(--fap-radius-full);
+  background: var(--fap-surface-alt); overflow: hidden; }
+.fap-intel .bar span { display: block; height: 100%; background: var(--fap-primary);
+  border-radius: var(--fap-radius-full); }
+.fap-intel.fit { box-shadow: inset 3px 0 0 var(--fap-primary); }
+.fap-intel.fit .ic { color: var(--fap-primary); }
 
-/* ---- dossier section label (thin, uppercase) -------------------------- */
-.fap-dossier-label { color: var(--fap-text-muted); font-size: 0.72rem; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.06em; margin: 4px 0 8px; }
+/* ---- evidence preview cards (read-only dossier previews) --------------- */
+.fap-ev-card { background: var(--fap-surface); border: 1px solid var(--fap-border);
+  border-radius: var(--fap-radius-md); padding: 11px 14px; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 12px; }
+.fap-ev-card .ic { color: var(--fap-primary); display: inline-flex; flex: 0 0 auto; }
+.fap-ev-card .bd { flex: 1 1 auto; min-width: 0; }
+.fap-ev-card .t { font-weight: 700; color: var(--fap-text); }
+.fap-ev-card .m { color: var(--fap-text-muted); font-size: 0.82rem; margin-top: 2px; }
+
+/* ---- dossier section label (thin, uppercase, optional icon) ----------- */
+.fap-dossier-label { display: flex; align-items: center; gap: 7px; color: var(--fap-text-muted);
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 6px 0 8px; }
+.fap-dossier-label .ic { display: inline-flex; color: var(--fap-primary); }
+
+/* ---- premium tabs (orange active already themed; strengthen weight) --- */
+[data-testid="stTabs"] [data-baseweb="tab"] { font-weight: 600; }
+[data-testid="stTabs"] [aria-selected="true"] { font-weight: 700; }
 
 @media (max-width: 640px) {
   .fap-player-hero { flex-wrap: wrap; }

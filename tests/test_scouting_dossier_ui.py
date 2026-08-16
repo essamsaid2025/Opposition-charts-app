@@ -211,6 +211,32 @@ def test_player_detail_renders_for_every_pathway(ctx, ptype, prefix):
     page._player_detail(_Shell(platform, user, ws), sc, p.id)   # bare-mode; must not raise
 
 
+def test_new_dossier_builders():
+    counts = C.snapshot_counts_html([("<svg/>", "2", "Data sources"), ("<svg/>", "0", "Videos")])
+    assert "fap-snap-counts" in counts and "Data sources" in counts and ">2<" in counts
+    card = C.evidence_card_html("vs Hamrun", "Malta · 8 actions", icon="<svg/>")
+    assert "fap-ev-card" in card and "vs Hamrun" in card and "8 actions" in card
+    # intel supports icon (4th) + fit bar (5th)
+    strip = C.intel_strip_html([("Profile fit", "82%", "fit", "<svg/>", 82.0),
+                                ("Status", "Watching", "")])
+    assert "fap-intel fit" in strip and "width:82%" in strip and "Watching" in strip
+
+
+def test_empty_player_dashboard_renders_clean(ctx):
+    # no dataset, no photo/logo, no videos, no notes -> counts all 0, clean empty states
+    platform, user, ws, ds, _ = ctx
+    sc = platform.scouting
+    st.session_state.clear()
+    q = sc.create_player(user, "Blank Slate", position="CF", player_type="first_team",
+                         workspace_id=ws.id)
+    page = ScoutingPage()
+    page._can_edit = True
+    page._can_report = True
+    page._can_export = True
+    st.session_state[SC.SEL] = q.id
+    page._player_detail(_Shell(platform, user, ws), sc, q.id)   # must not raise
+
+
 def test_academy_intel_uses_development_emphasis(ctx, monkeypatch):
     platform, user, ws, ds, _ = ctx
     sc = platform.scouting

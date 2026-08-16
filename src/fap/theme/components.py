@@ -305,11 +305,12 @@ def player_hero_html(name: str, *, position_line: str = "", photo_uri: str = "",
             f'{badges}{idrow}{ctx}</div>{logo}</div>')
 
 
-def dossier_stat_html(label: str, value: str, *, sub: str = "") -> str:
-    """One compact snapshot cell (label over value) — a dossier field, not a KPI
-    card. ``sub`` renders a muted unit/qualifier next to the value."""
+def dossier_stat_html(label: str, value: str, *, sub: str = "", icon: str = "") -> str:
+    """One compact snapshot cell (icon over label over value) — a dossier field, not
+    a KPI card. ``sub`` renders a muted unit/qualifier; ``icon`` is icon HTML (SVG)."""
     sub_html = f' <small>{sub}</small>' if sub else ""
-    return (f'<div class="fap-dstat"><div class="l">{label}</div>'
+    ic = f'<span class="ic">{icon}</span>' if icon else ""
+    return (f'<div class="fap-dstat">{ic}<div class="l">{label}</div>'
             f'<div class="v">{value}{sub_html}</div></div>')
 
 
@@ -318,20 +319,47 @@ def dossier_grid_html(tiles: Sequence[str]) -> str:
     return f'<div class="fap-dossier-grid">{"".join(tiles)}</div>'
 
 
-def intel_strip_html(items: Sequence[tuple[str, str, str]]) -> str:
-    """The recruitment-intelligence strip. ``items`` are (label, value, kind);
-    kind ∈ {'', 'good', 'warn', 'muted'} tints the value (fit/coverage)."""
+def intel_strip_html(items: Sequence[tuple]) -> str:
+    """The recruitment-intelligence strip. Each item is a tuple:
+    ``(label, value, kind[, icon_html[, bar_pct]])`` — kind ∈ {'', 'good', 'warn',
+    'muted', 'fit'} tints/emphasizes the cell; ``icon_html`` is optional icon SVG;
+    ``bar_pct`` (0..100) renders an orange progress bar (used for Profile Fit)."""
     cells = []
-    for label, value, kind in items:
-        k = f" {kind}" if kind in ("good", "warn", "muted") else ""
-        cells.append(f'<div class="fap-intel{k}"><div class="l">{label}</div>'
-                     f'<div class="v">{value}</div></div>')
+    for it in items:
+        label, value, kind = it[0], it[1], it[2]
+        icon_html = it[3] if len(it) > 3 else ""
+        bar = it[4] if len(it) > 4 else None
+        k = f" {kind}" if kind in ("good", "warn", "muted", "fit") else ""
+        ic = f'<span class="ic">{icon_html}</span>' if icon_html else ""
+        bar_html = ""
+        if bar is not None:
+            w = max(0.0, min(100.0, float(bar)))
+            bar_html = f'<div class="bar"><span style="width:{w:.0f}%"></span></div>'
+        cells.append(f'<div class="fap-intel{k}">{ic}<div class="l">{label}</div>'
+                     f'<div class="v">{value}</div>{bar_html}</div>')
     return f'<div class="fap-intel-strip">{"".join(cells)}</div>'
 
 
-def dossier_label_html(text: str) -> str:
-    """A thin uppercase section label used between dossier blocks."""
-    return f'<div class="fap-dossier-label">{text}</div>'
+def snapshot_counts_html(items: Sequence[tuple[str, str, str]]) -> str:
+    """The intelligence-snapshot counts row. ``items`` are (icon_html, value, label)
+    — real persisted totals (data sources / matches / videos / visuals / reports)."""
+    cells = [f'<div class="fap-snap-count"><span class="ic">{ic}</span>'
+             f'<span class="v">{v}</span><span class="l">{lbl}</span></div>'
+             for ic, v, lbl in items]
+    return f'<div class="fap-snap-counts">{"".join(cells)}</div>'
+
+
+def evidence_card_html(title: str, meta: str = "", *, icon: str = "") -> str:
+    """A compact read-only evidence preview card (video/match) for the dossier."""
+    ic = f'<span class="ic">{icon}</span>' if icon else ""
+    m = f'<div class="m">{meta}</div>' if meta else ""
+    return (f'<div class="fap-ev-card">{ic}<div class="bd"><div class="t">{title}</div>{m}</div></div>')
+
+
+def dossier_label_html(text: str, *, icon: str = "") -> str:
+    """A thin uppercase section label used between dossier blocks (optional icon)."""
+    ic = f'<span class="ic">{icon}</span>' if icon else ""
+    return f'<div class="fap-dossier-label">{ic}{text}</div>'
 
 
 # ---------------------------------------------------------------- misc chrome
@@ -414,12 +442,16 @@ def render_dossier_grid(tiles: Sequence[str]) -> None:
     _write(dossier_grid_html(tiles))
 
 
-def render_intel_strip(items: Sequence[tuple[str, str, str]]) -> None:
+def render_intel_strip(items: Sequence[tuple]) -> None:
     _write(intel_strip_html(items))
 
 
-def render_dossier_label(text: str) -> None:
-    _write(dossier_label_html(text))
+def render_snapshot_counts(items: Sequence[tuple[str, str, str]]) -> None:
+    _write(snapshot_counts_html(items))
+
+
+def render_dossier_label(text: str, *, icon: str = "") -> None:
+    _write(dossier_label_html(text, icon=icon))
 
 
 def render_empty_state(title: str, description: str = "", *, icon_name: str = "inbox",
