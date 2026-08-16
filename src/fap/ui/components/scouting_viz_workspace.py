@@ -108,14 +108,22 @@ def _show_stash(stash_key: str, *, key: str, save: dict | None = None) -> None:
 
 
 def render_scouting_viz_workspace(shell, svc, player, ctx, *, key: str,
-                                  on_assign: Callable | None = None) -> None:
+                                  on_assign: Callable | None = None,
+                                  allow_save: bool | None = None) -> None:
     """The full player-scoped viz workspace over a LINKED player-scouting dataset.
 
     ``ctx`` is a resolved context from ``ScoutingService.scouting_viz_context`` -
     read by dataset_id (NEVER the active dataset), with ``primary`` = the player's
     exact dataset row resolved through the P4.2.1/P4.6 matcher (so 'Mamadu Bah'
     already maps to 'S. Mamadu bah'). The player-scoped view is built for that ONE
-    player (never the whole population)."""
+    player (never the whole population).
+
+    ``on_assign`` (optional) embeds the saved chart into a report on save. ``allow_save``
+    explicitly toggles the "Save to player" button: when None it defaults to
+    ``on_assign is not None`` (so Scouting is unchanged), so a consumer without a
+    report-embed callback (e.g. First Team) can still enable Save via ``allow_save=True``.
+    Both the save context and the ``svc.save_player_visualization`` contract are
+    domain-neutral, so the same workspace serves Scouting and First-Team players."""
     if ctx is None or ctx.get("frame") is None or not ctx.get("primary"):
         C.render_alert("No player row resolved in the linked dataset yet.", "info")
         return
@@ -149,9 +157,10 @@ def render_scouting_viz_workspace(shell, svc, player, ctx, *, key: str,
 
     # save-context: every saved chart is a persistent player asset scoped to THIS
     # player + THIS dataset (never the active dataset, never all players).
+    save_enabled = (on_assign is not None) if allow_save is None else bool(allow_save)
     save = {"user": shell.user, "svc": svc, "player": player, "dataset_id": ctx["id"],
             "source_name": ctx["name"], "primary": primary, "theme_id": theme_id,
-            "on_assign": on_assign} if on_assign is not None else None
+            "on_assign": on_assign} if save_enabled else None
 
     # ---- player header ----
     dims = view.dimensions.get(view.primary, {})

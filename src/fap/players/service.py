@@ -12,7 +12,12 @@ the only bridge is the optional, read-only ``promote_from_scouting``.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 from fap.identity.capabilities import Capability
 from fap.identity.models import User
@@ -414,6 +419,291 @@ class PlayersService:
 
     def list_match_links(self, player_id: str) -> list[PlayerMatchLink]:
         return self.match_links.list(player_id)
+
+    # ============================================================ player↔dataset intelligence (FT-P2/P3)
+    # Active-INDEPENDENT first-team player data, mirroring the mature scouting
+    # architecture: a matcher-resolved dataset IDENTITY link lives additively in
+    # Player.document['dataset_links'][dataset_id]; metrics/visualizations read a
+    # dataset BY ID via WorkspaceManager, NEVER the active dataset. Reuses the shared,
+    # domain-neutral matcher (fap.scouting.matching) and the player-scouting schema.
+    # No new table, no migration, no scouting behaviour changed.
+    def _set_doc(self, user: User, player_id: str, action: str, **fields: Any) -> Player:
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        doc.update(fields)
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, action, target_type="player", target_id=player_id)
+        return self._player_or_raise(player_id)
+
+    def _dataset_links(self, player) -> dict[str, Any]:
+        doc = getattr(player, "document", None) or {}
+        links = doc.get("dataset_links")
+        return dict(links) if isinstance(links, dict) else {}
+
+    def _player_scouting_ctx(self, dataset_id: str) -> dict[str, Any] | None:
+        """(id, name, schema, frame, players, id_field) for a player-scouting dataset
+        read BY ID, or None when the dataset is missing / not player-scouting."""
+        if self._wm is None or not dataset_id:
+            return None
+        ds = self._wm.get_dataset(dataset_id)
+        if ds is None:
+            return None
+        from fap.datahub.classification import PLAYER_SCOUTING
+        doc = ds.document if isinstance(ds.document, dict) else {}
+        if doc.get("dataset_type") != PLAYER_SCOUTING:
+            return None
+        schema = doc.get("scouting_schema") or {}
+        id_field = schema.get("id_field")
+        frame = self._wm.dataset_frame(dataset_id)
+        if not id_field or frame is None or getattr(frame, "empty", True) \
+                or id_field not in getattr(frame, "columns", []):
+            return None
+        players = [str(x) for x in frame[id_field].astype(str).str.strip().tolist() if str(x).strip()]
+        return {"id": ds.id, "name": ds.name, "schema": schema, "frame": frame,
+                "players": players, "id_field": id_field}
+
+    def _resolve_dataset_key(self, player, ctx) -> tuple[str | None, Any]:
+        """Resolve a player to a dataset row: a CONFIRMED link wins; otherwise a single
+        high-confidence match auto-resolves. Never guesses (ambiguity → None)."""
+        from fap.scouting import matching
+        entities = matching.dataset_entities(ctx["frame"], ctx["schema"])
+        keys = {e.key for e in entities}
+        link = self._dataset_links(player).get(ctx["id"])
+        if link and link.get("entity_key") in keys:
+            return link["entity_key"], None
+        result = matching.match_player(player, entities)
+        if result.status == "matched" and result.auto and result.candidate:
+            return result.candidate.key, result
+        return None, result
+
+    def dataset_identity_status(self, user: User, player_id: str, dataset_id: str) -> dict[str, Any]:
+        """Explainable match state of a player against a player-scouting dataset:
+        linked / proposed (auto) / ambiguous (candidates) / none — for the UI."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        out: dict[str, Any] = {"dataset_id": dataset_id, "dataset_name": "", "linked": False,
+                               "entity_key": None, "method": "", "proposed": None,
+                               "candidates": [], "players": []}
+        ctx = self._player_scouting_ctx(dataset_id)
+        if ctx is None:
+            return out
+        out["dataset_name"] = ctx["name"]
+        out["players"] = ctx["players"]
+        p = self.get_player(player_id)
+        if p is None:
+            return out
+        link = self._dataset_links(p).get(dataset_id)
+        from fap.scouting import matching
+        entities = matching.dataset_entities(ctx["frame"], ctx["schema"])
+        keys = {e.key for e in entities}
+        if link and link.get("entity_key") in keys:
+            out.update(linked=True, entity_key=link["entity_key"], method=link.get("match_method", ""))
+            return out
+        result = matching.match_player(p, entities)
+        if result.status == "matched" and result.candidate:
+            out["proposed"] = {"key": result.candidate.key, "method": result.candidate.method,
+                               "confidence": result.candidate.confidence, "auto": result.auto}
+        elif result.status == "ambiguous":
+            out["candidates"] = [{"key": c.key, "method": c.method, "dims": dict(c.dims)}
+                                 for c in result.candidates]
+        return out
+
+    def link_dataset_identity(self, user: User, player_id: str, entity_key: str, *,
+                              dataset_id: str, method: str = "manual",
+                              confidence: str = "confirmed") -> Player:
+        """Persist a confirmed player↔dataset-row mapping for a SPECIFIC dataset in
+        document['dataset_links'][dataset_id]. Active-independent; never changes the
+        canonical identity or the dataset."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        ctx = self._player_scouting_ctx(dataset_id)
+        if ctx is None:
+            raise ValueError(f"dataset {dataset_id!r} is not an available player-scouting dataset")
+        p = self._player_or_raise(player_id)
+        links = self._dataset_links(p)
+        links[dataset_id] = {"entity_key": str(entity_key), "dataset_name": ctx["name"],
+                             "match_method": method, "confidence": confidence,
+                             "confirmed_by": user.email, "confirmed_at": _now()}
+        return self._set_doc(user, player_id, "players.dataset_link", dataset_links=links)
+
+    def unlink_dataset_identity(self, user: User, player_id: str, dataset_id: str) -> Player:
+        self._require(user, Capability.EDIT_PLAYERS)
+        p = self._player_or_raise(player_id)
+        links = self._dataset_links(p)
+        links.pop(dataset_id, None)
+        return self._set_doc(user, player_id, "players.dataset_unlink", dataset_links=links)
+
+    def player_dataset_profile(self, user: User, player_id: str,
+                               dataset_id: str) -> dict[str, Any]:
+        """The player's metric profile from a SPECIFIC player-scouting dataset, read BY
+        ID and independent of the active dataset. Honest status; never fabricates."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        out = {"dataset_id": dataset_id, "dataset_name": "", "status": "unavailable",
+               "entity_key": None, "metrics": [], "dimensions": {}, "value_scale": "raw",
+               "metric_count": 0}
+        if self._wm is None:
+            return out
+        ds = self._wm.get_dataset(dataset_id)
+        if ds is None:
+            return out                                    # linked dataset was deleted
+        out["dataset_name"] = ds.name
+        ctx = self._player_scouting_ctx(dataset_id)
+        if ctx is None:
+            from fap.datahub.classification import PLAYER_SCOUTING
+            doc = ds.document if isinstance(ds.document, dict) else {}
+            out["status"] = "not_scouting" if doc.get("dataset_type") != PLAYER_SCOUTING else "unavailable"
+            return out
+        p = self.get_player(player_id)
+        out["value_scale"] = ctx["schema"].get("value_scale", "raw")
+        out["metric_count"] = len(ctx["schema"].get("metrics", []) or [])
+        key = None
+        if p is not None:
+            key, _ = self._resolve_dataset_key(p, ctx)
+        if key is None:
+            out["status"] = "linked_no_row" if (p and dataset_id in self._dataset_links(p)) else "unavailable"
+            return out
+        from fap.scouting import viz
+        view = viz.build_view(ctx["frame"], ctx["schema"], [key],
+                              dataset_id=ctx["id"], dataset_name=ctx["name"])
+        out["entity_key"] = key
+        out["dimensions"] = view.dimensions.get(view.primary, {})
+        out["metrics"] = [{"name": m.name, "unit": m.unit, "value": m.value(key)}
+                          for m in view.metrics]
+        out["status"] = "metrics_available" if view.metrics else "linked_no_row"
+        return out
+
+    def player_viz_context(self, user: User, player_id: str,
+                           dataset_id: str) -> dict[str, Any] | None:
+        """A player-scoped visualization context for a SPECIFIC player-scouting dataset
+        (by id, NEVER the active dataset), matcher-resolved so the workspace receives
+        ONLY that player as ``primary`` (+ the population for optional comparison)."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        ctx = self._player_scouting_ctx(dataset_id)
+        if ctx is None:
+            return None
+        p = self.get_player(player_id)
+        if p is None:
+            return None
+        key, _ = self._resolve_dataset_key(p, ctx)
+        if key is None:
+            return None
+        schema = ctx["schema"]
+        return {"id": ctx["id"], "name": ctx["name"], "schema": schema, "frame": ctx["frame"],
+                "players": ctx["players"], "primary": key,
+                "value_scale": schema.get("value_scale", "raw"),
+                "metric_count": len(schema.get("metrics", []) or []),
+                "linked": dataset_id in self._dataset_links(p)}
+
+    def linked_player_scouting_datasets(self, user: User, player_id: str) -> list[dict[str, Any]]:
+        """Player-scouting datasets available for THIS player's analysis: every confirmed
+        link (active-independent) + the active dataset if the player resolves in it but
+        it is not yet linked (so a freshly-activated dataset is usable and linkable)."""
+        self._require(user, Capability.VIEW_PLAYERS)
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        p = self.get_player(player_id)
+        if p is None:
+            return out
+        for ds_id in self._dataset_links(p):
+            prof = self.player_dataset_profile(user, player_id, ds_id)
+            out.append({"dataset_id": ds_id, "name": prof["dataset_name"] or ds_id,
+                        "status": prof["status"], "metric_count": prof["metric_count"],
+                        "linked": True})
+            seen.add(ds_id)
+        try:
+            ad = self._wm.active_dataset(user) if self._wm else None
+        except Exception:
+            ad = None
+        if ad is not None and ad.id not in seen:
+            c = self.player_viz_context(user, player_id, ad.id)
+            if c is not None:
+                out.append({"dataset_id": ad.id, "name": c["name"], "status": "active_unlinked",
+                            "metric_count": c["metric_count"], "linked": False})
+        return out
+
+    # ============================================================ saved visual evidence (FT-P4)
+    # Immutable PNG assets scoped to a SINGLE first-team player + a SPECIFIC dataset.
+    # The PNG lives in ImageStorage; only metadata lives in Player.document
+    # ['visual_assets'] (never a DataFrame/Figure). Mirrors scouting P4.6 exactly and
+    # reuses the shared viz workspace's domain-neutral ``save_player_visualization``
+    # contract, so a saved chart survives active-dataset changes, reload and even the
+    # source dataset later disappearing.
+    def save_player_visualization(self, user: User, player_id: str, png: bytes, *,
+                                  dataset_id: str = "", title: str = "", viz_id: str = "",
+                                  scope: dict[str, Any] | None = None,
+                                  config: dict[str, Any] | None = None,
+                                  source_name: str = "") -> dict[str, Any]:
+        """Persist a rendered visualization as an immutable player asset. Scope is the
+        SINGLE resolved player (never the whole dataset). Returns the asset metadata."""
+        self._require(user, Capability.EDIT_PLAYERS)
+        if self._image_storage is None:
+            raise ValueError("Image storage is not configured.")
+        p = self._player_or_raise(player_id)
+        if (not dataset_id or scope is None or not source_name) and self._wm is not None:
+            # derive missing context from the active player-scouting dataset, resolving
+            # THIS player's single row (never the whole population)
+            try:
+                ad = self._wm.active_dataset(user)
+            except Exception:
+                ad = None
+            if ad is not None:
+                ctx = self.player_viz_context(user, player_id, ad.id)
+                if ctx is not None:
+                    dataset_id = dataset_id or ctx["id"]
+                    source_name = source_name or ctx["name"]
+                    if scope is None:
+                        scope = {"player": [ctx["primary"]]}
+        image_id = self._uid()
+        self._image_storage.save(image_id, png, "image/png")
+        asset = {"id": self._uid(), "image_id": image_id, "player_id": player_id,
+                 "asset_type": "visualization", "dataset_id": dataset_id or "",
+                 "source_dataset_name": source_name or "", "viz_id": viz_id,
+                 "chart_type": viz_id, "title": (title or viz_id or "Visualization").strip(),
+                 "scope": scope or {}, "config": config or {},
+                 "created_by": user.email, "created_at": _now()}
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        assets = list(doc.get("visual_assets", []) or [])
+        assets.append(asset)
+        doc["visual_assets"] = assets
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, "players.visualization.save", target_type="player",
+                          target_id=player_id,
+                          detail={"viz_id": viz_id, "dataset_id": dataset_id, "title": asset["title"]})
+        return asset
+
+    def list_player_visualizations(self, player_id: str) -> list[dict[str, Any]]:
+        p = self.get_player(player_id)
+        if p is None:
+            return []
+        doc = p.document if isinstance(p.document, dict) else {}
+        return list(doc.get("visual_assets", []) or [])
+
+    def player_visualization_bytes(self, player_id: str, asset_id: str) -> bytes | None:
+        """The immutable PNG for a saved asset (from ImageStorage). ``None`` if the
+        asset or its blob is missing — the metadata is never silently regenerated."""
+        for a in self.list_player_visualizations(player_id):
+            if a.get("id") == asset_id:
+                img = a.get("image_id")
+                return self._image_storage.load(img) if (img and self._image_storage) else None
+        return None
+
+    def delete_player_visualization(self, user: User, player_id: str, asset_id: str) -> None:
+        self._require(user, Capability.EDIT_PLAYERS)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        keep, removed = [], None
+        for a in (doc.get("visual_assets") or []):
+            if a.get("id") == asset_id:
+                removed = a
+            else:
+                keep.append(a)
+        if removed and removed.get("image_id") and self._image_storage is not None:
+            self._image_storage.delete(removed["image_id"])
+        doc["visual_assets"] = keep
+        p.document = doc
+        self.players.save(p)
+        self.audit.record(user, "players.visualization.delete", target_type="player",
+                          target_id=player_id, detail={"asset_id": asset_id})
 
     # ================================================================ promote (read-only bridge)
     def promote_from_scouting(self, user: User, scout_player_id: str) -> Player:

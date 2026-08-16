@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import datetime as _dt
+import html as _html
 
 import streamlit as st
 
@@ -367,12 +368,95 @@ class FirstTeamPlayersPage(Page):
         with tabs[10]:
             self._tab_settings(shell, svc, player_id, p)
 
-    # ---- Visualization workspace (reuses the platform visualization engine) ----
+    # ---- Visualization workspace (reuses the shared player-scoped viz engine) ----
     def _tab_visualization(self, shell, svc, player_id, p) -> None:
-        from fap.ui.components.viz_workspace import render_visualization_workspace
-        frame = svc.player_event_frame(shell.user, player_id)
-        render_visualization_workspace(shell, frame=frame, player_name=p.name,
-                                       key=f"ftp_viz_{player_id}")
+        """First-team player performance analysis. When a player-scouting metric
+        dataset is LINKED (resolved by dataset_id, never the active dataset), the
+        shared player-scoped workspace (Metric Explorer / Pizza / Radar / Bar /
+        Scatter / Squad context) renders it with Save-to-Player; otherwise the event
+        visualization engine is used. Saved charts appear in Visual Evidence below."""
+        C.render_section_title("Performance Analysis", eyebrow="Player Data",
+                               subtitle="Metric analysis from the player's linked dataset — "
+                               "independent of whatever dataset is globally active.",
+                               icon_name="analysis")
+        linked = svc.linked_player_scouting_datasets(shell.user, player_id)
+        if linked:
+            ids = [d["dataset_id"] for d in linked]
+            names = {d["dataset_id"]: d for d in linked}
+            if len(ids) > 1:
+                chosen = st.selectbox(
+                    "Analysis source", ids, key=f"ftviz_ds_{player_id}",
+                    format_func=lambda i: f"{names[i]['name']} · {names[i]['metric_count']} metrics"
+                    + ("" if names[i]["linked"] else " · (active, not linked)"))
+            else:
+                chosen = ids[0]
+                d0 = names[chosen]
+                st.caption(f"{icon('datasets', 13)} Analysis source: **{d0['name']}** · "
+                           f"{d0['metric_count']} metrics"
+                           + ("" if d0["linked"] else " · active (not linked yet)"),
+                           unsafe_allow_html=True)
+            if not names[chosen]["linked"] and self._can_edit:
+                if st.button("Link this dataset to the player", key=f"ftviz_link_{player_id}"):
+                    ctx0 = svc.player_viz_context(shell.user, player_id, chosen)
+                    if ctx0:
+                        svc.link_dataset_identity(shell.user, player_id, ctx0["primary"],
+                                                  dataset_id=chosen, method="manual")
+                        st.rerun()
+            ctx = svc.player_viz_context(shell.user, player_id, chosen)
+            if ctx is None:
+                C.render_alert("The linked dataset is unavailable or the player row could not be "
+                               "resolved. Saved visual evidence remains available below.", "warning")
+            else:
+                from fap.ui.components.scouting_viz_workspace import render_scouting_viz_workspace
+                render_scouting_viz_workspace(shell, svc, p, ctx, key=f"ftp_pviz_{player_id}",
+                                              allow_save=self._can_edit)
+        else:
+            # no linked metric dataset: the existing event visualization workspace
+            from fap.ui.components.viz_workspace import render_visualization_workspace
+            frame = svc.player_event_frame(shell.user, player_id)
+            render_visualization_workspace(shell, frame=frame, player_name=p.name,
+                                           key=f"ftp_viz_{player_id}")
+            st.caption("Link a player-metric dataset (Data Hub → activate → link here) for "
+                       "Pizza / Radar / Bar / Scatter and Save-to-Player.")
+        st.divider()
+        self._visual_evidence_section(shell, svc, player_id, p)
+
+    def _visual_evidence_section(self, shell, svc, player_id, p) -> None:
+        """Saved player visualizations — immutable PNG assets that carry their source
+        dataset + single-player scope, available regardless of the active dataset, a
+        later dataset switch, reload, or the source dataset disappearing."""
+        assets = svc.list_player_visualizations(player_id)
+        C.render_dossier_label(f"Visual evidence ({len(assets)})", icon=icon("grid", 13))
+        if not assets:
+            st.caption("No saved visualizations yet. Render a chart above and click "
+                       "**Save to player** — it is stored permanently against this player.")
+            return
+        active = ""
+        try:
+            ad = shell.wm.active_dataset(shell.user)
+            active = ad.id if ad else ""
+        except Exception:
+            active = ""
+        cols = st.columns(3)
+        for i, a in enumerate(reversed(assets)):
+            with cols[i % 3]:
+                png = svc.player_visualization_bytes(player_id, a["id"])
+                if png:
+                    st.image(png, use_container_width=True)
+                scope = a.get("scope", {}).get("player") or []
+                st.caption(f"**{_html.escape(a.get('title', 'Visualization'))}**")
+                src = a.get("source_dataset_name") or "dataset"
+                gone = False
+                if a.get("dataset_id"):
+                    try:
+                        gone = shell.wm.get_dataset(a["dataset_id"]) is None
+                    except Exception:
+                        gone = False
+                st.caption(f"{_html.escape(src)}"
+                           + (" · source unavailable — saved chart remains" if gone else "")
+                           + (f" · Scope: {_html.escape(', '.join(map(str, scope)))}" if scope else ""))
+                if self._can_edit and st.button("Remove", key=f"ftvz_del_{player_id}_{a['id']}"):
+                    svc.delete_player_visualization(shell.user, player_id, a["id"]); st.rerun()
 
     # ---- professional header -------------------------------------------
     def _header(self, svc, p, ov) -> None:
