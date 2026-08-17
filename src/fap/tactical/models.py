@@ -18,7 +18,7 @@ from typing import Any
 OBJECT_TYPES: tuple[str, ...] = (
     "player", "ball", "cone", "goal", "mannequin",
     "arrow", "curved_arrow", "dashed_arrow", "line", "freehand",
-    "zone", "highlight", "text", "number", "shape", "image",
+    "zone", "highlight", "circle", "text", "number", "shape", "image",
 )
 PITCH_KINDS: tuple[str, ...] = ("full", "half", "thirds", "blank", "futsal", "custom")
 ORIENTATIONS: tuple[str, ...] = ("horizontal", "vertical")

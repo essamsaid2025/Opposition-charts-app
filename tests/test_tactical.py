@@ -641,7 +641,7 @@ def test_draw_tool_defaults_to_select_and_covers_real_types():
     from fap.ui.builtin.tactical_board import _DRAW_TOOLS
     assert _DRAW_TOOLS[0] == ("select", "Select / Move")    # persistent default = Select/Move (off)
     assert [k for k, _ in _DRAW_TOOLS[1:]] == [
-        "zone", "shape", "arrow", "curved_arrow", "dashed_arrow", "line"]
+        "zone", "shape", "circle", "arrow", "curved_arrow", "dashed_arrow", "line"]
     for key, _label in _DRAW_TOOLS[1:]:                     # each arms a real, addable type
         assert isinstance(default_props(key), dict)
     # the props the JS falls back to for a near-zero drag exist for each type

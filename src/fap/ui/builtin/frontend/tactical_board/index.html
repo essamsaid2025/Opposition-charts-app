@@ -664,7 +664,8 @@
       }
     } else if (sel && cfg.editable && !sel.locked) {
       addRotateHandle(sel);
-      if (sel.type === "zone" || sel.type === "highlight" || sel.type === "shape") addResizeHandles(sel);
+      if (sel.type === "zone" || sel.type === "highlight" || sel.type === "shape"
+          || sel.type === "circle") addResizeHandles(sel);
     }
   }
 

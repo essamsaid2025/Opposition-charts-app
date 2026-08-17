@@ -360,7 +360,7 @@ def _zone(o: TacticalObject, colors: dict[str, str]) -> str:
     if shape == "triangle" and o.type != "highlight":       # isoceles, pointing up (cone-glyph style)
         pts = f"{x},{y-h/2} {x-w/2},{y+h/2} {x+w/2},{y+h/2}"
         return f'<polygon points="{pts}" {style}/>'
-    if shape == "ellipse" or o.type == "highlight":
+    if shape == "ellipse" or o.type in ("highlight", "circle"):
         return f'<ellipse cx="{x}" cy="{y}" rx="{w/2}" ry="{h/2}" {style}/>'
     return f'<rect x="{x-w/2}" y="{y-h/2}" width="{w}" height="{h}" rx="6" {style}/>'
 
@@ -393,7 +393,7 @@ _OBJ: dict[str, Callable[[TacticalObject, dict], str]] = {
     "dashed_arrow": lambda o, c: _vector(o, c, "arrowhead"),
     "line": lambda o, c: _vector(o, c, "arrowhead"),
     "freehand": _freehand,
-    "zone": _zone, "highlight": _zone, "text": _text, "number": _text,
+    "zone": _zone, "highlight": _zone, "circle": _zone, "text": _text, "number": _text,
     "shape": _shape, "image": _image,
 }
 

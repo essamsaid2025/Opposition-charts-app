@@ -35,6 +35,11 @@ def default_props(obj_type: str) -> dict[str, Any]:
         # filled, same-colour 2px solid border (the renderer applies the same fallbacks).
         return {"w": 20.0, "h": 16.0, "color": "", "opacity": 0.28, "shape": "rect",
                 "filled": True, "stroke_color": "", "stroke_width": 2.0, "stroke_style": "solid"}
+    if obj_type == "circle":
+        # a true circle/ring annotation: equal default w/h, an OUTLINE (unfilled) ring by
+        # default so it reads as an emphasis marker; reuses the zone/ellipse renderer.
+        return {"w": 14.0, "h": 14.0, "color": "", "opacity": 0.28, "shape": "ellipse",
+                "filled": False, "stroke_color": "", "stroke_width": 2.5, "stroke_style": "solid"}
     if obj_type in ("text", "number"):
         return {"text": "T", "size": 14, "color": ""}
     if obj_type == "image":

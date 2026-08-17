@@ -81,15 +81,17 @@ _LIBRARY = [
 # mode is PERSISTENT (sticky): the armed tool stays active across multiple draws until the user
 # clicks another tool or presses Escape. Drawn geometry maps onto the SAME add_object command.
 _DRAW_TOOLS: list[tuple[str, str]] = [
-    ("select", "Select / Move"), ("zone", "Zone"), ("shape", "Shape"), ("arrow", "Arrow"),
-    ("curved_arrow", "Curved arrow"), ("dashed_arrow", "Dashed arrow"), ("line", "Line"),
+    ("select", "Select / Move"), ("zone", "Zone"), ("shape", "Shape"), ("circle", "Circle"),
+    ("arrow", "Arrow"), ("curved_arrow", "Curved arrow"), ("dashed_arrow", "Dashed arrow"),
+    ("line", "Line"),
 ]
 
 # real backing icon for each tool button in the merged rail (all resolve in fap.theme.icons).
 # "select" has no cursor glyph in the set, so it uses the crosshair "target" (the pick/aim tool);
 # the draw tools reuse the same purpose-built icons as their matching library categories.
 _TOOL_ICONS: dict[str, str] = {
-    "select": "target", "zone": "zone-marker", "shape": "square", "arrow": "arrow-straight",
+    "select": "target", "zone": "zone-marker", "shape": "square", "circle": "target",
+    "arrow": "arrow-straight",
     "curved_arrow": "arrow-curved", "dashed_arrow": "arrow-dashed", "line": "line-straight",
 }
 
@@ -464,16 +466,28 @@ class TacticalBoardPage(Page):
                              use_container_width=True)
                 fmts = svc.export_formats()
                 fmt = bc[1].selectbox("fmt", fmts, key="tb_fmt", label_visibility="collapsed")
-                # resolved colours so the download matches what's on screen (Part 1);
-                # gif animates ALL frames and is cached by board+colour signature (Part 2)
-                colors = _resolve_board_colors(shell, board)
-                if fmt == "gif":
-                    data, mime, fname = self._gif_export(svc, board, colors)
-                else:
-                    data, mime, fname = svc.export(board, _frame_index(), fmt=fmt, colors=colors)
-                bc[2].download_button("", data=data, file_name=fname, mime=mime, key="tb_export",
-                                      help="Export current frame (PNG/PDF) or all frames (GIF)",
-                                      use_container_width=True)
+                # LAZY export: rendering PNG/PDF/GIF is expensive (matplotlib). Computing it on
+                # EVERY rerun made dragging a piece feel like a page reload, because each drop
+                # re-ran the exporter. Now the bytes are prepared ONLY when the user clicks
+                # Export, cached by a board+frame+format signature, and then offered as a real
+                # download. Moving/selecting pieces recomputes nothing.
+                sig = f"{board.updated_at}|{_frame_index()}|{fmt}"
+                prep = st.session_state.get("_tb_export_cache")
+                if prep and prep.get("sig") == sig:
+                    bc[2].download_button("", data=prep["data"], file_name=prep["fname"],
+                                          mime=prep["mime"], key="tb_export", help="Download export",
+                                          use_container_width=True)
+                elif bc[2].button("", key="tb_export_prep",
+                                  help="Prepare export (PNG/PDF/GIF), then download",
+                                  use_container_width=True):
+                    colors = _resolve_board_colors(shell, board)
+                    if fmt == "gif":
+                        data, mime, fname = self._gif_export(svc, board, colors)
+                    else:
+                        data, mime, fname = svc.export(board, _frame_index(), fmt=fmt, colors=colors)
+                    st.session_state["_tb_export_cache"] = {"sig": sig, "data": data,
+                                                            "mime": mime, "fname": fname}
+                    st.rerun()
         if fmt == "gif":
             st.caption(f"GIF exports all {len(board.frames)} frame(s) as an animation "
                        f"(PNG/PDF export the current frame only).")
@@ -482,7 +496,8 @@ class TacticalBoardPage(Page):
         st.markdown(icon_css([
             ("tb_undo", "chevron-left"), ("tb_redo", "chevron-right"), ("tb_new", "plus"),
             ("tb_dup", "layers"), ("tb_snap", "grid"), ("tb_grid", "grid"),
-            ("tb_lock", "shield"), ("tb_save", "check"), ("tb_export", "download")]),
+            ("tb_lock", "shield"), ("tb_save", "check"), ("tb_export", "download"),
+            ("tb_export_prep", "download")]),
             unsafe_allow_html=True)
 
     def _save_cb(self, svc, shell) -> None:

@@ -266,7 +266,7 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
             ys = [b for _, b in fpts] + ([fpts[0][1]] if p.get("closed") else [])
             ax.plot(xs, ys, color=col, linewidth=float(p.get("width", 3)), zorder=z,
                     solid_capstyle="round", solid_joinstyle="round")
-    elif t in ("zone", "highlight", "shape"):
+    elif t in ("zone", "highlight", "shape", "circle"):
         # kept in lockstep with render.py _zone(): identical stroke/fill/shape props, and the
         # default (no new props) reproduces today's exact patch call -> pixel-identical export.
         w = p.get("w", 20) / 100 * _W
@@ -286,7 +286,7 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         if shape == "triangle" and t != "highlight":       # isoceles, pointing up (cone-glyph style)
             ax.add_patch(mp.Polygon([(x, y - h / 2), (x - w / 2, y + h / 2), (x + w / 2, y + h / 2)],
                                     closed=True, **kw))
-        elif shape == "ellipse" or t == "highlight":
+        elif shape == "ellipse" or t in ("highlight", "circle"):
             ax.add_patch(mp.Ellipse((x, y), w, h, **kw))
         else:
             ax.add_patch(mp.Rectangle((x - w / 2, y - h / 2), w, h, **kw))
