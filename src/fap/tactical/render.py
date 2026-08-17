@@ -12,14 +12,17 @@ from __future__ import annotations
 import html as _html
 from typing import Any, Callable
 
+from fap.tactical import visual as _v
 from fap.tactical.models import Board, Frame, TacticalObject, resolve_position
 
-# a professional default palette (overridden by the page with live theme tokens)
+# a professional default palette (overridden by the page with live theme tokens).
+# "gk" is an additive role colour (goalkeepers); older palettes without it fall back
+# via _c()'s DEFAULT_COLORS lookup, so nothing breaks.
 DEFAULT_COLORS: dict[str, str] = {
     "grass": "#1f7a3f", "grass_alt": "#1c7139", "line": "#eaf3ec", "bg": "#0c0e12",
     "home": "#e07b2b", "away": "#2f7bd6", "ball": "#f5f5f5", "ball_line": "#1a1a1a",
     "cone": "#f0a020", "goal": "#e8e8e8", "text": "#ffffff", "accent": "#2f7bd6",
-    "zone": "#2f7bd6", "mannequin": "#c9ccd2",
+    "zone": "#2f7bd6", "mannequin": "#c9ccd2", "gk": "#22b573",
 }
 
 # board is authored in a 1050 x 680 space (10 px per pitch unit); 0-100 -> 0-1050/680
@@ -100,44 +103,76 @@ def _grid(line: str) -> str:
 
 # ---------------------------------------------------------------- objects
 def _player(o: TacticalObject, colors: dict[str, str]) -> str:
-    x, y = _px(o.x, o.y); r = 17 * o.scale
+    """Professional football marker (Phase 5C): grounded (soft shadow), a strong
+    dark separation ring so it reads on any grass, the team/GK disc, a subtle jersey
+    sheen, a contrast-aware centred number and an outlined name — one coherent piece.
+    Sizing/colour roles come from ``fap.tactical.visual`` (single source of truth)."""
+    x, y = _px(o.x, o.y); r = _v.PLAYER_R * o.scale
     p = o.props
-    team = p.get("team", "home")
-    fill = p.get("color") or _c(colors, "away" if team == "away" else "home")
-    ring = (f'<circle cx="{x}" cy="{y}" r="{r+3}" fill="none" stroke="{_c(colors,"line")}" '
-            f'stroke-width="2"/>' if p.get("goalkeeper") else "")
+    fill = _v.player_fill(colors, p)
+    ink = _v.ink_for(fill)
+    edge = _c(colors, "line")
+    parts: list[str] = []
+    # soft ground shadow (depth)
+    parts.append(f'<ellipse cx="{x}" cy="{y+r*0.86}" rx="{r*0.82}" ry="{r*0.30}" '
+                 f'fill="#000000" fill-opacity="0.22"/>')
+    # goalkeeper: a dashed outer ring — clearly of the same marker family, but distinct
+    if p.get("goalkeeper"):
+        parts.append(f'<circle cx="{x}" cy="{y}" r="{r+3.5}" fill="none" stroke="{edge}" '
+                     f'stroke-width="2" stroke-dasharray="3 3"/>')
+    # facing-direction nub: drawn BEFORE the disc so the disc overdraws its base, leaving a
+    # clean nub poking out the top (0deg = up). Lives inside the rotated <g>, so it swings with
+    # o.rotation and agrees with the rotate handle. Keeps rotation visible on a plain player.
+    wr = r * 0.32
+    parts.append(f'<polygon points="{x},{y-r-r*0.5} {x-wr},{y-r*0.6} {x+wr},{y-r*0.6}" '
+                 f'fill="{edge}"/>')
+    # dark separation ring under the disc (contrast on light grass) + the team disc
+    parts.append(f'<circle cx="{x}" cy="{y}" r="{r+1.2}" fill="#0d0f13" fill-opacity="0.55"/>')
+    parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{edge}" '
+                 f'stroke-width="2.4"/>')
+    # subtle top sheen (jersey highlight)
+    parts.append(f'<ellipse cx="{x}" cy="{y-r*0.42}" rx="{r*0.62}" ry="{r*0.34}" '
+                 f'fill="#ffffff" fill-opacity="0.16"/>')
     num = p.get("number", "")
-    num_t = (f'<text x="{x}" y="{y+r*0.35}" text-anchor="middle" font-size="{r*1.1:.0f}" '
-             f'font-weight="700" fill="{_c(colors,"text")}" '
-             f'font-family="Inter,Arial">{_esc(num)}</text>' if num not in ("", None) else "")
-    cap = (f'<text x="{x+r*0.9}" y="{y-r*0.7}" font-size="{r*0.8:.0f}" font-weight="800" '
-           f'fill="{_c(colors,"accent")}" font-family="Inter,Arial">C</text>'
-           if p.get("captain") else "")
+    if num not in ("", None):
+        parts.append(f'<text x="{x}" y="{y+r*0.34}" text-anchor="middle" '
+                     f'font-size="{r*_v.NUMBER_SCALE:.0f}" font-weight="800" fill="{ink}" '
+                     f'font-family="Inter,Arial">{_esc(num)}</text>')
+    if p.get("captain"):
+        parts.append(f'<text x="{x+r*0.95}" y="{y-r*0.7}" font-size="{r*0.8:.0f}" '
+                     f'font-weight="800" fill="{_c(colors,"accent")}" '
+                     f'font-family="Inter,Arial">C</text>')
     name = p.get("name", "")
-    name_t = (f'<text x="{x}" y="{y+r+15}" text-anchor="middle" font-size="13" '
-              f'fill="{_c(colors,"text")}" font-family="Inter,Arial">{_esc(name)}</text>'
-              if name else "")
-    # facing-direction indicator: a small wedge on the top edge pointing "up" (0deg). It is
-    # drawn FIRST so the circle overdraws its base, leaving a clean nub poking out the top; and
-    # it lives inside the object's <g>, which _object_svg rotates by o.rotation — so it always
-    # points where the player faces and agrees with the rotate handle (which also uses 0deg = up).
-    # This makes rotation VISIBLE for a plain player (a symmetric circle + centred number alone
-    # barely changes when rotated). Additive: a player at rotation 0 just gains this small nub.
-    wr = r * 0.34
-    wedge = (f'<polygon points="{x},{y-r-r*0.48} {x-wr},{y-r*0.62} {x+wr},{y-r*0.62}" '
-             f'fill="{_c(colors,"line")}"/>')
-    return (f'{wedge}{ring}<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" '
-            f'stroke="{_c(colors,"line")}" stroke-width="2"/>{num_t}{cap}{name_t}')
+    if name:
+        # outlined label (paint-order stroke) so the name stays legible over players/lines
+        parts.append(f'<text x="{x}" y="{y+r+14}" text-anchor="middle" '
+                     f'font-size="{_v.NAME_SIZE:.0f}" font-weight="600" fill="{_c(colors,"text")}" '
+                     f'font-family="Inter,Arial" paint-order="stroke" stroke="#0c0e12" '
+                     f'stroke-width="3" stroke-linejoin="round">{_esc(name)}</text>')
+    return "".join(parts)
 
 
 def _ball(o: TacticalObject, colors: dict[str, str], px: float | None = None,
           py: float | None = None) -> str:
     # px/py override the ball's own coords when it is "sticky" on a player (resolved by the
-    # caller via resolve_position); default = the ball's stored position (byte-identical to before)
-    x, y = (px, py) if px is not None else _px(o.x, o.y); r = 9 * o.scale
-    return (f'<circle cx="{x}" cy="{y}" r="{r}" fill="{_c(colors,"ball")}" '
-            f'stroke="{_c(colors,"ball_line")}" stroke-width="1.5"/>'
-            f'<circle cx="{x}" cy="{y}" r="{r*0.32}" fill="{_c(colors,"ball_line")}"/>')
+    # caller via resolve_position); default = the ball's stored position.
+    # Phase 5C: a recognizable football — white sphere with a soft shadow, a central dark
+    # pentagon and short seam spokes — instead of a plain dot. Same BALL_R token as the mpl export.
+    import math
+    x, y = (px, py) if px is not None else _px(o.x, o.y); r = _v.BALL_R * o.scale
+    dark = _c(colors, "ball_line"); white = _c(colors, "ball")
+    pr = r * 0.5
+    pent = [(x + pr * math.cos(-math.pi / 2 + i * 2 * math.pi / 5),
+             y + pr * math.sin(-math.pi / 2 + i * 2 * math.pi / 5)) for i in range(5)]
+    parts = [f'<ellipse cx="{x}" cy="{y+r*0.9}" rx="{r*0.85}" ry="{r*0.32}" '
+             f'fill="#000000" fill-opacity="0.22"/>',
+             f'<circle cx="{x}" cy="{y}" r="{r}" fill="{white}" stroke="{dark}" stroke-width="1.4"/>']
+    for a, b in pent:                                    # seam spokes to the rim
+        ex, ey = x + (a - x) / pr * r * 0.98, y + (b - y) / pr * r * 0.98
+        parts.append(f'<line x1="{a:.1f}" y1="{b:.1f}" x2="{ex:.1f}" y2="{ey:.1f}" '
+                     f'stroke="{dark}" stroke-width="1"/>')
+    parts.append(f'<polygon points="{" ".join(f"{a:.1f},{b:.1f}" for a, b in pent)}" fill="{dark}"/>')
+    return "".join(parts)
 
 
 def _cone(o: TacticalObject, colors: dict[str, str]) -> str:
@@ -192,8 +227,74 @@ def curvature_from_control_point(x1: float, y1: float, x2: float, y2: float,
     return ((cx - mx) * dy - (cy - my) * dx) / denom
 
 
+def _head_svg(geom: dict, color: str, sw: float) -> str:
+    """SVG for a renderer-neutral arrowhead spec from geometry.arrowhead_geometry()."""
+    def _pts(poly):
+        return " ".join(f"{a:.1f},{b:.1f}" for a, b in poly)
+    out = []
+    for poly in geom["fill_polys"]:
+        out.append(f'<polygon points="{_pts(poly)}" fill="{color}"/>')
+    for poly in geom["stroke_closed"]:
+        out.append(f'<polygon points="{_pts(poly)}" fill="none" stroke="{color}" '
+                   f'stroke-width="{sw}" stroke-linejoin="round"/>')
+    for poly in geom["stroke_open"]:
+        out.append(f'<polyline points="{_pts(poly)}" fill="none" stroke="{color}" '
+                   f'stroke-width="{sw}" stroke-linecap="round" stroke-linejoin="round"/>')
+    for cx, cy, r in geom["fill_circles"]:
+        out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="{color}"/>')
+    for cx, cy, r in geom["stroke_circles"]:
+        out.append(f'<circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r:.1f}" fill="none" '
+                   f'stroke="{color}" stroke-width="{sw}"/>')
+    return "".join(out)
+
+
+def _vector_custom(o: TacticalObject, colors: dict[str, str], head_kind: str) -> str:
+    """Arrow with an EXPLICIT ``props["arrowhead"]`` — the body keeps its variant/legacy
+    semantics but the endpoint is drawn from geometry.arrowhead_geometry(). Reached only
+    when the prop is present, so arrows without it stay on the classic byte-identical path."""
+    from fap.tactical import geometry as _geo
+    x1, y1 = _px(o.x, o.y); x2, y2 = _px(o.props.get("x2", o.x + 12), o.props.get("y2", o.y))
+    spec = _geo.variant_spec(o.props.get("variant"))
+    if spec is not None:
+        col = o.props.get("color") or spec["color"] or _c(colors, "line")
+        width = float(o.props.get("stroke_width", spec.get("width", 4)))
+        dash = f'stroke-dasharray="{spec["dash"]}"' if spec.get("dash") else ""
+        wave = str(spec.get("wave", ""))
+    else:
+        col = o.props.get("color") or _c(colors, "line")
+        width = float(o.props.get("stroke_width", 4))
+        dash = 'stroke-dasharray="10 8"' if o.type == "dashed_arrow" else ""
+        wave = ""
+    size = float(o.props.get("arrowhead_size", 1.0))
+    hsw = float(o.props.get("arrowhead_stroke_width", 1.5))
+    geom = _geo.arrowhead_geometry(head_kind, x1, y1, x2, y2, size=size, stroke_width=hsw)
+    ux, uy, _, _ = _geo._dir(x1, y1, x2, y2)
+    trim = 0.0 if o.type == "line" else float(geom["trim"])
+    ex, ey = x2 - ux * trim, y2 - uy * trim
+    if o.type == "curved_arrow":
+        cx, cy = curve_control_point(x1, y1, x2, y2, float(o.props.get("curvature", 0.3)))
+        body = (f'<path d="M {x1} {y1} Q {cx} {cy} {ex} {ey}" fill="none" stroke="{col}" '
+                f'stroke-width="{width}" {dash} stroke-linecap="round"/>')
+    elif wave:
+        pts = _geo.wave_points(x1, y1, ex, ey, wave)
+        d = "M " + " L ".join(f"{px:.1f} {py:.1f}" for px, py in pts)
+        body = f'<path d="{d}" fill="none" stroke="{col}" stroke-width="{width}" {dash} stroke-linecap="round"/>'
+    else:
+        body = (f'<line x1="{x1}" y1="{y1}" x2="{ex}" y2="{ey}" stroke="{col}" '
+                f'stroke-width="{width}" {dash} stroke-linecap="round"/>')
+    head = "" if o.type == "line" and head_kind == "none" else _head_svg(geom, col, hsw)
+    label = o.props.get("label")
+    if label:
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        head += (f'<text x="{mx:.1f}" y="{my - 7:.1f}" text-anchor="middle" font-size="13" '
+                 f'font-weight="700" fill="{col}" font-family="Inter,Arial">{_esc(str(label))}</text>')
+    return body + head
+
+
 def _vector(o: TacticalObject, colors: dict[str, str], marker: str) -> str:
     from fap.tactical import geometry as _geo
+    if o.props.get("arrowhead") is not None:                # explicit head -> new custom path
+        return _vector_custom(o, colors, str(o.props.get("arrowhead")))
     x1, y1 = _px(o.x, o.y); x2, y2 = _px(o.props.get("x2", o.x + 12), o.props.get("y2", o.y))
     spec = _geo.variant_spec(o.props.get("variant"))
     if spec is None:                                        # legacy arrow — byte-identical to before
@@ -306,8 +407,14 @@ def _object_svg(o: TacticalObject, colors: dict[str, str], fr: Frame, *, selecte
     transform = f' transform="rotate({o.rotation} {cx} {cy})"' if o.rotation else ""
     sel = ""
     if selected:
-        sel = (f'<circle cx="{cx}" cy="{cy}" r="26" fill="none" stroke="{_c(colors,"accent")}" '
-               f'stroke-width="2" stroke-dasharray="4 4"/>')
+        acc = _c(colors, "accent")
+        # a clean solid ring + a soft accent halo (replaces the old thin dashed ring). The JS
+        # canvas draws the SAME shape for EXTRA multi-selected objects (index.html), so single
+        # and multi selection look identical.
+        sel = (f'<circle cx="{cx}" cy="{cy}" r="{_v.SELECT_HALO_R}" fill="none" stroke="{acc}" '
+               f'stroke-width="{_v.SELECT_HALO_WIDTH}" stroke-opacity="{_v.SELECT_HALO_OPACITY}"/>'
+               f'<circle cx="{cx}" cy="{cy}" r="{_v.SELECT_RING_R}" fill="none" stroke="{acc}" '
+               f'stroke-width="{_v.SELECT_RING_WIDTH}"/>')
     return f'<g data-oid="{_esc(o.id)}"{transform}>{body}{sel}</g>'
 
 

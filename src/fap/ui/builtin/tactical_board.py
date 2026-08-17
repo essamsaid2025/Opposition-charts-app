@@ -17,6 +17,7 @@ from fap.tactical import (
     ARROW_VARIANT_KEYS, Board, History, TacticalService, apply_command, board_svg,
     builtin_names, builtin_template, new_board,
 )
+from fap.tactical import geometry as _tgeo
 from fap.tactical.ops import apply_command as _apply_command
 from fap.tactical.ops import default_props
 from fap.tactical.render import DEFAULT_COLORS
@@ -36,6 +37,10 @@ TB_CANVAS_TS = "_tb_canvas_ts"    # last processed canvas action (dedups Streaml
 TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are currently synced to
 TB_DRAW_TOOL = "_tb_draw_tool"    # armed click-drag draw tool ("select" = off); persistent/sticky
 TB_MULTI = "_tb_multisel"         # object ids selected in the Objects/Layers panel (Phase 3)
+
+# vector object types the arrow-style / arrowhead editors apply to (UI-side mirror of
+# ops._VECTOR_TYPES; kept local so the UI has no import-time coupling to ops internals)
+_VECTOR_UI_TYPES = ("arrow", "curved_arrow", "dashed_arrow", "line")
 
 # Every Properties widget that follows the "read the widget, write it back to the model if
 # it differs" pattern. Those widgets keep their OWN value in session_state, so after the
@@ -374,7 +379,7 @@ class TacticalBoardPage(Page):
 
         self._toolbar(shell, svc, board, hist, can_edit)
 
-        left, center, right = st.columns([2.3, 6.2, 2.6], gap="small")
+        left, center, right = st.columns([1.9, 8.0, 2.3], gap="small")
         with left:
             self._rail(can_edit)
             self._templates_and_saved(shell, svc, board, can_edit)
@@ -387,46 +392,78 @@ class TacticalBoardPage(Page):
 
     # ------------------------------------------------------------ toolbar
     def _toolbar(self, shell, svc, board, hist, can_edit) -> None:
+        # Functional clusters — History · Board · View · Object · File — so the bar reads
+        # as a professional editor toolbar, not one flat row of glyphs. Every button keeps
+        # its ORIGINAL key + callback, so the command/history seam is untouched; only the
+        # layout (grouping + labels) changed. The per-button masked icons still resolve via
+        # the single icon_css() call below (its .st-key-tb_toolbar rules match by descendant,
+        # so the new nested columns don't affect them).
+        def _dup():
+            _apply({"op": "duplicate_object", "frame": _frame_index(),
+                    "id": st.session_state.get(TB_SEL) or ""})
+
+        def _snap():
+            _toggle(TB_SNAP)
+            if st.session_state[TB_SNAP]:
+                _apply({"op": "snap", "step": 5.0})
+
+        def _lock():
+            _apply({"op": "update_object", "frame": _frame_index(),
+                    "id": st.session_state.get(TB_SEL) or "", "locked": True,
+                    "force": True}, record=False)
+
+        is_vertical = getattr(board.pitch, "orientation", "horizontal") == "vertical"
+        fmt = None
         with st.container(key="tb_toolbar"):
-            cols = st.columns(12, gap="small")
-            specs = [
-                ("tb_undo", "refresh", "Undo", _undo, not hist.can_undo() or not can_edit),
-                ("tb_redo", "refresh", "Redo", _redo, not hist.can_redo() or not can_edit),
-                ("tb_new", "plus", "New board", _new_board, not can_edit),
-                ("tb_dup", "layers", "Duplicate selection",
-                 lambda: _apply({"op": "duplicate_object", "frame": _frame_index(),
-                                 "id": st.session_state.get(TB_SEL) or ""}), not can_edit),
-                ("tb_snap", "grid", "Snap to grid",
-                 lambda: (_toggle(TB_SNAP), _apply({"op": "snap", "step": 5.0}) if st.session_state[TB_SNAP] else None), not can_edit),
-                ("tb_grid", "grid", "Toggle grid", lambda: _toggle(TB_GRID), False),
-                ("tb_lock", "shield", "Lock selection",
-                 lambda: _apply({"op": "update_object", "frame": _frame_index(),
-                                 "id": st.session_state.get(TB_SEL) or "", "locked": True,
-                                 "force": True}, record=False), not can_edit),
-            ]
-            for col, (key, ic, tip, cb, disabled) in zip(cols, specs):
-                with col:
-                    st.button("", key=key, help=tip, on_click=cb, disabled=disabled,
-                              use_container_width=True)
-            # pitch orientation toggle — flips the existing set_pitch op; the visible glyph
-            # shows the CURRENT state (↔ horizontal / ↕ vertical), the tooltip the action.
-            # Default "horizontal" so existing boards look and export exactly as today.
-            is_vertical = getattr(board.pitch, "orientation", "horizontal") == "vertical"
-            with cols[7]:
-                st.button("↕" if is_vertical else "↔", key="tb_orient",
-                          help=("Pitch: Vertical — switch to Horizontal" if is_vertical
-                                else "Pitch: Horizontal — switch to Vertical"),
-                          disabled=not can_edit, use_container_width=True,
-                          on_click=lambda t=("horizontal" if is_vertical else "vertical"):
-                              _apply({"op": "set_pitch", "orientation": t}))
-            # save + export live at the right end of the toolbar
-            with cols[8]:
-                st.button("", key="tb_save", help="Save board", disabled=not can_edit,
-                          on_click=self._save_cb, args=(svc, shell), use_container_width=True)
-            with cols[9]:
+            hist_c, board_c, view_c, obj_c, file_c = st.columns(
+                [1.7, 1.7, 2.5, 1.1, 4.6], gap="small")
+            # -- History -------------------------------------------------------
+            with hist_c:
+                st.markdown('<div class="tb-cluster">History</div>', unsafe_allow_html=True)
+                bc = st.columns(2, gap="small")
+                bc[0].button("", key="tb_undo", help="Undo  ·  Ctrl+Z", on_click=_undo,
+                             disabled=not hist.can_undo() or not can_edit, use_container_width=True)
+                bc[1].button("", key="tb_redo", help="Redo  ·  Ctrl+Y", on_click=_redo,
+                             disabled=not hist.can_redo() or not can_edit, use_container_width=True)
+            # -- Board ---------------------------------------------------------
+            with board_c:
+                st.markdown('<div class="tb-cluster">Board</div>', unsafe_allow_html=True)
+                bc = st.columns(2, gap="small")
+                bc[0].button("", key="tb_new", help="New board — clear and start over",
+                             on_click=_new_board, disabled=not can_edit, use_container_width=True)
+                bc[1].button("", key="tb_dup", help="Duplicate selection  ·  Ctrl+D",
+                             on_click=_dup, disabled=not can_edit, use_container_width=True)
+            # -- View ----------------------------------------------------------
+            with view_c:
+                st.markdown('<div class="tb-cluster">View</div>', unsafe_allow_html=True)
+                bc = st.columns(3, gap="small")
+                bc[0].button("", key="tb_snap",
+                             help="Snap to grid — align pieces to a 5-unit grid",
+                             on_click=_snap, disabled=not can_edit, use_container_width=True)
+                bc[1].button("", key="tb_grid", help="Toggle grid overlay",
+                             on_click=lambda: _toggle(TB_GRID), use_container_width=True)
+                # orientation glyph shows the CURRENT state (↔ horizontal / ↕ vertical); the
+                # tooltip names the action. Default "horizontal" keeps existing boards identical.
+                bc[2].button("↕" if is_vertical else "↔", key="tb_orient",
+                             help=("Pitch: Vertical — switch to Horizontal" if is_vertical
+                                   else "Pitch: Horizontal — switch to Vertical"),
+                             disabled=not can_edit, use_container_width=True,
+                             on_click=lambda t=("horizontal" if is_vertical else "vertical"):
+                                 _apply({"op": "set_pitch", "orientation": t}))
+            # -- Object --------------------------------------------------------
+            with obj_c:
+                st.markdown('<div class="tb-cluster">Object</div>', unsafe_allow_html=True)
+                st.button("", key="tb_lock", help="Lock selection — prevent moving/editing",
+                          on_click=_lock, disabled=not can_edit, use_container_width=True)
+            # -- File ----------------------------------------------------------
+            with file_c:
+                st.markdown('<div class="tb-cluster">File</div>', unsafe_allow_html=True)
+                bc = st.columns([1.1, 1.7, 1.2], gap="small")
+                bc[0].button("", key="tb_save", help="Save board to your saved boards",
+                             disabled=not can_edit, on_click=self._save_cb, args=(svc, shell),
+                             use_container_width=True)
                 fmts = svc.export_formats()
-                fmt = st.selectbox("fmt", fmts, key="tb_fmt", label_visibility="collapsed")
-            with cols[10]:
+                fmt = bc[1].selectbox("fmt", fmts, key="tb_fmt", label_visibility="collapsed")
                 # resolved colours so the download matches what's on screen (Part 1);
                 # gif animates ALL frames and is cached by board+colour signature (Part 2)
                 colors = _resolve_board_colors(shell, board)
@@ -434,8 +471,9 @@ class TacticalBoardPage(Page):
                     data, mime, fname = self._gif_export(svc, board, colors)
                 else:
                     data, mime, fname = svc.export(board, _frame_index(), fmt=fmt, colors=colors)
-                st.download_button("", data=data, file_name=fname, mime=mime, key="tb_export",
-                                   help="Export", use_container_width=True)
+                bc[2].download_button("", data=data, file_name=fname, mime=mime, key="tb_export",
+                                      help="Export current frame (PNG/PDF) or all frames (GIF)",
+                                      use_container_width=True)
         if fmt == "gif":
             st.caption(f"GIF exports all {len(board.frames)} frame(s) as an animation "
                        f"(PNG/PDF export the current frame only).")
@@ -489,13 +527,16 @@ class TacticalBoardPage(Page):
             C.render_alert("Read-only: you can view but not edit this board.", "info")
         cur = st.session_state.get(TB_DRAW_TOOL, "select")
         with st.container(key="tb_rail"):
-            # -- TOOLS: Select/Move + sticky draw tools, icon-only, one column ----------
+            # -- TOOLS: Select/Move + sticky draw tools — now icon + LABEL (a readable
+            #    palette, not bare glyphs). Same keys/callbacks/active-highlight as before.
+            st.markdown('<div class="tb-panel-title">Tools</div>', unsafe_allow_html=True)
             for key, label in _DRAW_TOOLS:
-                st.button("", key=f"tbtool_{key}", help=label, use_container_width=True,
+                st.button(label, key=f"tbtool_{key}", help=label, use_container_width=True,
                           type="primary" if key == cur else "secondary",
                           disabled=not can_edit, on_click=_set_draw_tool, args=(key,))
-            st.markdown('<div class="tb-rail-sep"></div>', unsafe_allow_html=True)
-            # -- LIBRARY: one popover trigger per category (click-to-add items) ---------
+            st.markdown('<div class="tb-panel-title" style="margin-top:12px">Objects</div>',
+                        unsafe_allow_html=True)
+            # -- LIBRARY: one popover trigger per category — now icon + CATEGORY NAME ------
             for title, ic, items in _LIBRARY:
                 # sub-divider between placement objects and drawing objects (reference grouping)
                 if title == "Arrows":
@@ -503,7 +544,7 @@ class TacticalBoardPage(Page):
                 with st.container(key=f"tbrail_{title}"):
                     # trigger is NOT disabled read-only (items stay browsable, like the old
                     # expanders); only the add buttons inside are gated, as before.
-                    with st.popover("", help=title, use_container_width=True):
+                    with st.popover(title, help=f"Add {title.lower()}", use_container_width=True):
                         for label, otype, extra in items:
                             st.button(label, key=f"tblib_{title}_{label}",
                                       use_container_width=True, disabled=not can_edit,
@@ -695,6 +736,30 @@ class TacticalBoardPage(Page):
                     _apply({"op": "update_object", "frame": f, "id": o.id,
                             "props": {"variant": v, "label": lbl}})
                     st.rerun()
+        # arrowhead editor — independent of the variant; works on ONE or MANY selected arrows,
+        # applied as a single set_arrow_properties command (one undo step; locked arrows skipped)
+        arrow_ids = [i for i in ids
+                     if (o := fr.object(i)) is not None and o.type in _VECTOR_UI_TYPES]
+        if arrow_ids:
+            st.markdown('<div class="tb-panel-title" style="margin-top:8px">Arrowhead</div>',
+                        unsafe_allow_html=True)
+            if len(arrow_ids) > 1:
+                st.caption(f"{len(arrow_ids)} arrows selected")
+            first = fr.object(arrow_ids[0]).props or {}
+            heads = list(_tgeo.ARROWHEAD_KINDS)
+            cur_h = first.get("arrowhead") or _tgeo.ARROWHEAD_DEFAULT
+            head = st.selectbox("Head", heads, index=heads.index(cur_h) if cur_h in heads else 0,
+                                format_func=lambda k: _tgeo.ARROWHEAD_LABELS.get(k, k),
+                                key="tb_head")
+            hc = st.columns(2)
+            hsize = hc[0].slider("Size", 0.5, 2.5, float(first.get("arrowhead_size", 1.0)),
+                                 0.1, key="tb_hsize")
+            hstroke = hc[1].slider("Stroke", 0.5, 4.0,
+                                   float(first.get("stroke_width", 4.0)), 0.5, key="tb_hstroke")
+            if st.button("Apply arrowhead", key="tb_applyhead", disabled=not can_edit):
+                _apply({"op": "set_arrow_properties", "frame": f, "ids": arrow_ids,
+                        "arrowhead": head, "arrowhead_size": hsize, "stroke_width": hstroke})
+                st.rerun()
 
     # ------------------------------------------------------------ properties
     def _properties(self, shell, board, can_edit) -> None:
@@ -1019,5 +1084,19 @@ class TacticalBoardPage(Page):
   border-radius: 14px; padding: 10px; box-shadow: var(--fap-shadow-sm); }
 .tb-timeline-wrap { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 12px; padding: 10px 12px; margin-top: 14px; }
+/* ---- Phase 5: dominant pitch --------------------------------------------------
+   Let the Tactical Board use the FULL viewport width so the pitch is the dominant
+   element (the global brand cap on .block-container leaves ~half the screen empty).
+   This <style> lives in the DOM only while THIS page renders, so it is page-scoped:
+   navigating away removes it and every other page keeps the brand max-width. */
+[data-testid="stMainBlockContainer"], .block-container { max-width: 100% !important; }
+/* ---- Phase 5: toolbar cluster labels (History · Board · View · Object · File) -- */
+.tb-cluster { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--fap-text-subtle); margin: 0 2px 5px; text-align: center; }
+/* ---- Phase 5: palette rail reads as icon + LABEL rows (left-aligned) ----------- */
+.st-key-tb_rail [class*="st-key-tbtool_"] button { justify-content: flex-start; gap: 10px;
+  padding-left: 12px; font-weight: 600; text-align: left; }
+.st-key-tb_rail [data-testid="stPopoverButton"] { justify-content: flex-start; gap: 10px;
+  padding-left: 12px; font-weight: 600; }
 </style>
 """, unsafe_allow_html=True)

@@ -95,6 +95,76 @@ def arrowhead_points(x1: float, y1: float, x2: float, y2: float,
             (base_x - px * size * 0.5, base_y - py * size * 0.5)]
 
 
+# ---------------------------------------------------------------- arrowheads (Phase 5B)
+# The arrowhead is an INDEPENDENT visual property of an arrow (props["arrowhead"]); the
+# variant controls the body, the head controls the endpoint. This table is the single
+# vocabulary; the geometry function below is the single source of truth both renderers use.
+ARROWHEAD_KINDS: tuple[str, ...] = (
+    "filled_triangle", "outline_triangle", "circle", "dot", "chevron", "bar", "none")
+ARROWHEAD_LABELS: dict[str, str] = {
+    "filled_triangle": "Filled triangle", "outline_triangle": "Outline triangle",
+    "circle": "Hollow circle", "dot": "Dot", "chevron": "Chevron", "bar": "Bar",
+    "none": "None"}
+# When props has NO "arrowhead", arrows keep their EXISTING look (filled head via the
+# classic path) — this constant is only the fallback for an explicit but unknown value.
+ARROWHEAD_DEFAULT = "filled_triangle"
+
+
+def _dir(x1: float, y1: float, x2: float, y2: float) -> tuple[float, float, float, float]:
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    if length == 0:
+        return 1.0, 0.0, 0.0, 1.0
+    ux, uy = dx / length, dy / length
+    return ux, uy, -uy, ux                            # unit direction + unit perpendicular
+
+
+def arrowhead_geometry(kind: str, x1: float, y1: float, x2: float, y2: float, *,
+                       size: float = 1.0, stroke_width: float = 1.5) -> dict[str, Any]:
+    """Renderer-neutral arrowhead primitives at the ``(x2,y2)`` tip, oriented along the
+    line from ``(x1,y1)``. The SVG renderer and the matplotlib exporter both consume THIS
+    (no duplicated head maths). Returns a dict of primitive lists in the caller's pixel
+    plane plus ``trim`` (how far to pull the body endpoint back so open/closed endpoints
+    don't poke through). An unknown ``kind`` falls back to the classic filled triangle;
+    ``"none"`` yields no primitives.
+
+    Keys: ``fill_polys`` (filled polygons), ``stroke_closed`` (outlined closed polygons),
+    ``stroke_open`` (open polylines), ``fill_circles``/``stroke_circles`` (cx,cy,r)."""
+    out: dict[str, Any] = {"fill_polys": [], "stroke_closed": [], "stroke_open": [],
+                           "fill_circles": [], "stroke_circles": [], "trim": 0.0}
+    k = str(kind or "").strip().lower()
+    if k == "none":
+        return out
+    if k not in ARROWHEAD_KINDS:
+        k = ARROWHEAD_DEFAULT
+    ux, uy, px, py = _dir(x1, y1, x2, y2)
+    s = max(0.2, float(size))
+    tri_len = 11.0 * s                                # matches arrowhead_points default at size 1
+    radius = 5.5 * s
+    tip = (x2, y2)
+    if k in ("filled_triangle", "outline_triangle"):
+        bx, by = x2 - ux * tri_len, y2 - uy * tri_len
+        tri = [tip, (bx + px * tri_len * 0.5, by + py * tri_len * 0.5),
+               (bx - px * tri_len * 0.5, by - py * tri_len * 0.5)]
+        if k == "filled_triangle":
+            out["fill_polys"].append(tri)
+        else:
+            out["stroke_closed"].append(tri)
+            out["trim"] = tri_len * 0.9
+    elif k in ("circle", "dot"):
+        cx, cy = x2 - ux * radius, y2 - uy * radius
+        (out["fill_circles"] if k == "dot" else out["stroke_circles"]).append((cx, cy, radius))
+        out["trim"] = 2.0 * radius
+    elif k == "chevron":
+        bx, by = x2 - ux * tri_len, y2 - uy * tri_len
+        out["stroke_open"].append([(bx + px * tri_len * 0.55, by + py * tri_len * 0.55),
+                                   tip, (bx - px * tri_len * 0.55, by - py * tri_len * 0.55)])
+    elif k == "bar":
+        h = tri_len * 0.6
+        out["stroke_open"].append([(x2 + px * h, y2 + py * h), (x2 - px * h, y2 - py * h)])
+    return out
+
+
 def freehand_points(props: dict[str, Any]) -> list[tuple[float, float]]:
     """Normalized freehand path points (0-100 pitch space) from ``props['points']``
     (a list of [x, y] or {'x','y'}). Invalid entries are skipped; never raises."""
@@ -111,4 +181,5 @@ def freehand_points(props: dict[str, Any]) -> list[tuple[float, float]]:
 
 
 __all__ = ["ARROW_VARIANTS", "ARROW_VARIANT_KEYS", "variant_spec", "wave_points",
-           "arrowhead_points", "freehand_points"]
+           "arrowhead_points", "freehand_points", "ARROWHEAD_KINDS", "ARROWHEAD_LABELS",
+           "ARROWHEAD_DEFAULT", "arrowhead_geometry"]

@@ -84,4 +84,5 @@ def tactical_colors_from_theme(theme: Any) -> dict[str, str]:
         "accent": _pick(tc, "accent", d["accent"]),  # accent    -> captain/accent marks
         "zone": _pick(tc, "success", d["zone"]),     # success   -> zone highlight
         "mannequin": _pick(tc, "grey", d["mannequin"]),  # grey  -> mannequin
+        "gk": _pick(tc, "success", d["gk"]),         # success   -> goalkeeper (distinct green)
     }

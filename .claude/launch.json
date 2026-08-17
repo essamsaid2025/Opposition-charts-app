@@ -1,0 +1,20 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "fap",
+      "runtimeExecutable": "C:\\Users\\Essam\\OneDrive\\Desktop\\python\\pythonw.exe",
+      "runtimeArgs": ["C:\\Users\\Essam\\AppData\\Local\\Temp\\claude\\C--Users-Essam-OneDrive-Desktop-Github-Opposition-charts-app\\3eb67987-44b9-4a0f-a617-493c974546b0\\scratchpad\\app_dev.py"],
+      "port": 8520
+    },
+    {
+      "name": "tb",
+      "runtimeExecutable": "C:\\Users\\Essam\\OneDrive\\Desktop\\python\\pythonw.exe",
+      "runtimeArgs": ["-m", "streamlit", "run",
+                      "C:\\Users\\Essam\\AppData\\Local\\Temp\\claude\\C--Users-Essam-OneDrive-Desktop-Github-Opposition-charts-app\\3eb67987-44b9-4a0f-a617-493c974546b0\\scratchpad\\tb_harness.py",
+                      "--server.headless", "true", "--server.port", "8521",
+                      "--browser.gatherUsageStats", "false"],
+      "port": 8521
+    }
+  ]
+}

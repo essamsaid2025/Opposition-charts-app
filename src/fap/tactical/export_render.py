@@ -33,6 +33,24 @@ def _px(x: float, y: float) -> tuple[float, float]:
     return x / 100.0 * _W, y / 100.0 * _H
 
 
+def _draw_head(ax, geom: dict, col: str, sw: float, z: float) -> None:
+    """Draw a renderer-neutral arrowhead spec (geometry.arrowhead_geometry) with matplotlib
+    — the SAME primitives the SVG renderer draws, so PNG/PDF match the live board."""
+    import matplotlib.patches as mp
+    for poly in geom["fill_polys"]:
+        ax.add_patch(mp.Polygon(poly, closed=True, facecolor=col, edgecolor="none", zorder=z + 0.01))
+    for poly in geom["stroke_closed"]:
+        ax.add_patch(mp.Polygon(poly, closed=True, fill=False, edgecolor=col, linewidth=sw,
+                                joinstyle="round", zorder=z + 0.01))
+    for poly in geom["stroke_open"]:
+        ax.plot([a for a, _ in poly], [b for _, b in poly], color=col, linewidth=sw,
+                solid_capstyle="round", solid_joinstyle="round", zorder=z + 0.01)
+    for cx, cy, r in geom["fill_circles"]:
+        ax.add_patch(mp.Circle((cx, cy), r, facecolor=col, edgecolor="none", zorder=z + 0.01))
+    for cx, cy, r in geom["stroke_circles"]:
+        ax.add_patch(mp.Circle((cx, cy), r, fill=False, edgecolor=col, linewidth=sw, zorder=z + 0.01))
+
+
 # ---------------------------------------------------------------- pitch
 def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
     import matplotlib.patches as mp
@@ -94,42 +112,60 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
     t = o.type
 
     if t == "player":
-        r = 17 * o.scale
-        fill = p.get("color") or _c(colors, "away" if p.get("team") == "away" else "home")
-        if p.get("goalkeeper"):
-            ax.add_patch(mp.Circle((x, y), r + 3, fill=False, edgecolor=_c(colors, "line"),
-                                   linewidth=2, zorder=z))
-        # facing-direction wedge (lockstep with render.py's _player). The SVG rotates the whole
-        # <g>; the export doesn't group-rotate, so rotate the three wedge vertices ourselves about
-        # (x,y) by o.rotation — same clockwise sense (y-down: set_ylim(_H,0)) and same 0deg=up as
-        # the SVG and the rotate handle. Drawn just under the circle (zorder z-0.005) so the circle
-        # covers the base and only the nub shows. Additive: at rotation 0 it points straight up.
+        from fap.tactical import visual as _v
         import math
+        r = _v.PLAYER_R * o.scale
+        fill = _v.player_fill(colors, p)
+        ink = _v.ink_for(fill)
+        edge = _c(colors, "line")
+        # soft ground shadow (matches render.py's _player ellipse)
+        ax.add_patch(mp.Ellipse((x, y + r * 0.86), r * 1.64, r * 0.60, facecolor="black",
+                                alpha=0.22, edgecolor="none", zorder=z - 0.02))
+        if p.get("goalkeeper"):
+            ax.add_patch(mp.Circle((x, y), r + 3.5, fill=False, edgecolor=edge, linewidth=2,
+                                   linestyle=(0, (3, 3)), zorder=z))
+        # facing-direction wedge (lockstep with render.py). The SVG rotates the whole <g>; the
+        # export rotates the three wedge vertices about (x,y) by o.rotation — same y-down sense
+        # (set_ylim(_H,0)) and same 0deg=up. Drawn under the disc so only the nub shows.
         th = math.radians(o.rotation or 0.0)
         ct, st_ = math.cos(th), math.sin(th)
-        wr = r * 0.34
-        local = ((0.0, -r - r * 0.48), (-wr, -r * 0.62), (wr, -r * 0.62))
+        wr = r * 0.32
+        local = ((0.0, -r - r * 0.5), (-wr, -r * 0.6), (wr, -r * 0.6))
         wpts = [(x + lx * ct - ly * st_, y + lx * st_ + ly * ct) for lx, ly in local]
-        ax.add_patch(mp.Polygon(wpts, closed=True, facecolor=_c(colors, "line"),
-                                edgecolor="none", zorder=z - 0.005))
-        ax.add_patch(mp.Circle((x, y), r, facecolor=fill, edgecolor=_c(colors, "line"),
-                               linewidth=2, zorder=z))
+        ax.add_patch(mp.Polygon(wpts, closed=True, facecolor=edge, edgecolor="none",
+                                zorder=z - 0.005))
+        # dark separation ring + team disc + top sheen
+        ax.add_patch(mp.Circle((x, y), r + 1.2, facecolor="#0d0f13", alpha=0.55,
+                               edgecolor="none", zorder=z))
+        ax.add_patch(mp.Circle((x, y), r, facecolor=fill, edgecolor=edge, linewidth=2.4,
+                               zorder=z + 0.002))
+        ax.add_patch(mp.Ellipse((x, y - r * 0.42), r * 1.24, r * 0.68, facecolor="white",
+                                alpha=0.16, edgecolor="none", zorder=z + 0.003))
         num = p.get("number", "")
         if num not in ("", None):
-            ax.text(x, y, str(num), ha="center", va="center", color=_c(colors, "text"),
-                    fontsize=r * 0.8, fontweight="bold", zorder=z + 0.01)
+            ax.text(x, y, str(num), ha="center", va="center", color=ink,
+                    fontsize=r * 0.72, fontweight="bold", zorder=z + 0.02)
         if p.get("captain"):
-            ax.text(x + r * 0.9, y - r * 0.7, "C", ha="left", va="center", color=_c(colors, "accent"),
-                    fontsize=r * 0.6, fontweight="bold", zorder=z + 0.01)
+            ax.text(x + r * 0.95, y - r * 0.7, "C", ha="left", va="center", color=_c(colors, "accent"),
+                    fontsize=r * 0.6, fontweight="bold", zorder=z + 0.02)
         if p.get("name"):
             ax.text(x, y + r + 12, str(p["name"]), ha="center", va="top", color=_c(colors, "text"),
-                    fontsize=9, zorder=z + 0.01)
+                    fontsize=9, zorder=z + 0.02)
     elif t == "ball":
-        r = 9 * o.scale
-        ax.add_patch(mp.Circle((x, y), r, facecolor=_c(colors, "ball"),
-                               edgecolor=_c(colors, "ball_line"), linewidth=1.5, zorder=z))
-        ax.add_patch(mp.Circle((x, y), r * 0.32, facecolor=_c(colors, "ball_line"),
-                               edgecolor="none", zorder=z + 0.01))
+        from fap.tactical import visual as _v
+        import math
+        r = _v.BALL_R * o.scale
+        dark, white = _c(colors, "ball_line"), _c(colors, "ball")
+        ax.add_patch(mp.Ellipse((x, y + r * 0.9), r * 1.70, r * 0.64, facecolor="black",
+                                alpha=0.22, edgecolor="none", zorder=z - 0.02))
+        ax.add_patch(mp.Circle((x, y), r, facecolor=white, edgecolor=dark, linewidth=1.4, zorder=z))
+        pr = r * 0.5
+        pent = [(x + pr * math.cos(-math.pi / 2 + i * 2 * math.pi / 5),
+                 y + pr * math.sin(-math.pi / 2 + i * 2 * math.pi / 5)) for i in range(5)]
+        for a, b in pent:
+            ex, ey = x + (a - x) / pr * r * 0.98, y + (b - y) / pr * r * 0.98
+            ax.plot([a, ex], [b, ey], color=dark, linewidth=1, zorder=z + 0.005)
+        ax.add_patch(mp.Polygon(pent, closed=True, facecolor=dark, edgecolor="none", zorder=z + 0.01))
     elif t == "cone":
         s = 12 * o.scale
         ax.add_patch(mp.Polygon([(x, y - s), (x - s * 0.8, y + s), (x + s * 0.8, y + s)],
@@ -147,6 +183,44 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         ax.add_patch(mp.Circle((x, y - s), s * 0.5, facecolor=m, edgecolor="none", zorder=z))
         ax.add_patch(mp.Rectangle((x - s * 0.4, y - s * 0.5), s * 0.8, s * 1.6, facecolor=m,
                                   edgecolor="none", zorder=z))
+    elif t in _VECTOR and p.get("arrowhead") is not None:
+        # explicit custom arrowhead — mirror render.py's _vector_custom (same geometry)
+        from fap.tactical import geometry as _geo
+        x2, y2 = _px(p.get("x2", o.x + 12), p.get("y2", o.y))
+        spec = _geo.variant_spec(p.get("variant"))
+        if spec is not None:
+            col = p.get("color") or spec["color"] or _c(colors, "line")
+            width = float(p.get("stroke_width", spec.get("width", 4)))
+            ls = (0, (6, 5)) if spec.get("dash") else "-"
+            wave = str(spec.get("wave", ""))
+        else:
+            col = p.get("color") or _c(colors, "line")
+            width = float(p.get("stroke_width", 4))
+            ls = "--" if t == "dashed_arrow" else "-"
+            wave = ""
+        size = float(p.get("arrowhead_size", 1.0))
+        hsw = float(p.get("arrowhead_stroke_width", 1.5))
+        geom = _geo.arrowhead_geometry(str(p.get("arrowhead")), x, y, x2, y2, size=size, stroke_width=hsw)
+        ux, uy, _, _ = _geo._dir(x, y, x2, y2)
+        trim = 0.0 if t == "line" else float(geom["trim"])
+        ex, ey = x2 - ux * trim, y2 - uy * trim
+        if t == "curved_arrow":
+            ax.annotate("", xy=(ex, ey), xytext=(x, y), zorder=z,
+                        arrowprops=dict(arrowstyle="-", color=col, linewidth=width, linestyle=ls,
+                                        connectionstyle=f"arc3,rad={float(p.get('curvature', 0.3))}",
+                                        shrinkA=0, shrinkB=0))
+        elif wave:
+            pts = _geo.wave_points(x, y, ex, ey, wave)
+            ax.plot([a for a, _ in pts], [b for _, b in pts], color=col, linewidth=width,
+                    linestyle=ls, zorder=z, solid_capstyle="round")
+        else:
+            ax.plot([x, ex], [y, ey], color=col, linewidth=width, linestyle=ls, zorder=z,
+                    solid_capstyle="round")
+        if not (t == "line" and str(p.get("arrowhead")) == "none"):
+            _draw_head(ax, geom, col, hsw, z)
+        if p.get("label"):
+            ax.text((x + x2) / 2, (y + y2) / 2 - 7, str(p["label"]), ha="center", va="bottom",
+                    color=col, fontsize=9, fontweight="bold", zorder=z + 0.01)
     elif t in _VECTOR:
         from fap.tactical import geometry as _geo
         x2, y2 = _px(p.get("x2", o.x + 12), p.get("y2", o.y))

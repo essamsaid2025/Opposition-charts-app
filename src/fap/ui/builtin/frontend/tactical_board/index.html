@@ -636,10 +636,16 @@
       var m = metaOf(sid); if (!m) return;
       var lc = pitchToLocal(m.x, m.y);
       var NS = "http://www.w3.org/2000/svg", ac = cfg.colors.accent || "#2f7bd6";
+      // solid ring + soft halo — the SAME shape render.py draws for the primary selection
+      var halo = document.createElementNS(NS, "circle");
+      halo.setAttribute("cx", lc.x); halo.setAttribute("cy", lc.y); halo.setAttribute("r", 28);
+      halo.setAttribute("fill", "none"); halo.setAttribute("stroke", ac);
+      halo.setAttribute("stroke-width", "6"); halo.setAttribute("stroke-opacity", "0.22");
+      halo.style.pointerEvents = "none"; plane.appendChild(halo);
       var ring = document.createElementNS(NS, "circle");
-      ring.setAttribute("cx", lc.x); ring.setAttribute("cy", lc.y); ring.setAttribute("r", 26);
+      ring.setAttribute("cx", lc.x); ring.setAttribute("cy", lc.y); ring.setAttribute("r", 24);
       ring.setAttribute("fill", "none"); ring.setAttribute("stroke", ac);
-      ring.setAttribute("stroke-width", "2"); ring.setAttribute("stroke-dasharray", "4 4");
+      ring.setAttribute("stroke-width", "2.5");
       ring.style.pointerEvents = "none"; plane.appendChild(ring);
     });
     // rotate/resize/endpoint handles only make sense for a SINGLE selection

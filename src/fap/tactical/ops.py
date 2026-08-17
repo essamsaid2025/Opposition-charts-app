@@ -230,6 +230,26 @@ def _set_locked(board: Board, c: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+# arrow visual props that _set_arrow_properties may write (head is independent of variant)
+_ARROW_PROP_KEYS = ("arrowhead", "arrowhead_size", "arrowhead_stroke_width", "stroke_width")
+
+
+def _set_arrow_properties(board: Board, c: dict[str, Any]) -> dict[str, Any]:
+    """Set arrowhead/body visual props on the selected ARROW objects (``ids``) in ONE undo
+    step. Only vector (arrow/line) types are touched; non-arrows and locked objects are
+    skipped safely. Absent keys are left untouched, so this composes with legacy defaults."""
+    fr = board.frame(int(c.get("frame", 0)))
+    ids = set(_ids(c))
+    changed = 0
+    for o in fr.objects:
+        if o.id in ids and o.type in _VECTOR_TYPES and not o.locked:
+            for k in _ARROW_PROP_KEYS:
+                if k in c and c[k] is not None:
+                    o.props[k] = c[k]
+            changed += 1
+    return {"changed": changed}
+
+
 def _align_objects(board: Board, c: dict[str, Any]) -> dict[str, Any]:
     """Align the selected objects on one edge/centre (0-100 pitch space): left|right|
     top|bottom|center_h|center_v. Locked objects are skipped. One undo step."""
@@ -338,6 +358,7 @@ _HANDLERS = {
     "move_objects": _move_objects, "group_objects": _group_objects,
     "ungroup_objects": _ungroup_objects, "reorder_object": _reorder_object,
     "set_hidden": _set_hidden, "set_locked": _set_locked,
+    "set_arrow_properties": _set_arrow_properties,
     "align_objects": _align_objects, "distribute_objects": _distribute_objects,
     "snap": _snap, "add_frame": _add_frame, "delete_frame": _delete_frame,
     "move_frame": _move_frame, "rename_frame": _rename_frame,
