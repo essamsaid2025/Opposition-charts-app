@@ -14,8 +14,8 @@ import streamlit as st
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.tactical import (
-    Board, History, TacticalService, apply_command, board_svg, builtin_names,
-    builtin_template, new_board,
+    ARROW_VARIANT_KEYS, Board, History, TacticalService, apply_command, board_svg,
+    builtin_names, builtin_template, new_board,
 )
 from fap.tactical.ops import apply_command as _apply_command
 from fap.tactical.ops import default_props
@@ -35,6 +35,7 @@ TB_SNAP = "_tb_snap"
 TB_CANVAS_TS = "_tb_canvas_ts"    # last processed canvas action (dedups Streamlit reruns)
 TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are currently synced to
 TB_DRAW_TOOL = "_tb_draw_tool"    # armed click-drag draw tool ("select" = off); persistent/sticky
+TB_MULTI = "_tb_multisel"         # object ids selected in the Objects/Layers panel (Phase 3)
 
 # Every Properties widget that follows the "read the widget, write it back to the model if
 # it differs" pattern. Those widgets keep their OWN value in session_state, so after the
@@ -132,12 +133,14 @@ def _undo() -> None:
     if b is not None:
         st.session_state[TB_BOARD] = b
         st.session_state[TB_SEL] = None
+        st.session_state.pop(TB_MULTI, None)
 
 
 def _redo() -> None:
     b = st.session_state[TB_HIST].redo(st.session_state[TB_BOARD])
     if b is not None:
         st.session_state[TB_BOARD] = b
+        st.session_state.pop(TB_MULTI, None)
 
 
 def _new_board() -> None:
@@ -280,6 +283,13 @@ def _commit_canvas(result: dict, can_edit: bool) -> bool:
     commands = result.get("commands") or []
     sel = result.get("select", "__keep__")
 
+    # Ctrl+Z / Ctrl+Y on the canvas are UI-only intents that drive the SAME History as the
+    # toolbar buttons (never the model directly).
+    if result.get("undo") and can_edit:
+        _undo(); return True
+    if result.get("redo") and can_edit:
+        _redo(); return True
+
     changed = False
     # Escape in draw mode: the canvas sent a UI-only ``draw_reset`` (not a board command) —
     # return to Select/Move. Safe from either caller: TB_DRAW_TOOL is a plain session var
@@ -300,10 +310,18 @@ def _commit_canvas(result: dict, can_edit: bool) -> bool:
                 last_id = res["id"]
         if last_id:
             st.session_state[TB_SEL] = last_id   # keep a freshly added piece selected
+            st.session_state[TB_MULTI] = [last_id]
         changed = True
 
+    # selection is ONE session concept shared by the canvas and the Objects/Layers panel:
+    # a string (single), a list (multi/marquee), or None (cleared). TB_SEL keeps the primary.
     if sel != "__keep__":
-        st.session_state[TB_SEL] = sel
+        if isinstance(sel, list):
+            st.session_state[TB_MULTI] = list(sel)
+            st.session_state[TB_SEL] = sel[-1] if sel else None
+        else:
+            st.session_state[TB_SEL] = sel
+            st.session_state[TB_MULTI] = [sel] if sel else []
         changed = True
     if changed:
         # the canvas changed the board/selection — force every Properties widget to re-read
@@ -362,6 +380,7 @@ class TacticalBoardPage(Page):
             self._templates_and_saved(shell, svc, board, can_edit)
         with right:
             self._properties(shell, board, can_edit)
+            self._objects_panel(board, can_edit)
         with center:
             self._board_view(shell, board, can_edit)
         self._timeline(board, can_edit)
@@ -565,14 +584,17 @@ class TacticalBoardPage(Page):
         # include the last processed action stamp AND the draw tool so the nonce ALWAYS changes
         # after a commit or when the tool is armed/disarmed — guarantees the canvas gets a fresh
         # render (post-commit SVG settles a dropped piece; the new draw_tool reaches the JS).
-        nonce = (f"{board.updated_at}|{_frame_index()}|{sel}|{int(grid)}|{int(bool(snap))}"
-                 f"|{st.session_state.get(TB_CANVAS_TS)}|{tool}")
+        multi = [i for i in (st.session_state.get(TB_MULTI) or []) if board.frame(_frame_index()).object(i)]
+        if not multi and sel:
+            multi = [sel]
+        nonce = (f"{board.updated_at}|{_frame_index()}|{sel}|{','.join(multi)}|{int(grid)}"
+                 f"|{int(bool(snap))}|{st.session_state.get(TB_CANVAS_TS)}|{tool}")
         # palette=[] retires the old always-on drag-chip strip (option a): adding pieces now
         # lives solely in the left rail (click a category item, or arm a draw tool). The JS
         # renderPalette() hides the strip when the palette is empty — no JS change needed.
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
-            palette=[], selected_id=sel,
+            palette=[], selected_id=sel, selected_ids=multi,
             snap=snap, editable=can_edit, nonce=nonce, draw_tool=draw_tool)
         if not rendered:
             # true fallback: the component could not mount, so draw the static SVG. The
@@ -589,6 +611,90 @@ class TacticalBoardPage(Page):
             st.caption("Drag pieces to move · click to select · Delete removes. Add pieces "
                        "from the left rail (click a category, or arm a draw tool to click-drag "
                        "shapes). Fine-tune anything in Properties.")
+
+    # ------------------------------------------------------------ objects / layers (Phase 3)
+    def _objects_panel(self, board, can_edit) -> None:
+        """The Objects/Layers manager: multi-select every object on the current frame,
+        then group/ungroup, reorder (z), show/hide, lock/unlock, duplicate/delete — each
+        a single undo step via the shared command seam. Button-driven so it never
+        clobbers the mirror-on-diff Properties widgets. Also sets the arrow variant."""
+        st.markdown('<div class="tb-panel-title">Objects</div>', unsafe_allow_html=True)
+        fr = board.frame(_frame_index())
+        if not fr.objects:
+            st.caption("No objects on this frame yet.")
+            return
+        options = [o.id for o in sorted(fr.objects, key=lambda o: o.z, reverse=True)]
+        # canvas selection is shared via TB_MULTI (one selection concept); drop any ids that no
+        # longer exist on this frame BEFORE the widget reads them (avoids a stale-option error).
+        if TB_MULTI in st.session_state:
+            valid = set(options)
+            kept = [i for i in st.session_state[TB_MULTI] if i in valid]
+            if kept != list(st.session_state[TB_MULTI]):
+                st.session_state[TB_MULTI] = kept
+
+        def _fmt(oid: str) -> str:
+            o = fr.object(oid)
+            if o is None:
+                return oid
+            props = o.props or {}
+            tags = [t for t, on in (("locked", o.locked), ("hidden", props.get("hidden")),
+                                    ("grouped", props.get("group"))) if on]
+            base = f"{o.label()} · {o.type}"
+            return base + (f"  [{', '.join(tags)}]" if tags else "")
+        sel = st.multiselect("Objects on this frame", options, format_func=_fmt, key=TB_MULTI)
+        if not can_edit:
+            return
+        ids = [i for i in sel if fr.object(i) is not None]
+        f = _frame_index()
+
+        def cmd(op: str, **kw):
+            return lambda: _apply({"op": op, "frame": f, "ids": ids, **kw})
+        r1 = st.columns(4)
+        r1[0].button("Front", key="tb_front", disabled=not ids, on_click=cmd("reorder_object", dir="front"))
+        r1[1].button("Back", key="tb_back", disabled=not ids, on_click=cmd("reorder_object", dir="back"))
+        r1[2].button("Group", key="tb_group", disabled=len(ids) < 2, on_click=cmd("group_objects"))
+        r1[3].button("Ungroup", key="tb_ungroup", disabled=not ids, on_click=cmd("ungroup_objects"))
+        r2 = st.columns(4)
+        r2[0].button("Hide", key="tb_hide", disabled=not ids, on_click=cmd("set_hidden", hidden=True))
+        r2[1].button("Show", key="tb_show", disabled=not ids, on_click=cmd("set_hidden", hidden=False))
+        r2[2].button("Lock", key="tb_lockm", disabled=not ids, on_click=cmd("set_locked", locked=True))
+        r2[3].button("Unlock", key="tb_unlockm", disabled=not ids, on_click=cmd("set_locked", locked=False))
+        r3 = st.columns(2)
+        r3[0].button("Duplicate", key="tb_dupm", disabled=not ids, on_click=cmd("duplicate_objects"))
+        r3[1].button("Delete", key="tb_delm", disabled=not ids, on_click=cmd("delete_objects"))
+        if len(ids) >= 2:                                # align / distribute the selection
+            st.caption("Align")
+            a = st.columns(6)
+            a[0].button("L", key="tb_al", help="Align left", on_click=cmd("align_objects", align="left"))
+            a[1].button("R", key="tb_ar", help="Align right", on_click=cmd("align_objects", align="right"))
+            a[2].button("T", key="tb_at", help="Align top", on_click=cmd("align_objects", align="top"))
+            a[3].button("B", key="tb_ab", help="Align bottom", on_click=cmd("align_objects", align="bottom"))
+            a[4].button("H", key="tb_ach", help="Centre horizontally",
+                        on_click=cmd("align_objects", align="center_h"))
+            a[5].button("V", key="tb_acv", help="Centre vertically",
+                        on_click=cmd("align_objects", align="center_v"))
+            if len(ids) >= 3:
+                d = st.columns(2)
+                d[0].button("Distribute H", key="tb_dh",
+                            on_click=cmd("distribute_objects", axis="horizontal"))
+                d[1].button("Distribute V", key="tb_dv",
+                            on_click=cmd("distribute_objects", axis="vertical"))
+        # arrow style (variant) on a single selected vector object
+        if len(ids) == 1:
+            o = fr.object(ids[0])
+            if o is not None and o.type in ("arrow", "curved_arrow", "dashed_arrow", "line"):
+                choices = [""] + list(ARROW_VARIANT_KEYS)
+                cur = (o.props or {}).get("variant") or ""
+                v = st.selectbox("Arrow style", choices,
+                                 index=choices.index(cur) if cur in choices else 0,
+                                 format_func=lambda x: "Default" if not x else x.title(),
+                                 key="tb_variant")
+                lbl = st.text_input("Arrow label", value=(o.props or {}).get("label", ""),
+                                    key="tb_alabel")
+                if st.button("Apply arrow style", key="tb_applyvar"):
+                    _apply({"op": "update_object", "frame": f, "id": o.id,
+                            "props": {"variant": v, "label": lbl}})
+                    st.rerun()
 
     # ------------------------------------------------------------ properties
     def _properties(self, shell, board, can_edit) -> None:

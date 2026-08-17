@@ -193,16 +193,54 @@ def curvature_from_control_point(x1: float, y1: float, x2: float, y2: float,
 
 
 def _vector(o: TacticalObject, colors: dict[str, str], marker: str) -> str:
+    from fap.tactical import geometry as _geo
     x1, y1 = _px(o.x, o.y); x2, y2 = _px(o.props.get("x2", o.x + 12), o.props.get("y2", o.y))
-    col = o.props.get("color") or _c(colors, "line")
-    dash = 'stroke-dasharray="10 8"' if o.type == "dashed_arrow" else ""
-    head = f'marker-end="url(#{marker})"' if o.type != "line" else ""
+    spec = _geo.variant_spec(o.props.get("variant"))
+    if spec is None:                                        # legacy arrow — byte-identical to before
+        col = o.props.get("color") or _c(colors, "line")
+        dash = 'stroke-dasharray="10 8"' if o.type == "dashed_arrow" else ""
+        head = f'marker-end="url(#{marker})"' if o.type != "line" else ""
+        if o.type == "curved_arrow":
+            cx, cy = curve_control_point(x1, y1, x2, y2, float(o.props.get("curvature", 0.3)))
+            return (f'<path d="M {x1} {y1} Q {cx} {cy} {x2} {y2}" fill="none" stroke="{col}" '
+                    f'stroke-width="4" {dash} {head}/>')
+        return (f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{col}" '
+                f'stroke-width="4" {dash} {head}/>')
+    # semantic variant: coloured centreline (wavy/zigzag for run/dribble/pressing) +
+    # an explicit coloured arrowhead (the shared marker only carries the theme colour).
+    col = o.props.get("color") or spec["color"] or _c(colors, "line")
+    width = spec.get("width", 4)
+    dash = f'stroke-dasharray="{spec["dash"]}"' if spec.get("dash") else ""
     if o.type == "curved_arrow":
         cx, cy = curve_control_point(x1, y1, x2, y2, float(o.props.get("curvature", 0.3)))
-        return (f'<path d="M {x1} {y1} Q {cx} {cy} {x2} {y2}" fill="none" stroke="{col}" '
-                f'stroke-width="4" {dash} {head}/>')
-    return (f'<line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{col}" '
-            f'stroke-width="4" {dash} {head}/>')
+        body = (f'<path d="M {x1} {y1} Q {cx} {cy} {x2} {y2}" fill="none" stroke="{col}" '
+                f'stroke-width="{width}" {dash}/>')
+    else:
+        pts = _geo.wave_points(x1, y1, x2, y2, str(spec.get("wave", "")))
+        d = "M " + " L ".join(f"{px:.1f} {py:.1f}" for px, py in pts)
+        body = f'<path d="{d}" fill="none" stroke="{col}" stroke-width="{width}" {dash}/>'
+    if spec.get("head") and o.type != "line":
+        hpts = _geo.arrowhead_points(x1, y1, x2, y2)
+        body += f'<polygon points="{" ".join(f"{px:.1f},{py:.1f}" for px, py in hpts)}" fill="{col}"/>'
+    label = o.props.get("label")
+    if label:
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        body += (f'<text x="{mx:.1f}" y="{my - 7:.1f}" text-anchor="middle" font-size="13" '
+                 f'font-weight="700" fill="{col}" font-family="Inter,Arial">{_esc(str(label))}</text>')
+    return body
+
+
+def _freehand(o: TacticalObject, colors: dict[str, str]) -> str:
+    from fap.tactical import geometry as _geo
+    pts = _geo.freehand_points(o.props)
+    if len(pts) < 2:
+        return ""
+    px = [_px(x, y) for x, y in pts]
+    col = o.props.get("color") or _c(colors, "line")
+    w = float(o.props.get("width", 3))
+    d = "M " + " L ".join(f"{a:.1f} {b:.1f}" for a, b in px) + (" Z" if o.props.get("closed") else "")
+    return (f'<path d="{d}" fill="none" stroke="{col}" stroke-width="{w}" '
+            f'stroke-linecap="round" stroke-linejoin="round"/>')
 
 
 def _zone(o: TacticalObject, colors: dict[str, str]) -> str:
@@ -253,6 +291,7 @@ _OBJ: dict[str, Callable[[TacticalObject, dict], str]] = {
     "curved_arrow": lambda o, c: _vector(o, c, "arrowhead"),
     "dashed_arrow": lambda o, c: _vector(o, c, "arrowhead"),
     "line": lambda o, c: _vector(o, c, "arrowhead"),
+    "freehand": _freehand,
     "zone": _zone, "highlight": _zone, "text": _text, "number": _text,
     "shape": _shape, "image": _image,
 }
@@ -285,7 +324,8 @@ def board_svg(board: Board, frame_index: int = 0, *, colors: dict[str, str] | No
             f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
     pitch = _pitch_svg(board, colors, grid)
     objs = "".join(_object_svg(o, colors, fr, selected=(o.id == selected_id))
-                   for o in sorted(fr.objects, key=lambda o: o.z))
+                   for o in sorted(fr.objects, key=lambda o: o.z)
+                   if not (o.props or {}).get("hidden"))
     extra = "".join(overlays or [])
     inner = f'{defs}{pitch}{extra}{objs}'
     if vertical:

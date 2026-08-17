@@ -17,7 +17,7 @@ from typing import Any
 # controlled vocabularies (kept as data so new kinds need no code branches)
 OBJECT_TYPES: tuple[str, ...] = (
     "player", "ball", "cone", "goal", "mannequin",
-    "arrow", "curved_arrow", "dashed_arrow", "line",
+    "arrow", "curved_arrow", "dashed_arrow", "line", "freehand",
     "zone", "highlight", "text", "number", "shape", "image",
 )
 PITCH_KINDS: tuple[str, ...] = ("full", "half", "thirds", "blank", "futsal", "custom")

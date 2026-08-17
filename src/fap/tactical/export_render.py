@@ -148,19 +148,50 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         ax.add_patch(mp.Rectangle((x - s * 0.4, y - s * 0.5), s * 0.8, s * 1.6, facecolor=m,
                                   edgecolor="none", zorder=z))
     elif t in _VECTOR:
+        from fap.tactical import geometry as _geo
         x2, y2 = _px(p.get("x2", o.x + 12), p.get("y2", o.y))
-        col = p.get("color") or _c(colors, "line")
-        style = "--" if t == "dashed_arrow" else "-"
-        if t == "line":
-            ax.plot([x, x2], [y, y2], color=col, linewidth=4, linestyle=style, zorder=z)
-        else:
-            conn = "arc3,rad=0"
+        spec = _geo.variant_spec(p.get("variant"))
+        if spec is None:                                    # legacy arrow — pixel-identical to before
+            col = p.get("color") or _c(colors, "line")
+            style = "--" if t == "dashed_arrow" else "-"
+            if t == "line":
+                ax.plot([x, x2], [y, y2], color=col, linewidth=4, linestyle=style, zorder=z)
+            else:
+                conn = "arc3,rad=0"
+                if t == "curved_arrow":
+                    conn = f"arc3,rad={float(p.get('curvature', 0.3))}"
+                ax.annotate("", xy=(x2, y2), xytext=(x, y), zorder=z,
+                            arrowprops=dict(arrowstyle="-|>", color=col, linewidth=4,
+                                            linestyle=style, connectionstyle=conn,
+                                            shrinkA=0, shrinkB=0, mutation_scale=22))
+        else:                                               # semantic variant (SAME geometry as SVG)
+            col = p.get("color") or spec["color"] or _c(colors, "line")
+            lw = spec.get("width", 4)
+            ls = (0, (6, 5)) if spec.get("dash") else "-"
             if t == "curved_arrow":
-                conn = f"arc3,rad={float(p.get('curvature', 0.3))}"
-            ax.annotate("", xy=(x2, y2), xytext=(x, y), zorder=z,
-                        arrowprops=dict(arrowstyle="-|>", color=col, linewidth=4,
-                                        linestyle=style, connectionstyle=conn,
-                                        shrinkA=0, shrinkB=0, mutation_scale=22))
+                ax.annotate("", xy=(x2, y2), xytext=(x, y), zorder=z,
+                            arrowprops=dict(arrowstyle="-|>", color=col, linewidth=lw, linestyle=ls,
+                                            connectionstyle=f"arc3,rad={float(p.get('curvature', 0.3))}",
+                                            shrinkA=0, shrinkB=0, mutation_scale=20))
+            else:
+                pts = _geo.wave_points(x, y, x2, y2, str(spec.get("wave", "")))
+                ax.plot([a for a, _ in pts], [b for _, b in pts], color=col, linewidth=lw,
+                        linestyle=ls, zorder=z, solid_capstyle="round")
+                if spec.get("head") and t != "line":
+                    hp = _geo.arrowhead_points(x, y, x2, y2)
+                    ax.add_patch(mp.Polygon(hp, closed=True, facecolor=col, edgecolor="none", zorder=z + 0.01))
+            if p.get("label"):
+                ax.text((x + x2) / 2, (y + y2) / 2 - 7, str(p["label"]), ha="center", va="bottom",
+                        color=col, fontsize=9, fontweight="bold", zorder=z + 0.01)
+    elif t == "freehand":
+        from fap.tactical import geometry as _geo
+        fpts = [_px(a, b) for a, b in _geo.freehand_points(p)]
+        if len(fpts) >= 2:
+            col = p.get("color") or _c(colors, "line")
+            xs = [a for a, _ in fpts] + ([fpts[0][0]] if p.get("closed") else [])
+            ys = [b for _, b in fpts] + ([fpts[0][1]] if p.get("closed") else [])
+            ax.plot(xs, ys, color=col, linewidth=float(p.get("width", 3)), zorder=z,
+                    solid_capstyle="round", solid_joinstyle="round")
     elif t in ("zone", "highlight", "shape"):
         # kept in lockstep with render.py _zone(): identical stroke/fill/shape props, and the
         # default (no new props) reproduces today's exact patch call -> pixel-identical export.
@@ -219,6 +250,8 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
         _draw_pitch(ax, board, colors)
         for o in sorted(fr.objects, key=lambda o: o.z):
+            if (o.props or {}).get("hidden"):               # hidden objects are not exported
+                continue
             _draw_object(ax, o, colors, fr)
 
         buf = io.BytesIO()
