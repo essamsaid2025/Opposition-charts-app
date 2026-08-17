@@ -57,30 +57,27 @@
   }
   function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
   function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 2 }); }
-  // ---- debounced sync ("smooth mode") -----------------------------------------
-  // Dragging/adjusting a piece must NOT reload the app on every drop. Position edits are
-  // queued locally (the piece already shows its new spot via its live transform) and flushed
-  // to Python as ONE batch after a short idle. Structural actions (add / delete / select /
-  // undo / redo / draw) flush IMMEDIATELY and carry any queued moves in the SAME payload —
-  // ``setComponentValue`` is a single value slot, so a second emit would overwrite the first.
-  var pendingCmds = [], pendingSel = "__keep__", flushTimer = 0;
-  var SYNC_IDLE_MS = 600;
+  // ---- local-first sync ("no reload on move") ---------------------------------
+  // Moving/adjusting a piece must NOT talk to Python at all — the piece just moves in the
+  // browser (its live SVG transform), exactly like a plain client canvas, so Streamlit never
+  // reruns and the board never re-renders while you drag. Edits ACCUMULATE locally and are
+  // synced to Python only on an explicit action: a structural command (add / delete / select /
+  // undo / redo / draw) drains them in the SAME payload, or leaving the board (blur — e.g.
+  // clicking Save / a toolbar button) flushes them. ``setComponentValue`` is a single value
+  // slot, so everything travels in ONE payload (a second emit would overwrite the first).
+  var pendingCmds = [], pendingSel = "__keep__";
   function flushSync() {
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
     if (!pendingCmds.length && pendingSel === "__keep__") return;
     var c = pendingCmds, s = pendingSel; pendingCmds = []; pendingSel = "__keep__";
     send("streamlit:setComponentValue", { dataType: "json", value: { ts: nextTs(), commands: c, select: s } });
   }
-  function queueMove(commands, sel) {                 // debounced position edit (no reload while editing)
+  function queueMove(commands, sel) {                 // LOCAL ONLY: accumulate, never rerun on its own
     if (commands && commands.length) pendingCmds = pendingCmds.concat(commands);
     if (sel !== undefined) pendingSel = sel;
-    if (flushTimer) clearTimeout(flushTimer);
-    flushTimer = setTimeout(flushSync, SYNC_IDLE_MS);
   }
   function emit(payload) {
-    // immediate action: drain any queued moves into THIS payload first (single-slot safe),
+    // immediate action: drain any queued local edits into THIS payload first (single-slot safe),
     // preserving order (moves applied before the new command) and Python-owns-state.
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
     payload = payload || {};
     if (pendingCmds.length) {
       payload.commands = pendingCmds.concat(payload.commands || []);
@@ -281,7 +278,7 @@
     // Coalesce rapid pointermove events into at most one DOM write per animation frame:
     // we stash the latest pointer position on every move but only touch the SVG inside a
     // requestAnimationFrame callback (guarded so we schedule at most one per frame).
-    var pending = null, raf = 0;
+    var pending = null, raf = 0, moved = false;
     function paint() {
       raf = 0;
       if (!pending) return;
@@ -291,6 +288,7 @@
     }
     function move(ev) {
       pending = toPlaneWith(inv, ev.clientX, ev.clientY);
+      moved = true;
       if (!raf) raf = requestAnimationFrame(paint);
     }
     function up(ev) {
@@ -300,10 +298,11 @@
       group.classList.remove("dragging");
       var now = toPlaneWith(inv, ev.clientX, ev.clientY);
       if (!now) { group.setAttribute("transform", orig); select(id); return; }
+      if (!moved) { select(id); return; }   // a plain click (not a drag) -> select now, show Properties
       var pit = toPitch({ x: now.x - grab.dx, y: now.y - grab.dy });
-      // Do NOT snap the piece back to `orig`. Python remains authoritative: the piece keeps
-      // its live transform at the dropped position, and the debounced flush re-renders the SVG
-      // there. Update the local metadata so an immediate re-drag uses the new anchor (pre-flush).
+      // A real drag stays LOCAL: the piece keeps its live transform where you dropped it and we
+      // only update local metadata (so a re-drag uses the new anchor). Nothing is sent to Python
+      // and nothing re-renders — the move syncs later, on the next structural action or on blur.
       if (meta) { meta.x = pit.x; meta.y = pit.y; }
       queueMove([{ op: "update_object", id: id, x: pit.x, y: pit.y }], id);
     }
