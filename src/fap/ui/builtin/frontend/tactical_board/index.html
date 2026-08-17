@@ -57,10 +57,42 @@
   }
   function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
   function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 2 }); }
+  // ---- debounced sync ("smooth mode") -----------------------------------------
+  // Dragging/adjusting a piece must NOT reload the app on every drop. Position edits are
+  // queued locally (the piece already shows its new spot via its live transform) and flushed
+  // to Python as ONE batch after a short idle. Structural actions (add / delete / select /
+  // undo / redo / draw) flush IMMEDIATELY and carry any queued moves in the SAME payload —
+  // ``setComponentValue`` is a single value slot, so a second emit would overwrite the first.
+  var pendingCmds = [], pendingSel = "__keep__", flushTimer = 0;
+  var SYNC_IDLE_MS = 600;
+  function flushSync() {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
+    if (!pendingCmds.length && pendingSel === "__keep__") return;
+    var c = pendingCmds, s = pendingSel; pendingCmds = []; pendingSel = "__keep__";
+    send("streamlit:setComponentValue", { dataType: "json", value: { ts: nextTs(), commands: c, select: s } });
+  }
+  function queueMove(commands, sel) {                 // debounced position edit (no reload while editing)
+    if (commands && commands.length) pendingCmds = pendingCmds.concat(commands);
+    if (sel !== undefined) pendingSel = sel;
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushSync, SYNC_IDLE_MS);
+  }
   function emit(payload) {
-    // payload carries INTENT ONLY: commands + selection. Python owns the state.
+    // immediate action: drain any queued moves into THIS payload first (single-slot safe),
+    // preserving order (moves applied before the new command) and Python-owns-state.
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = 0; }
+    payload = payload || {};
+    if (pendingCmds.length) {
+      payload.commands = pendingCmds.concat(payload.commands || []);
+      if (payload.select === undefined || payload.select === "__keep__") payload.select = pendingSel;
+      pendingCmds = []; pendingSel = "__keep__";
+    }
+    if (payload.ts == null) payload.ts = nextTs();
     send("streamlit:setComponentValue", { dataType: "json", value: payload });
   }
+  // never lose queued edits when focus/visibility leaves the board (e.g. clicking a Streamlit control)
+  window.addEventListener("blur", flushSync);
+  document.addEventListener("visibilitychange", function () { if (document.hidden) flushSync(); });
 
   // board is authored in a fixed 1050 x 680 plane (10px per pitch unit) — mirrors render.py
   var PLANE_W = 1050, PLANE_H = 680;
@@ -213,9 +245,9 @@
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       var end = toPlaneWith(inv, ev.clientX, ev.clientY);
       var d = localToPitch({ x: end.x - start.x, y: end.y - start.y });   // raw pitch-unit delta
-      emit({ ts: nextTs(), select: ids.slice(),
-             commands: [{ op: "move_objects", ids: items.map(function (it) { return it.id; }),
-                          dx: d.x, dy: d.y }] });
+      items.forEach(function (it) { var m = metaOf(it.id); if (m) { m.x += d.x; m.y += d.y; } });
+      queueMove([{ op: "move_objects", ids: items.map(function (it) { return it.id; }),
+                   dx: d.x, dy: d.y }], ids.slice());
     }
     svg.addEventListener("pointermove", move); svg.addEventListener("pointerup", up);
   }
@@ -269,12 +301,11 @@
       var now = toPlaneWith(inv, ev.clientX, ev.clientY);
       if (!now) { group.setAttribute("transform", orig); select(id); return; }
       var pit = toPitch({ x: now.x - grab.dx, y: now.y - grab.dy });
-      // Do NOT snap the piece back to `orig`. Python remains authoritative: we send the
-      // committed x/y and the board re-renders this whole SVG at that position. Leaving
-      // the piece where it was dropped means it never visibly jumps back while the
-      // (asynchronous) Streamlit round-trip completes - the committed re-render simply
-      // replaces it in place. Resetting here was the snap-back bug.
-      emit({ ts: nextTs(), select: id, commands: [{ op: "update_object", id: id, x: pit.x, y: pit.y }] });
+      // Do NOT snap the piece back to `orig`. Python remains authoritative: the piece keeps
+      // its live transform at the dropped position, and the debounced flush re-renders the SVG
+      // there. Update the local metadata so an immediate re-drag uses the new anchor (pre-flush).
+      if (meta) { meta.x = pit.x; meta.y = pit.y; }
+      queueMove([{ op: "update_object", id: id, x: pit.x, y: pit.y }], id);
     }
     group.addEventListener("pointermove", move);
     group.addEventListener("pointerup", up);
@@ -322,7 +353,10 @@
           ? { op: "update_object", id: id, x: pit.x, y: pit.y }
           : { op: "update_object", id: id, props: { x2: pit.x, y2: pit.y } };
       }
-      emit({ ts: nextTs(), select: id, commands: [cmd] });
+      var mE = metaOf(id);                              // keep endpoint metadata fresh for re-drags
+      if (mE) { if (cmd.x != null) { mE.x = cmd.x; mE.y = cmd.y; }
+                if (cmd.props && cmd.props.x2 != null) { mE.x2 = cmd.props.x2; mE.y2 = cmd.props.y2; } }
+      queueMove([cmd], id);
     }
     circle.addEventListener("pointermove", move);
     circle.addEventListener("pointerup", up);
@@ -529,7 +563,7 @@
       handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up);
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       var deg = angleAt(toPlaneWith(inv, ev.clientX, ev.clientY));
-      emit({ ts: nextTs(), select: sel.id, commands: [{ op: "update_object", id: sel.id, rotation: deg }] });
+      queueMove([{ op: "update_object", id: sel.id, rotation: deg }], sel.id);
     }
     handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", up);
   }
@@ -591,8 +625,8 @@
       if (raf) { cancelAnimationFrame(raf); raf = 0; }
       if (preview.parentNode) preview.parentNode.removeChild(preview);   // ALWAYS remove preview
       var b = compute(toPlaneWith(inv, ev.clientX, ev.clientY));
-      emit({ ts: nextTs(), select: sel.id,
-             commands: [{ op: "update_object", id: sel.id, x: b.x, y: b.y, props: { w: b.w, h: b.h } }] });
+      var mR = metaOf(sel.id); if (mR) { mR.x = b.x; mR.y = b.y; }
+      queueMove([{ op: "update_object", id: sel.id, x: b.x, y: b.y, props: { w: b.w, h: b.h } }], sel.id);
     }
     handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", up);
   }
