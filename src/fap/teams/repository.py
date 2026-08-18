@@ -110,18 +110,38 @@ class TeamRepository:
     def add_member(self, m: TeamMember) -> None:
         self._db.execute(
             """INSERT INTO team_members (id, team_id, player_id, operational_id, player_name,
-                 source, shirt_number, role)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                 source, shirt_number, role, secondary_role, date_of_birth, nationality,
+                 preferred_foot, height_cm, weight_kg, joined_date, contract_end, availability,
+                 phone, email, emergency_contact, agent, notes)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (m.id, m.team_id, m.player_id, m.operational_id, m.player_name,
-             m.source, m.shirt_number, m.role))
+             m.source, m.shirt_number, m.role, m.secondary_role, m.date_of_birth,
+             m.nationality, m.preferred_foot, m.height_cm, m.weight_kg, m.joined_date,
+             m.contract_end, m.availability, m.phone, m.email, m.emergency_contact, m.agent,
+             m.notes))
 
     def list_members(self, team_id: str) -> list[TeamMember]:
         rows = self._db.query(
             "SELECT * FROM team_members WHERE team_id = ? ORDER BY created_at", (team_id,))
         return [self._member(r) for r in rows]
 
+    def get_member(self, member_id: str) -> TeamMember | None:
+        rows = self._db.query("SELECT * FROM team_members WHERE id = ?", (member_id,))
+        return self._member(rows[0]) if rows else None
+
     def remove_member(self, member_id: str) -> None:
         self._db.execute("DELETE FROM team_members WHERE id = ?", (member_id,))
+
+    def update_member(self, member_id: str, **fields: Any) -> None:
+        allowed = ("player_name", "operational_id", "shirt_number", "role", "secondary_role",
+                   "date_of_birth", "nationality", "preferred_foot", "height_cm", "weight_kg",
+                   "joined_date", "contract_end", "availability", "phone", "email",
+                   "emergency_contact", "agent", "notes")
+        sets = {k: v for k, v in fields.items() if k in allowed}
+        if not sets:
+            return
+        cols = ", ".join(f"{k} = ?" for k in sets)
+        self._db.execute(f"UPDATE team_members SET {cols} WHERE id = ?", (*sets.values(), member_id))
 
     def member_count(self, team_id: str) -> int:
         rows = self._db.query("SELECT COUNT(*) AS n FROM team_members WHERE team_id = ?", (team_id,))
@@ -153,7 +173,22 @@ class TeamRepository:
 
     @staticmethod
     def _member(r: Any) -> TeamMember:
+        keys = r.keys()
         return TeamMember(id=r["id"], team_id=r["team_id"], player_id=r["player_id"],
                           operational_id=r["operational_id"], player_name=r["player_name"],
                           source=r["source"], shirt_number=r["shirt_number"], role=r["role"],
+                          secondary_role=(r["secondary_role"] if "secondary_role" in keys else ""),
+                          date_of_birth=(r["date_of_birth"] if "date_of_birth" in keys else ""),
+                          nationality=(r["nationality"] if "nationality" in keys else ""),
+                          preferred_foot=(r["preferred_foot"] if "preferred_foot" in keys else ""),
+                          height_cm=(r["height_cm"] if "height_cm" in keys else None),
+                          weight_kg=(r["weight_kg"] if "weight_kg" in keys else None),
+                          joined_date=(r["joined_date"] if "joined_date" in keys else ""),
+                          contract_end=(r["contract_end"] if "contract_end" in keys else ""),
+                          availability=(r["availability"] if "availability" in keys else "available"),
+                          phone=(r["phone"] if "phone" in keys else ""),
+                          email=(r["email"] if "email" in keys else ""),
+                          emergency_contact=(r["emergency_contact"] if "emergency_contact" in keys else ""),
+                          agent=(r["agent"] if "agent" in keys else ""),
+                          notes=(r["notes"] if "notes" in keys else ""),
                           created_at=r["created_at"])

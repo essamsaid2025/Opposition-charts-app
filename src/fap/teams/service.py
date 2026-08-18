@@ -107,7 +107,7 @@ class TeamService:
     # ---- roster ----
     def add_member(self, user: Any, team_id: str, *, player_name: str, operational_id: str = "",
                    player_id: str = "", source: str = "scouting", shirt_number: str = "",
-                   role: str = "") -> TeamMember:
+                   role: str = "", **profile: Any) -> TeamMember:
         name = str(player_name or "").strip()
         oid = str(operational_id or "").strip()
         if not name and not oid:
@@ -118,10 +118,36 @@ class TeamService:
             oid = self._assign_operational_id(t.kind if t else "club")
         m = TeamMember(id=self._uid(), team_id=team_id, player_id=str(player_id or ""),
                        operational_id=oid, player_name=name, source=src,
-                       shirt_number=str(shirt_number or "").strip(), role=str(role or "").strip())
+                       shirt_number=str(shirt_number or "").strip(), role=str(role or "").strip(),
+                       **self._member_fields(profile))
         self.repo.add_member(m)
         self._record(user, "teams.member.add", team_id=team_id, name=name)
         return m
+
+    @staticmethod
+    def _member_fields(fields: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"secondary_role", "date_of_birth", "nationality", "preferred_foot",
+                   "height_cm", "weight_kg", "joined_date", "contract_end", "availability",
+                   "phone", "email", "emergency_contact", "agent", "notes"}
+        out: dict[str, Any] = {}
+        for key, value in fields.items():
+            if key not in allowed:
+                continue
+            if key in {"height_cm", "weight_kg"}:
+                try:
+                    out[key] = int(value) if value not in (None, "") else None
+                except (TypeError, ValueError):
+                    out[key] = None
+            else:
+                out[key] = str(value or "").strip()
+        return out
+
+    def update_member(self, user: Any, member_id: str, **fields: Any) -> TeamMember | None:
+        core = {k: fields[k] for k in ("player_name", "operational_id", "shirt_number", "role") if k in fields}
+        core.update(self._member_fields(fields))
+        self.repo.update_member(member_id, **core)
+        self._record(user, "teams.member.update", member_id=member_id)
+        return self.repo.get_member(member_id)
 
     def list_members(self, team_id: str) -> list[TeamMember]:
         return self.repo.list_members(team_id)

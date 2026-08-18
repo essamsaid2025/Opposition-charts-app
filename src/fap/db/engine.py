@@ -861,7 +861,24 @@ MIGRATIONS: list[tuple[int, str]] = [
     (17, """
         ALTER TABLE team_media ADD COLUMN member_id TEXT NOT NULL DEFAULT '';
     """),
-    # (18, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Player profile (Teams): extended, optional roster details. All defaults preserve
+    # existing roster rows and keep the original lightweight add-member workflow valid.
+    (18, """
+        ALTER TABLE team_members ADD COLUMN secondary_role TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN date_of_birth TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN nationality TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN preferred_foot TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN height_cm INTEGER;
+        ALTER TABLE team_members ADD COLUMN weight_kg INTEGER;
+        ALTER TABLE team_members ADD COLUMN joined_date TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN contract_end TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN availability TEXT NOT NULL DEFAULT 'available';
+        ALTER TABLE team_members ADD COLUMN phone TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN email TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN emergency_contact TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN agent TEXT NOT NULL DEFAULT '';
+        ALTER TABLE team_members ADD COLUMN notes TEXT NOT NULL DEFAULT '';
+    """),
 ]
 
 

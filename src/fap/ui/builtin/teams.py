@@ -401,16 +401,41 @@ class TeamsPage(Page):
                     st.caption("No players found in your scouting / first-team database yet "
                                "(or all of them are already in this roster).")
             with st.expander("Add a new player manually", expanded=not members and not pool):
+                st.caption("Enter the player profile now; you can update every field later from the player's Overview.")
                 c = st.columns([3, 2, 1, 2])
                 nm = c[0].text_input("Player name", key=f"tm_mn_{t.id}")
                 oid = c[1].text_input("Operational id (optional)", key=f"tm_moid_{t.id}",
                                       placeholder="leave blank to auto-generate")
                 sh = c[2].text_input("No.", key=f"tm_msh_{t.id}")
                 role = c[3].text_input("Role/position", key=f"tm_mrole_{t.id}")
+                p1 = st.columns(4)
+                second_role = p1[0].text_input("Secondary position", key=f"tm_mrole2_{t.id}")
+                dob = p1[1].text_input("Date of birth", placeholder="YYYY-MM-DD", key=f"tm_mdob_{t.id}")
+                nationality = p1[2].text_input("Nationality", key=f"tm_mnat_{t.id}")
+                foot = p1[3].selectbox("Preferred foot", ["", "Right", "Left", "Both"],
+                                       format_func=lambda x: x or "Select", key=f"tm_mfoot_{t.id}")
+                p2 = st.columns(4)
+                height = p2[0].number_input("Height (cm)", 0, 250, 0, key=f"tm_mheight_{t.id}")
+                weight = p2[1].number_input("Weight (kg)", 0, 200, 0, key=f"tm_mweight_{t.id}")
+                joined = p2[2].text_input("Joined date", placeholder="YYYY-MM-DD", key=f"tm_mjoined_{t.id}")
+                contract = p2[3].text_input("Contract end", placeholder="YYYY-MM-DD", key=f"tm_mcontract_{t.id}")
+                p3 = st.columns(3)
+                availability = p3[0].selectbox("Availability", ["available", "injured", "suspended", "unavailable"], key=f"tm_mavailability_{t.id}")
+                phone = p3[1].text_input("Phone", key=f"tm_mphone_{t.id}")
+                email = p3[2].text_input("Email", key=f"tm_memail_{t.id}")
+                p4 = st.columns(2)
+                emergency = p4[0].text_input("Emergency contact", key=f"tm_memergency_{t.id}")
+                agent = p4[1].text_input("Agent / representative", key=f"tm_magent_{t.id}")
+                profile_notes = st.text_area("Player notes", key=f"tm_mnotes_{t.id}", height=80)
                 if st.button("Add to roster", key=f"tm_madd_{t.id}"):
                     try:
                         m = svc.add_member(shell.user, t.id, player_name=nm, operational_id=oid,
-                                           shirt_number=sh, role=role)
+                                           shirt_number=sh, role=role, secondary_role=second_role,
+                                           date_of_birth=dob, nationality=nationality, preferred_foot=foot,
+                                           height_cm=(height or None), weight_kg=(weight or None),
+                                           joined_date=joined, contract_end=contract,
+                                           availability=availability, phone=phone, email=email,
+                                           emergency_contact=emergency, agent=agent, notes=profile_notes)
                         st.toast(f"Added {m.player_name or 'player'} · {m.operational_id}")
                         st.rerun()
                     except ValueError as exc:
@@ -450,8 +475,10 @@ class TeamsPage(Page):
         C.render_section_title(member.player_name or member.operational_id or "Player",
                                eyebrow=f"{t.name} · roster", subtitle=subtitle or t.name,
                                icon_name="players")
-        tabs = st.tabs(["Analysis", "Portfolio"])
+        tabs = st.tabs(["Overview", "Analysis", "Portfolio"])
         with tabs[0]:
+            self._player_overview(shell, svc, member)
+        with tabs[1]:
             matches = [mt for mt in svc.list_matches(t.id) if mt.dataset_id]
             if not matches:
                 C.render_alert("No matches with linked data yet. In the Matches tab, add a match and "
@@ -483,7 +510,7 @@ class TeamsPage(Page):
                         shell, frame=frame, player_name=(member.player_name or "player"),
                         key=f"pdviz_{member.id}_{mid}",
                         on_assign=(_save if self._can_edit else None), curate=curate_for_scouting)
-        with tabs[1]:
+        with tabs[2]:
             port = svc.player_portfolio(t.id, member.id)
             if not port:
                 st.caption("No saved charts yet. Generate charts in the Analysis tab and click "
@@ -501,6 +528,67 @@ class TeamsPage(Page):
                         if self._can_edit and st.button("Delete", key=f"pd_del_{md.id}",
                                                          use_container_width=True):
                             svc.delete_media(shell.user, md.id); st.rerun()
+
+    def _player_overview(self, shell, svc, member) -> None:
+        """High-level player dashboard plus the complete editable roster profile."""
+        charts = len(svc.player_portfolio(member.team_id, member.id))
+        top = st.columns(4)
+        top[0].metric("Squad number", f"#{member.shirt_number}" if member.shirt_number else "—")
+        top[1].metric("Primary position", member.role or "—")
+        top[2].metric("Availability", (member.availability or "available").title())
+        top[3].metric("Saved charts", charts)
+        st.markdown("#### Player profile")
+        if not self._can_edit:
+            details = [
+                ("Operational ID", member.operational_id), ("Secondary position", member.secondary_role),
+                ("Date of birth", member.date_of_birth), ("Nationality", member.nationality),
+                ("Preferred foot", member.preferred_foot),
+                ("Height", f"{member.height_cm} cm" if member.height_cm else ""),
+                ("Weight", f"{member.weight_kg} kg" if member.weight_kg else ""),
+                ("Joined", member.joined_date), ("Contract end", member.contract_end),
+                ("Phone", member.phone), ("Email", member.email), ("Emergency contact", member.emergency_contact),
+                ("Agent / representative", member.agent),
+            ]
+            for label, value in details:
+                if value:
+                    st.markdown(f"**{label}:** {_html.escape(str(value))}")
+            if member.notes:
+                st.markdown("**Notes**")
+                st.write(member.notes)
+            return
+        c = st.columns(4)
+        name = c[0].text_input("Player name", value=member.player_name, key=f"po_name_{member.id}")
+        number = c[1].text_input("Squad number", value=member.shirt_number, key=f"po_no_{member.id}")
+        role = c[2].text_input("Primary position", value=member.role, key=f"po_role_{member.id}")
+        secondary = c[3].text_input("Secondary position", value=member.secondary_role, key=f"po_role2_{member.id}")
+        c2 = st.columns(4)
+        dob = c2[0].text_input("Date of birth", value=member.date_of_birth, placeholder="YYYY-MM-DD", key=f"po_dob_{member.id}")
+        nationality = c2[1].text_input("Nationality", value=member.nationality, key=f"po_nat_{member.id}")
+        foots = ["", "Right", "Left", "Both"]
+        foot = c2[2].selectbox("Preferred foot", foots, index=foots.index(member.preferred_foot) if member.preferred_foot in foots else 0, key=f"po_foot_{member.id}")
+        availability_options = ["available", "injured", "suspended", "unavailable"]
+        availability = c2[3].selectbox("Availability", availability_options,
+                                       index=availability_options.index(member.availability) if member.availability in availability_options else 0,
+                                       key=f"po_avail_{member.id}")
+        c3 = st.columns(4)
+        height = c3[0].number_input("Height (cm)", 0, 250, int(member.height_cm or 0), key=f"po_height_{member.id}")
+        weight = c3[1].number_input("Weight (kg)", 0, 200, int(member.weight_kg or 0), key=f"po_weight_{member.id}")
+        joined = c3[2].text_input("Joined date", value=member.joined_date, placeholder="YYYY-MM-DD", key=f"po_joined_{member.id}")
+        contract = c3[3].text_input("Contract end", value=member.contract_end, placeholder="YYYY-MM-DD", key=f"po_contract_{member.id}")
+        c4 = st.columns(3)
+        phone = c4[0].text_input("Phone", value=member.phone, key=f"po_phone_{member.id}")
+        email = c4[1].text_input("Email", value=member.email, key=f"po_email_{member.id}")
+        agent = c4[2].text_input("Agent / representative", value=member.agent, key=f"po_agent_{member.id}")
+        emergency = st.text_input("Emergency contact", value=member.emergency_contact, key=f"po_emergency_{member.id}")
+        notes = st.text_area("Player notes", value=member.notes, key=f"po_notes_{member.id}", height=100)
+        if st.button("Save player profile", type="primary", key=f"po_save_{member.id}"):
+            svc.update_member(shell.user, member.id, player_name=name, shirt_number=number, role=role,
+                              secondary_role=secondary, date_of_birth=dob, nationality=nationality,
+                              preferred_foot=foot, availability=availability, height_cm=(height or None),
+                              weight_kg=(weight or None), joined_date=joined, contract_end=contract,
+                              phone=phone, email=email, emergency_contact=emergency, agent=agent, notes=notes)
+            st.toast("Player profile saved")
+            st.rerun()
 
     def _info(self, shell, svc, t) -> None:
         if not self._can_edit:
