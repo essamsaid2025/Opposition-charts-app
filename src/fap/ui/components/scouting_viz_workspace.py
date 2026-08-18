@@ -149,8 +149,43 @@ def render_scouting_viz_workspace(shell, svc, player, ctx, *, key: str,
                                max_selections=3, key=f"{key}_cmp")
     theme = tm.get(theme_id)
     selected_players = [primary] + [c for c in compare if c in population]
-    view = viz.build_view(frame, schema, selected_players,
+
+    # ---- Analysis: benchmark population + calculation mode (C3) ----
+    # Benchmark scopes the population the percentile/ranking is computed against; Per-90 rescales
+    # count metrics by minutes. Both just feed the EXISTING build_view a filtered/transformed
+    # frame — no second percentile/analytics engine. Default = Whole dataset / Raw (so the shared
+    # workspace, used by First-Team too, behaves exactly as before unless the analyst changes it).
+    bcol, ccol = st.columns(2)
+    bmodes = viz.benchmark_modes(frame, schema, primary)
+    blabel = {m["id"]: m["label"] for m in bmodes}
+    b_ids = [m["id"] for m in bmodes if m["available"]]
+    if "selected" in b_ids and not compare:
+        b_ids.remove("selected")                          # only offer when a comparison is chosen
+    bench = bcol.selectbox("Benchmark", b_ids, format_func=lambda i: blabel.get(i, i),
+                           key=f"{key}_bench") if b_ids else "whole"
+    for m in bmodes:                                      # honest note for each disabled benchmark
+        if not m["available"] and m["id"] in ("position", "team"):
+            bcol.caption(f"{m['label']}: {m['reason']}")
+    eff = viz.benchmark_frame(frame, schema, primary, bench,
+                              selected=[c for c in compare if c in population])
+
+    cmodes = viz.calc_modes(viz.build_view(eff, schema, selected_players))
+    calc_avail = {m["id"]: m for m in cmodes}
+    calc_ids = [cid for cid in ("raw", "per_90") if calc_avail.get(cid, {}).get("available")]
+    calc = ccol.selectbox("Calculation", calc_ids or ["raw"],
+                          format_func=lambda i: calc_avail.get(i, {}).get("label", i),
+                          key=f"{key}_calc")
+    if not calc_avail.get("per_90", {}).get("available"):
+        ccol.caption(f"Per 90: {calc_avail.get('per_90', {}).get('reason', 'unavailable')}")
+    if calc == "per_90":
+        p90 = viz.per90_frame(eff, schema)
+        if p90 is not None:
+            eff = p90
+
+    view = viz.build_view(eff, schema, selected_players,
                           dataset_id=ctx["id"], dataset_name=ctx["name"])
+    st.caption(f"Benchmark: **{blabel.get(bench, bench)}** · {view.population} players"
+               + (" · per-90" if calc == "per_90" else ""))
     if not view.metrics:
         C.render_alert("This dataset has no numeric scouting metrics to visualize.", "warning")
         return

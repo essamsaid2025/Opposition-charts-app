@@ -294,6 +294,147 @@ def chart_availability(view: ScoutingView, *, selected: list[str] | None = None
     return out
 
 
+# ---------------------------------------------------------------- calculation modes (C2)
+# exposure-column name hints — how we DETECT (never assume) that per-90 / per-match is valid.
+_MINUTES_HINTS: tuple[str, ...] = ("minute", "mins_played", "90s", "nineties", "min_played")
+_MATCH_HINTS: tuple[str, ...] = ("match", "appearance", "games_played", "starts", "apps")
+
+
+def calc_modes(view: ScoutingView) -> list[dict[str, Any]]:
+    """Honest calculation modes for this view (section 17). Raw is always valid; Percentile
+    needs a population; Per-90 / Per-match are offered ONLY when an exposure column (minutes /
+    90s / matches) actually exists in the dataset — this NEVER assumes 90 minutes or fabricates
+    exposure. Each entry is ``{id, label, available, reason}`` so the UI can disable + explain."""
+    pop_ok = view.population >= _MIN_POP_RANK or view.value_scale == SCALE_NORMALIZED
+    srcs = " ".join(m.source.lower() for m in view.metrics)
+    has_minutes = any(h in srcs for h in _MINUTES_HINTS)
+    has_matches = any(h in srcs for h in _MATCH_HINTS)
+    return [
+        {"id": "raw", "label": "Raw", "available": True, "reason": ""},
+        {"id": "percentile", "label": "Percentile", "available": pop_ok,
+         "reason": "" if pop_ok else "needs a population (2+ players) or a normalized dataset"},
+        {"id": "per_90", "label": "Per 90", "available": has_minutes,
+         "reason": "" if has_minutes else "minutes data not present"},
+        {"id": "per_match", "label": "Per Match", "available": has_matches,
+         "reason": "" if has_matches else "match/exposure data not present"},
+    ]
+
+
+# ---------------------------------------------------------------- benchmark population (C3)
+def dimension_field(schema: dict[str, Any], kind: str) -> str | None:
+    """The frame column that carries a dimension of ``kind`` (e.g. 'position'/'team'),
+    read from the persisted schema's ``dimensions`` map. None when the dataset has no such
+    field — the caller then honestly disables that benchmark (never guesses/infers)."""
+    for key, col in ((schema or {}).get("dimensions") or {}).items():
+        if kind in str(key).lower():
+            return col
+    return None
+
+
+def _primary_row(frame, schema: dict[str, Any], primary: str):
+    idf = schema.get("id_field") or ""
+    if idf not in getattr(frame, "columns", []):
+        return None
+    hits = frame.index[frame[idf].astype(str).str.strip().str.lower() == str(primary).lower().strip()]
+    return hits[0] if len(hits) else None
+
+
+def benchmark_modes(frame, schema: dict[str, Any], primary: str) -> list[dict[str, Any]]:
+    """Available benchmark populations for this dataset+player, each honest about WHY it is
+    unavailable and how many players it covers (section 6/8). Never fabricates a field."""
+    idf = schema.get("id_field") or ""
+    have_ids = idf in getattr(frame, "columns", [])
+    out: list[dict[str, Any]] = [{
+        "id": "whole", "label": "Whole dataset", "available": have_ids and len(frame) >= 1,
+        "reason": "" if have_ids else "no id field", "population": int(len(frame)) if have_ids else 0}]
+    idx = _primary_row(frame, schema, primary) if have_ids else None
+    for kind, label in (("position", "Same position"), ("team", "Same team")):
+        col = dimension_field(schema, kind)
+        if not col or col not in getattr(frame, "columns", []):
+            out.append({"id": kind, "label": label, "available": False, "population": 0,
+                        "reason": f"{kind} data not present in this dataset"})
+            continue
+        val = None if idx is None else frame.at[idx, col]
+        if val is None or (hasattr(val, "__len__") is False and pd.isna(val)) or str(val).strip() == "":
+            out.append({"id": kind, "label": label, "available": False, "population": 0,
+                        "reason": f"selected player has no {kind} value"})
+            continue
+        n = int((frame[col].astype(str).str.strip() == str(val).strip()).sum())
+        out.append({"id": kind, "label": f"{label} ({val})", "available": n >= _MIN_POP_RANK,
+                    "population": n, "value": str(val),
+                    "reason": "" if n >= _MIN_POP_RANK else f"only {n} {kind} peer(s) in dataset"})
+    out.append({"id": "selected", "label": "Selected players", "available": True,
+                "population": 0, "reason": ""})
+    return out
+
+
+def benchmark_frame(frame, schema: dict[str, Any], primary: str, mode: str, *,
+                    selected: list[str] | None = None):
+    """The population subset for ``mode`` — ALWAYS including the primary player's row so the
+    percentile is well-defined. 'whole' returns the frame unchanged. Pure; reuses the frame's
+    own id/dimension columns (no new identity system)."""
+    idf = schema.get("id_field") or ""
+    if idf not in getattr(frame, "columns", []) or mode == "whole":
+        return frame
+    low = frame[idf].astype(str).str.strip().str.lower()
+
+    def rows_for(names):
+        want = {str(n).lower().strip() for n in names}
+        return frame[low.isin(want)]
+
+    if mode == "selected":
+        return rows_for([primary, *(selected or [])])
+    if mode in ("position", "team"):
+        col = dimension_field(schema, mode)
+        idx = _primary_row(frame, schema, primary)
+        if col and col in frame.columns and idx is not None:
+            val = frame.at[idx, col]
+            if not (val is None or (str(val).strip() == "")):
+                sub = frame[frame[col].astype(str).str.strip() == str(val).strip()]
+                if str(primary).lower().strip() in set(low.loc[sub.index]):
+                    return sub
+                return pd.concat([sub, rows_for([primary])])
+        return rows_for([primary])
+    return frame
+
+
+# ---------------------------------------------------------------- per-90 (C3, honest)
+def minutes_source(schema: dict[str, Any]) -> str | None:
+    """The dataset's minutes/exposure column, or None — detected from the metric sources by
+    the same hints ``calc_modes`` uses. Never assumes 90 minutes."""
+    for md in (schema.get("metrics") or []):
+        if any(h in str(md.get("source", "")).lower() for h in _MINUTES_HINTS):
+            return md.get("source")
+    return None
+
+
+def is_rate_metric(md: dict[str, Any]) -> bool:
+    """True when a metric is already a rate/percentage/ratio/normalized value and MUST NOT be
+    divided by minutes again (section 4 — correctness over feature count)."""
+    hay = f"{md.get('unit','')} {md.get('source','')}".lower()
+    return any(k in hay for k in ("%", "pct", "percent", "per_", "per90", "per 90", "ratio",
+                                  "accuracy", "share", "rate", "avg", "mean"))
+
+
+def per90_frame(frame, schema: dict[str, Any]):
+    """A copy of ``frame`` with COUNT metrics converted to per-90 (value / minutes * 90); rate/
+    percentage metrics are left untouched, and the result is None when no minutes column exists
+    (so the caller disables Per-90 honestly). Rows with non-positive minutes become NaN, never
+    a fabricated value."""
+    src = minutes_source(schema)
+    if not src or src not in getattr(frame, "columns", []):
+        return None
+    mins = pd.to_numeric(frame[src], errors="coerce")
+    out = frame.copy()
+    for md in (schema.get("metrics") or []):
+        col = md.get("source")
+        if not col or col == src or col not in out.columns or is_rate_metric(md):
+            continue
+        vals = pd.to_numeric(out[col], errors="coerce")
+        out[col] = (vals / mins * 90.0).where(mins > 0)
+    return out
+
+
 # ---------------------------------------------------------------- pizza semantics
 def suggest_pizza_metrics(view: ScoutingView, n: int = 10) -> list[str]:
     """A balanced default of 6-12 metrics spread across categories (section 7).
@@ -383,6 +524,8 @@ def pizza_values(view: ScoutingView, sources: list[str], player: str | None = No
 __all__ = [
     "CHART_TYPES", "CHART_LABELS", "SCALE_NORMALIZED", "SCALE_RAW", "OTHER",
     "PRESET_CATEGORIES", "infer_category", "display_name", "MetricStat",
-    "ScoutingView", "build_view", "chart_availability", "suggest_pizza_metrics",
-    "available_presets", "preset_metrics", "pizza_values",
+    "ScoutingView", "build_view", "chart_availability", "calc_modes",
+    "dimension_field", "benchmark_modes", "benchmark_frame",
+    "minutes_source", "is_rate_metric", "per90_frame",
+    "suggest_pizza_metrics", "available_presets", "preset_metrics", "pizza_values",
 ]
