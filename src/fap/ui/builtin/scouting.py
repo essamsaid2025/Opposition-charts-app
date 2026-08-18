@@ -1535,6 +1535,35 @@ class ScoutingPage(Page):
         if len(ev) > 60:
             st.caption(f"Showing the first 60 of {len(ev)} — narrow by event type above.")
 
+        # ---- export selected actions as clips (shot list + deep links) ----
+        with st.expander("Export clips"):
+            opts = [f"{int(r['_m']):02d}:{int(r['_s']):02d} · {r.get('event_type', 'event')}"
+                    for _, r in shown.iterrows()]
+            picks = st.multiselect("Actions to include", list(range(len(shown))),
+                                   format_func=lambda i: opts[i], key=f"vs_clipsel_{v.id}")
+            wc = st.columns(2)
+            pre = wc[0].number_input("Seconds before", 0.0, 30.0, 4.0, 1.0, key=f"vs_clippre_{v.id}")
+            post = wc[1].number_input("Seconds after", 0.0, 60.0, 6.0, 1.0, key=f"vs_clippost_{v.id}")
+            if picks:
+                rows = shown.iloc[picks]
+                events = [{"minute": int(r["_m"]), "second": int(r["_s"]), "period": r.get("period"),
+                           "event_type": str(r.get("event_type", "event"))}
+                          for _, r in rows.iterrows()]
+                clips = VS.build_clips(events, offset_1h=v.sync_offset_seconds, offset_2h=off2,
+                                       url=getattr(v, "url", ""), pre=pre, post=post)
+                st.download_button(f"Download clip list — {len(clips)} clip(s) (CSV)",
+                                   data=VS.clips_to_csv(clips),
+                                   file_name=f"clips_{v.match_id or v.id}.csv", mime="text/csv",
+                                   key=f"vs_clipcsv_{v.id}", use_container_width=True)
+                if VS.youtube_id(getattr(v, "url", "")):
+                    st.caption("YouTube deep links — click to open each clip at its start:")
+                    for c in clips:
+                        st.markdown(f"- [{c['minute']:02d}:{c['second']:02d} · "
+                                    f"{c['event_type']} → {c['clip_start_seconds']:.0f}s]({c['url']})")
+            st.caption("Exports a clip list (start/end timestamps + YouTube deep links). Cutting "
+                       "actual video FILES needs ffmpeg (not installed here) and only works for "
+                       "uploaded footage — tell me if you install ffmpeg and I'll add real clip export.")
+
     def _attachments(self, shell, svc, p) -> None:
         for a in svc.list_attachments(p.id):
             cols = st.columns([4, 1, 1])

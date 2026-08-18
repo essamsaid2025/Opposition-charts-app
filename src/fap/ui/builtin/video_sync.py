@@ -73,6 +73,51 @@ def event_video_time_2h(offset_1h: Any, offset_2h: Any, period: Any, minute: Any
     return event_video_time(offset_1h, minute, second)
 
 
+def youtube_seek_url(url: str, seconds: Any) -> str:
+    """A YouTube URL that opens at ``seconds`` (``...watch?v=ID&t=Ns``). Non-YouTube URLs are
+    returned unchanged. Used to export clip deep-links for footage we cannot download/cut."""
+    vid = youtube_id(url)
+    try:
+        s = max(0, int(float(seconds)))
+    except (TypeError, ValueError):
+        s = 0
+    return f"https://www.youtube.com/watch?v={vid}&t={s}s" if vid else str(url or "")
+
+
+def build_clips(events, *, offset_1h: Any, offset_2h: Any = None, url: str = "",
+                pre: float = 4.0, post: float = 6.0) -> list[dict[str, Any]]:
+    """Turn selected event rows into clip definitions: each clip is a window
+    ``[seek-pre, seek+post]`` around the event's period-aware video time. Pure; the seek time
+    reuses ``event_video_time_2h`` so second-half clips land correctly on split footage."""
+    out: list[dict[str, Any]] = []
+    for e in events:
+        t = event_video_time_2h(offset_1h, offset_2h, e.get("period"),
+                                e.get("minute"), e.get("second"))
+        start = max(0.0, float(t) - float(pre))
+        out.append({
+            "event_type": str(e.get("event_type", "event")),
+            "minute": int(e.get("minute", 0) or 0), "second": int(e.get("second", 0) or 0),
+            "seek_seconds": round(float(t), 1),
+            "clip_start_seconds": round(start, 1), "clip_end_seconds": round(float(t) + float(post), 1),
+            "url": youtube_seek_url(url, t) if youtube_id(url) else str(url or ""),
+        })
+    return out
+
+
+def clips_to_csv(clips: list[dict[str, Any]]) -> str:
+    """A shot-list CSV (one row per clip) importable into any video editor / sheet."""
+    import csv
+    import io
+    cols = ["event_type", "minute", "second", "seek_seconds",
+            "clip_start_seconds", "clip_end_seconds", "url"]
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(cols)
+    for c in clips:
+        w.writerow([c.get(k, "") for k in cols])
+    return buf.getvalue()
+
+
 def youtube_id(url: str) -> str | None:
     m = _YOUTUBE_RE.search(str(url or ""))
     return m.group(1) if m else None
