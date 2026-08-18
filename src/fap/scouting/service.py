@@ -1618,6 +1618,33 @@ class ScoutingService:
                           detail={"match_id": match_id, "offset": offset})
         return self.videos_repo.get(video_id)
 
+    def video_2h_offset(self, player_id: str, video_id: str) -> float | None:
+        """The video timestamp of the SECOND-HALF kickoff for this video, if calibrated. Stored
+        additively in the player document (no schema/migration) keyed by video_id, so a video with
+        split first/second-half footage can seek second-half events correctly. None = not set."""
+        p = self.get_player(player_id)
+        doc = dict(p.document) if (p is not None and isinstance(p.document, dict)) else {}
+        val = (doc.get("video_2h_offsets") or {}).get(str(video_id))
+        try:
+            return None if val is None else float(val)
+        except (TypeError, ValueError):
+            return None
+
+    def set_video_2h_offset(self, user: User, player_id: str, video_id: str,
+                            seconds: float | None) -> None:
+        """Record (or clear, with ``None``) the second-half kickoff offset for a video. Additive
+        document metadata only — the first-half offset stays in its existing column, untouched."""
+        self._require(user, Capability.EDIT_SCOUTING)
+        p = self._player_or_raise(player_id)
+        doc = dict(p.document) if isinstance(p.document, dict) else {}
+        offs = dict(doc.get("video_2h_offsets") or {})
+        if seconds is None:
+            offs.pop(str(video_id), None)
+        else:
+            offs[str(video_id)] = float(seconds)
+        doc["video_2h_offsets"] = offs
+        self._save_doc(user, player_id, doc, "scouting.video.calibrate_2h")
+
     def link_video_to_match(self, user: User, video_id: str, dataset_id: str,
                             match_id: str) -> PlayerVideo | None:
         """Persist a video's evidence source: (dataset_id, match_id). From now on the

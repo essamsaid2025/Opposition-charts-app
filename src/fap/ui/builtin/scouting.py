@@ -1433,12 +1433,30 @@ class ScoutingPage(Page):
             return
         seek_key = f"vs_seek_{v.id}"
         seek = st.session_state.get(seek_key) or {}
-        rendered, _ = VS.video_sync(mode=VS.component_mode(v), src=src, mime=mime,
-                                    seek_to=seek.get("time"), seek_nonce=seek.get("nonce", ""),
-                                    key=f"vs_{v.id}", colors=self._vs_colors())
+        off2 = svc.video_2h_offset(p.id, v.id)                # second-half kickoff (document, additive)
+        cal2_key = f"vs_cal2_{v.id}"
+        calibrating_2h = bool(st.session_state.get(cal2_key)) and self._can_edit
+        rendered, intent = VS.video_sync(
+            mode=VS.component_mode(v), src=src, mime=mime,
+            calibrate=calibrating_2h,                          # reuse the ONE player in mark mode for 2H
+            seek_to=None if calibrating_2h else seek.get("time"),
+            seek_nonce="" if calibrating_2h else seek.get("nonce", ""),
+            key=f"vs_{v.id}", colors=self._vs_colors())
         if not rendered:
             self._video_static_today(svc, v)
             st.caption("Interactive player unavailable — standard playback shown.")
+            return
+        if calibrating_2h:                                     # calibrating the second-half kickoff
+            st.caption("Scrub to the **second-half kickoff**, then click **Mark kickoff** in the player.")
+            if intent and intent.get("nonce") \
+                    and st.session_state.get(f"vs_mark2_{v.id}") != intent["nonce"]:
+                st.session_state[f"vs_mark2_{v.id}"] = intent["nonce"]
+                svc.set_video_2h_offset(shell.user, p.id, v.id, float(intent["time"]))
+                st.session_state[cal2_key] = False
+                st.toast(f"Second-half kickoff at {intent['time']:.1f}s")
+                st.rerun()
+            if st.button("Cancel", key=f"vs_cal2cancel_{v.id}"):
+                st.session_state[cal2_key] = False; st.rerun()
             return
         ds_name = ""
         if getattr(v, "dataset_id", ""):
@@ -1452,20 +1470,30 @@ class ScoutingPage(Page):
                    + f" (kickoff at {float(v.sync_offset_seconds):.1f}s). "
                    "Click an event to jump the video there — actions stay from this dataset "
                    "regardless of the active dataset.")
+        st.caption("Second half: "
+                   + (f"kickoff at **{float(off2):.1f}s** (split-footage aware)." if off2 is not None
+                      else "**not calibrated** — second-half events use the continuous timeline. "
+                           "Calibrate it if your footage has a first/second-half split or halftime gap."))
         if self._can_edit:
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             if c1.button("Recalibrate kickoff", key=f"vs_recal_{v.id}", use_container_width=True):
                 svc.set_video_sync(shell.user, v.id, v.match_id, None); st.rerun()
-            if c2.button("Unlink match", key=f"vs_unlink_{v.id}", use_container_width=True):
+            lbl2 = "Recalibrate 2nd half" if off2 is not None else "Calibrate 2nd half"
+            if c2.button(lbl2, key=f"vs_cal2btn_{v.id}", use_container_width=True):
+                st.session_state[cal2_key] = True; st.rerun()
+            if off2 is not None:
+                if c3.button("Clear 2nd half", key=f"vs_cal2clr_{v.id}", use_container_width=True):
+                    svc.set_video_2h_offset(shell.user, p.id, v.id, None); st.rerun()
+            elif c3.button("Unlink match", key=f"vs_unlink_{v.id}", use_container_width=True):
                 svc.set_video_sync(shell.user, v.id, "", None)
                 st.session_state.pop(seek_key, None); st.rerun()
-        self._event_seek_list(shell, svc, p, v, seek_key, VS)
+        self._event_seek_list(shell, svc, p, v, seek_key, VS, off2=off2)
 
     def _unlink_button(self, shell, svc, v) -> None:
         if self._can_edit and st.button("Unlink match", key=f"vs_ul_{v.id}"):
             svc.set_video_sync(shell.user, v.id, "", None); st.rerun()
 
-    def _event_seek_list(self, shell, svc, p, v, seek_key, VS) -> None:
+    def _event_seek_list(self, shell, svc, p, v, seek_key, VS, off2=None) -> None:
         import uuid as _uuid
         import pandas as pd
         # Actions come from the video's PERSISTED dataset_id (P4.4/P4.5), NEVER the
@@ -1500,7 +1528,8 @@ class ScoutingPage(Page):
             m, s = int(row["_m"]), int(row["_s"])
             label = f"{m:02d}:{s:02d} · {str(row.get('event_type', 'event'))}"
             if cols[i % ncol].button(label, key=f"vs_ev_{v.id}_{i}", use_container_width=True):
-                t = VS.event_video_time(v.sync_offset_seconds, m, s)
+                # period-aware: second-half events use the 2H offset (elapsed since 2H kickoff)
+                t = VS.event_video_time_2h(v.sync_offset_seconds, off2, row.get("period"), m, s)
                 st.session_state[seek_key] = {"time": t, "nonce": _uuid.uuid4().hex}
                 st.rerun()
         if len(ev) > 60:

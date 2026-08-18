@@ -47,6 +47,32 @@ def event_video_time(offset_seconds: float, minute: Any, second: Any) -> float:
     return max(0.0, _num(offset_seconds) + _num(minute) * 60.0 + _num(second))
 
 
+def event_video_time_2h(offset_1h: Any, offset_2h: Any, period: Any, minute: Any, second: Any,
+                        *, half_start_minute: float = 45.0) -> float:
+    """Period-aware seek for footage split between halves.
+
+    First half (period <= 1) uses ``offset_1h`` exactly like ``event_video_time``. Second half
+    (period >= 2) uses ``offset_2h`` PLUS the time elapsed since the second-half kickoff
+    (``minute - half_start_minute``) — because a video's second half begins at its own timestamp
+    (split footage, or a halftime gap), not 45 minutes after first-half kickoff. When ``offset_2h``
+    is ``None`` (second half not calibrated) it falls back to the single continuous offset (today's
+    behaviour). If ``period`` is missing/0 it is inferred from the minute (>= ``half_start_minute``
+    => second half). Never negative."""
+    def _num(v: Any) -> float:
+        try:
+            f = float(v)
+            return f if f == f else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+    m = _num(minute)
+    p = _num(period)
+    is_second_half = (p >= 2) if p >= 1 else (m >= half_start_minute)
+    if is_second_half and offset_2h is not None:
+        elapsed = max(0.0, m - half_start_minute) * 60.0 + _num(second)
+        return max(0.0, _num(offset_2h) + elapsed)
+    return event_video_time(offset_1h, minute, second)
+
+
 def youtube_id(url: str) -> str | None:
     m = _YOUTUBE_RE.search(str(url or ""))
     return m.group(1) if m else None
