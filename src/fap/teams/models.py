@@ -61,6 +61,7 @@ class TeamMedia:
     team_id: str
     match_id: str = ""               # "" = team-level; else the team_matches.id it belongs to
     kind: str = "note"               # note | video | clip | chart | image | document
+    member_id: str = ""             # roster player (team_members.id) this belongs to; "" = team/match-level
     title: str = ""
     body: str = ""                  # note text
     url: str = ""                   # external video/link

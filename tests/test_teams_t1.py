@@ -204,6 +204,60 @@ def test_delete_team_cascades_media(tmp_path):
     assert svc.list_media(t.id) == []
 
 
+def test_player_portfolio_charts_per_member(tmp_path):
+    imgs = _MemStore()
+    svc = TeamService(Database(tmp_path / "t.sqlite3"), images=imgs)
+    t = svc.create_team(_USER, "First Team", kind="club")
+    m1 = svc.create_match(_USER, t.id, opponent="A")
+    m2 = svc.create_match(_USER, t.id, opponent="B")
+    mem = svc.add_member(_USER, t.id, player_name="Salah", operational_id="CLB-000001")
+    other = svc.add_member(_USER, t.id, player_name="Mane", operational_id="CLB-000002")
+    # two charts for Salah across two matches, one for Mane
+    svc.add_chart(_USER, t.id, b"a", "image/png", title="pass map", match_id=m1.id, member_id=mem.id)
+    svc.add_chart(_USER, t.id, b"b", "image/png", title="shot map", match_id=m2.id, member_id=mem.id)
+    svc.add_chart(_USER, t.id, b"c", "image/png", title="x", match_id=m1.id, member_id=other.id)
+    # portfolio = a player's charts across ALL matches
+    assert len(svc.player_portfolio(t.id, mem.id)) == 2
+    assert len(svc.player_portfolio(t.id, other.id)) == 1
+    # per match+player scoping
+    assert len(svc.list_media(t.id, match_id=m1.id, member_id=mem.id, kind="chart")) == 1
+
+
+class _FrameWM:
+    """WorkspaceManager stub exposing dataset_frame + set_active_dataset for the match-frame test."""
+    def __init__(self, frame):
+        self._f = frame
+        self.active = None
+
+    def dataset_frame(self, dataset_id):
+        return self._f
+
+    def set_active_dataset(self, user, dataset_id):
+        self.active = dataset_id
+
+    def next_counter(self, key):
+        return 1
+
+
+def test_match_player_frame_filters_by_player_and_match(tmp_path):
+    import pandas as pd
+    frame = pd.DataFrame({
+        "match_id": ["16073", "16073", "999"],
+        "player": ["Salah", "Mane", "Salah"],
+        "event_type": ["Pass", "Pass", "Shot"], "x": [50, 40, 80], "y": [50, 30, 50],
+    })
+    svc = TeamService(Database(tmp_path / "t.sqlite3"), workspaces=_FrameWM(frame))
+    t = svc.create_team(_USER, "First Team", kind="club")
+    mt = svc.create_match(_USER, t.id, opponent="X", dataset_id="ds1", match_id="16073")
+    df = svc.match_player_frame(mt.id, "Salah")
+    assert df is not None and len(df) == 1 and df.iloc[0]["event_type"] == "Pass"   # match 16073 + Salah
+    # a player with no rows in this match -> None
+    assert svc.match_player_frame(mt.id, "Ghost") is None
+    # no dataset linked -> None
+    mt2 = svc.create_match(_USER, t.id, opponent="Y")
+    assert svc.match_player_frame(mt2.id, "Salah") is None
+
+
 def test_teams_page_is_the_real_page_not_the_placeholder():
     from fap.ui.page import load_builtin_pages, page_registry
     load_builtin_pages()

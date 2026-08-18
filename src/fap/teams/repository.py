@@ -45,20 +45,22 @@ class TeamRepository:
     # ---- media (notes / videos / clips / charts) ----
     def add_media(self, m: TeamMedia) -> None:
         self._db.execute(
-            """INSERT INTO team_media (id, team_id, match_id, kind, title, body, url, file_id,
-                 image_id, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (m.id, m.team_id, m.match_id, m.kind, m.title, m.body, m.url, m.file_id,
+            """INSERT INTO team_media (id, team_id, match_id, kind, member_id, title, body, url,
+                 file_id, image_id, created_by)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (m.id, m.team_id, m.match_id, m.kind, m.member_id, m.title, m.body, m.url, m.file_id,
              m.image_id, m.created_by))
 
     def list_media(self, team_id: str, *, match_id: str | None = None,
-                   kind: str | None = None) -> list[TeamMedia]:
+                   kind: str | None = None, member_id: str | None = None) -> list[TeamMedia]:
         sql = "SELECT * FROM team_media WHERE team_id = ?"
         args: list[Any] = [team_id]
         if match_id is not None:
             sql += " AND match_id = ?"; args.append(match_id)
         if kind is not None:
             sql += " AND kind = ?"; args.append(kind)
+        if member_id is not None:
+            sql += " AND member_id = ?"; args.append(member_id)
         sql += " ORDER BY created_at DESC"
         return [self._media(r) for r in self._db.query(sql, tuple(args))]
 
@@ -135,7 +137,9 @@ class TeamRepository:
 
     @staticmethod
     def _media(r: Any) -> TeamMedia:
+        keys = r.keys()
         return TeamMedia(id=r["id"], team_id=r["team_id"], match_id=r["match_id"], kind=r["kind"],
+                         member_id=(r["member_id"] if "member_id" in keys else ""),
                          title=r["title"], body=r["body"], url=r["url"], file_id=r["file_id"],
                          image_id=r["image_id"], created_by=r["created_by"], created_at=r["created_at"])
 

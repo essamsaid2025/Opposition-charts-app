@@ -855,7 +855,13 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_team_media ON team_media(team_id);
     """),
-    # (17, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Per-player match portfolio (T6): a team_media chart can belong to a roster PLAYER
+    # (team_members.id), so each player accumulates their own charts per match. Additive &
+    # defaulted -> '' = not player-specific (existing rows unchanged).
+    (17, """
+        ALTER TABLE team_media ADD COLUMN member_id TEXT NOT NULL DEFAULT '';
+    """),
+    # (18, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 

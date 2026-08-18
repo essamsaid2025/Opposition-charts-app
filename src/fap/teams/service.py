@@ -206,21 +206,49 @@ class TeamService:
         return m
 
     def add_chart(self, user: Any, team_id: str, data: bytes, mime: str, *, title: str = "",
-                  match_id: str = "", kind: str = "chart") -> TeamMedia:
+                  match_id: str = "", member_id: str = "", kind: str = "chart") -> TeamMedia:
         if self._images is None:
             raise ValueError("Image storage is not configured.")
         image_id = self._uid()
         self._images.save(image_id, data, mime=mime)
         m = TeamMedia(id=self._uid(), team_id=team_id, match_id=str(match_id or ""), kind=kind,
-                      title=str(title or "").strip(), image_id=image_id,
-                      created_by=getattr(user, "email", "") or "")
+                      member_id=str(member_id or ""), title=str(title or "").strip(),
+                      image_id=image_id, created_by=getattr(user, "email", "") or "")
         self.repo.add_media(m)
         self._record(user, "teams.media.chart", team_id=team_id)
         return m
 
     def list_media(self, team_id: str, *, match_id: str | None = None,
-                   kind: str | None = None) -> list[TeamMedia]:
-        return self.repo.list_media(team_id, match_id=match_id, kind=kind)
+                   kind: str | None = None, member_id: str | None = None) -> list[TeamMedia]:
+        return self.repo.list_media(team_id, match_id=match_id, kind=kind, member_id=member_id)
+
+    # ---- per-player match portfolio (T6: reuse the existing viz workspace) ----
+    def match_player_frame(self, match_row_id: str, player_name: str):
+        """The player's event rows for a match — loaded from the match's LINKED dataset by id
+        (active-independent) and filtered to this player (+ the match_id). Feeds the existing
+        player visualization workspace. None when the match has no linked event data."""
+        mt = self.repo.get_match(match_row_id)
+        if mt is None or not mt.dataset_id or self._wm is None:
+            return None
+        try:
+            frame = self._wm.dataset_frame(mt.dataset_id)
+        except Exception:
+            frame = None
+        if frame is None or getattr(frame, "empty", True):
+            return None
+        df = frame
+        if mt.match_id and "match_id" in df.columns:
+            df = df[df["match_id"].astype(str) == str(mt.match_id)]
+        name = str(player_name or "").strip().lower()
+        for col in ("player", "player_name", "player.name"):
+            if col in df.columns:
+                df = df[df[col].astype(str).str.strip().str.lower() == name]
+                break
+        return df if not getattr(df, "empty", True) else None
+
+    def player_portfolio(self, team_id: str, member_id: str) -> list[TeamMedia]:
+        """All charts saved for a roster player across the team's matches (their portfolio)."""
+        return self.repo.list_media(team_id, member_id=member_id, kind="chart")
 
     def media_bytes(self, media: TeamMedia) -> bytes | None:
         try:

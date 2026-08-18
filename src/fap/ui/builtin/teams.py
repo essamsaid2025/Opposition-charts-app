@@ -291,6 +291,61 @@ class TeamsPage(Page):
         st.divider()
         st.markdown("**Match media** — notes, clips, videos and charts for this match")
         self._media_section(shell, svc, t, match_id=mt.id)
+        self._match_player_analysis(shell, svc, t, mt)
+
+    # ---------------------------------------------------------------- player analysis (T6)
+    def _match_player_analysis(self, shell, svc, t, mt) -> None:
+        """Generate charts for a roster player from this match's LINKED data and save them to that
+        player's portfolio. Reuses the existing player visualization workspace + Save-to-player."""
+        st.divider()
+        st.markdown("**Player analysis & portfolio** — charts per player from this match's data")
+        if not mt.dataset_id:
+            st.caption("Link this match to its event dataset (above) to generate player charts.")
+            return
+        roster = svc.list_members(t.id)
+        if not roster:
+            st.caption("Add players to the roster first.")
+            return
+        opts = {m.id: (m.player_name or m.operational_id or "player") for m in roster}
+        pick = st.selectbox("Player", list(opts), format_func=lambda i: opts[i], key=f"mp_pl_{mt.id}")
+        member = next((m for m in roster if m.id == pick), None)
+        frame = svc.match_player_frame(mt.id, member.player_name if member else "")
+        # the viz workspace expects the match's dataset to be the active query context (same as the
+        # scouting evidence "Open") — set it so its scope/rendering align with this match's data.
+        try:
+            if shell.wm is not None:
+                shell.wm.set_active_dataset(shell.user, mt.dataset_id)
+        except Exception:
+            pass
+        if frame is None:
+            st.caption("No events for this player in the linked match data.")
+        else:
+            from fap.scouting.catalog import curate_for_scouting
+            from fap.ui.components.viz_workspace import render_visualization_workspace
+
+            def _save(png, title, viz_id, mid=mt.id, memid=pick):
+                svc.add_chart(shell.user, t.id, png, "image/png", title=title,
+                              match_id=mid, member_id=memid, kind="chart")
+
+            render_visualization_workspace(
+                shell, frame=frame, player_name=(member.player_name if member else "player"),
+                key=f"teamviz_{mt.id}_{pick}",
+                on_assign=(_save if self._can_edit else None), curate=curate_for_scouting)
+        # this player's saved charts for THIS match (their portfolio grows across matches)
+        saved = svc.list_media(t.id, match_id=mt.id, member_id=pick, kind="chart")
+        if saved:
+            st.markdown(f"**{opts[pick]} — saved charts for this match ({len(saved)}):**")
+            for md in saved:
+                b = svc.media_bytes(md)
+                pc = st.columns([6, 1], vertical_alignment="center")
+                if b:
+                    pc[0].image(b, caption=md.title or "chart", width=260)
+                else:
+                    pc[0].caption(md.title or "chart")
+                if self._can_edit and pc[1].button("Delete", key=f"mp_del_{md.id}",
+                                                    use_container_width=True):
+                    svc.delete_media(shell.user, md.id)
+                    st.rerun()
 
     def _existing_players(self, shell, exclude) -> list[dict]:
         """Players already registered elsewhere (scouting + first-team), for the roster picker.
