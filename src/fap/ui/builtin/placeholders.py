@@ -40,8 +40,7 @@ class _Placeholder(Page):
 # (and shadows) the real page during plugin discovery.
 
 
-@page_registry.register
-class TeamsPage(_Placeholder):
-    info = PluginInfo(id="teams", name="Teams", category="page")
-    section = "Squad"; icon = "teams"; order = 20
-    _blurb = "Team-level aggregates and comparisons."
+# NOTE: the Teams page is no longer a placeholder - the real implementation lives
+# in fap.ui.builtin.teams (Teams T1), registered under id="teams". The placeholder
+# was removed so it no longer collides with (and shadows) the real page during
+# plugin discovery.

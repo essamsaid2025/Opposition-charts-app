@@ -63,9 +63,11 @@ def test_delete_team_cascades_members(tmp_path):
     assert svc.list_members(t.id) == []                    # members removed with the team
 
 
-def test_teams_page_is_registered():
+def test_teams_page_is_the_real_page_not_the_placeholder():
     from fap.ui.page import load_builtin_pages, page_registry
     load_builtin_pages()
     assert "teams" in page_registry
     page = page_registry.create("teams")
     assert page.info.name == "Teams" and page.section == "Squad"
+    # the REAL page lives in fap.ui.builtin.teams (not the removed placeholder)
+    assert type(page).__module__ == "fap.ui.builtin.teams"

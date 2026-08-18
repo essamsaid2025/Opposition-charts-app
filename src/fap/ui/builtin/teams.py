@@ -16,12 +16,13 @@ from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.scouting import identity as _ident
 from fap.theme import components as C
-from fap.ui.page import Page
+from fap.ui.page import Page, page_registry
 
 _KINDS = {"club": "Club / First Team", "academy": "Academy"}
 _SEL = "_teams_selected"
 
 
+@page_registry.register
 class TeamsPage(Page):
     info = PluginInfo(id="teams", name="Teams", category="page")
     section = "Squad"
