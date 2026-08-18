@@ -20,6 +20,7 @@ from fap.ui.page import Page, page_registry
 
 _KINDS = {"club": "Club / First Team", "academy": "Academy"}
 _SEL = "_teams_selected"
+_MEMBER = "_teams_member"          # a roster player opened for analysis/portfolio
 
 
 @page_registry.register
@@ -104,6 +105,14 @@ class TeamsPage(Page):
     # ---------------------------------------------------------------- detail
     def _team_detail(self, shell, svc, team_id) -> None:
         t = svc.get_team(team_id)
+        # a roster player opened -> their own Analysis + Portfolio page (same viz system as scouting)
+        sel_member = st.session_state.get(_MEMBER)
+        if sel_member:
+            member = next((m for m in svc.list_members(team_id) if m.id == sel_member), None)
+            if member is not None:
+                self._player_detail(shell, svc, t, member)
+                return
+            st.session_state.pop(_MEMBER, None)
         if st.button("← All teams", key="tm_back"):
             st.session_state.pop(_SEL, None); st.rerun()
 
@@ -413,17 +422,85 @@ class TeamsPage(Page):
         if not members:
             C.render_empty_state("Empty roster", "Add players above.", icon_name="players")
             return
-        st.caption(f"{len(members)} player(s)")
+        st.caption(f"{len(members)} player(s) — open a player for charts, analysis & portfolio")
         for m in members:
-            cols = st.columns([5, 1], vertical_alignment="center")
+            cols = st.columns([5, 1, 1], vertical_alignment="center")
+            n_charts = len(svc.player_portfolio(t.id, m.id))
             bits = " · ".join(x for x in (m.operational_id, m.role,
-                                          (f"#{m.shirt_number}" if m.shirt_number else "")) if x)
+                                          (f"#{m.shirt_number}" if m.shirt_number else ""),
+                                          (f"{n_charts} chart(s)" if n_charts else "")) if x)
             cols[0].markdown(f"**{_html.escape(m.player_name or m.operational_id)}**"
                              + (f" &nbsp; <span style='color:var(--fap-text-muted)'>{_html.escape(bits)}"
                                 f"</span>" if bits else ""), unsafe_allow_html=True)
-            if self._can_edit and cols[1].button("Remove", key=f"tm_mrm_{m.id}",
+            if cols[1].button("Open", key=f"tm_mopen_{m.id}", use_container_width=True):
+                st.session_state[_MEMBER] = m.id
+                st.rerun()
+            if self._can_edit and cols[2].button("Remove", key=f"tm_mrm_{m.id}",
                                                   use_container_width=True):
                 svc.remove_member(shell.user, m.id); st.rerun()
+
+    # ---------------------------------------------------------------- player page (T6)
+    def _player_detail(self, shell, svc, t, member) -> None:
+        """A roster player's own page — the SAME visualization system as scouting, plus a
+        portfolio of every chart saved for them across the team's matches."""
+        if st.button("← Back to team", key=f"pd_back_{member.id}"):
+            st.session_state.pop(_MEMBER, None); st.rerun()
+        subtitle = " · ".join(x for x in (member.operational_id, member.role,
+                                          (f"#{member.shirt_number}" if member.shirt_number else "")) if x)
+        C.render_section_title(member.player_name or member.operational_id or "Player",
+                               eyebrow=f"{t.name} · roster", subtitle=subtitle or t.name,
+                               icon_name="players")
+        tabs = st.tabs(["Analysis", "Portfolio"])
+        with tabs[0]:
+            matches = [mt for mt in svc.list_matches(t.id) if mt.dataset_id]
+            if not matches:
+                C.render_alert("No matches with linked data yet. In the Matches tab, add a match and "
+                               "link its event dataset — then generate this player's charts here.", "info")
+            else:
+                labels = {mt.id: (f"vs {mt.opponent}" + (f" · {mt.match_date}" if mt.match_date else ""))
+                          for mt in matches}
+                mid = st.selectbox("Match", list(labels), format_func=lambda i: labels[i],
+                                   key=f"pd_m_{member.id}")
+                mt = next((x for x in matches if x.id == mid), None)
+                frame = svc.match_player_frame(mid, member.player_name)
+                try:
+                    if shell.wm is not None and mt is not None:
+                        shell.wm.set_active_dataset(shell.user, mt.dataset_id)   # viz query context
+                except Exception:
+                    pass
+                if frame is None:
+                    C.render_alert(f"No events for {member.player_name or 'this player'} in that "
+                                   "match's data (the name may differ in the dataset).", "info")
+                else:
+                    from fap.scouting.catalog import curate_for_scouting
+                    from fap.ui.components.viz_workspace import render_visualization_workspace
+
+                    def _save(png, title, viz_id, mid=mid, memid=member.id):
+                        svc.add_chart(shell.user, t.id, png, "image/png", title=title,
+                                      match_id=mid, member_id=memid, kind="chart")
+
+                    render_visualization_workspace(
+                        shell, frame=frame, player_name=(member.player_name or "player"),
+                        key=f"pdviz_{member.id}_{mid}",
+                        on_assign=(_save if self._can_edit else None), curate=curate_for_scouting)
+        with tabs[1]:
+            port = svc.player_portfolio(t.id, member.id)
+            if not port:
+                st.caption("No saved charts yet. Generate charts in the Analysis tab and click "
+                           "Assign/Save to add them here.")
+            else:
+                st.caption(f"{len(port)} saved chart(s) across all matches")
+                pcols = st.columns(3)
+                for i, md in enumerate(port):
+                    b = svc.media_bytes(md)
+                    with pcols[i % 3]:
+                        if b:
+                            st.image(b, caption=md.title or "chart", use_container_width=True)
+                        else:
+                            st.caption(md.title or "chart")
+                        if self._can_edit and st.button("Delete", key=f"pd_del_{md.id}",
+                                                         use_container_width=True):
+                            svc.delete_media(shell.user, md.id); st.rerun()
 
     def _info(self, shell, svc, t) -> None:
         if not self._can_edit:
