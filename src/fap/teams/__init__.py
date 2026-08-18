@@ -6,7 +6,7 @@ later phases. It reuses the shared infrastructure (the relational engine, ImageS
 crest, the operational-id scheme) rather than duplicating any of it. Persisted in its own tables
 (migration 14), so a team's data is stored permanently, independent of the active dataset.
 """
-from fap.teams.models import Team, TeamMember
+from fap.teams.models import Team, TeamMatch, TeamMedia, TeamMember
 from fap.teams.service import TeamService
 
-__all__ = ["Team", "TeamMember", "TeamService"]
+__all__ = ["Team", "TeamMatch", "TeamMedia", "TeamMember", "TeamService"]

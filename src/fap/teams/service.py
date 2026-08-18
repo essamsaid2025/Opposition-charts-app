@@ -7,19 +7,33 @@ import uuid
 from typing import Any
 
 from fap.db.engine import Database
-from fap.teams.models import Team, TeamMember
+from fap.teams.models import Team, TeamMatch, TeamMedia, TeamMember, VENUES
 from fap.teams.repository import TeamRepository
 
 
 class TeamService:
-    def __init__(self, db: Database, *, images: Any = None, audit: Any = None) -> None:
+    def __init__(self, db: Database, *, images: Any = None, files: Any = None, audit: Any = None,
+                 workspaces: Any = None) -> None:
         self.repo = TeamRepository(db)
         self._images = images
+        self._files = files            # FileStorage for uploaded videos/documents (T4)
         self._audit = audit
+        self._wm = workspaces          # for the shared operational-id counter (never-reused ids)
 
     @staticmethod
     def _uid() -> str:
         return uuid.uuid4().hex
+
+    def _assign_operational_id(self, team_kind: str) -> str:
+        """A unique, human-readable operational id for a roster player, by squad: academy team ->
+        ACD, club team -> CLB. Draws from the SAME never-reused per-prefix counter the scouting
+        registry uses, so ids are globally unique across scouting/first-team/teams. (An SCT- id
+        only appears when an existing scouting player is linked with their id supplied.)"""
+        from fap.scouting import identity
+        pt = "academy" if team_kind == "academy" else "first_team"
+        prefix = identity.TYPE_PREFIX.get(pt, "CLB")
+        seq = self._wm.next_counter(f"scouting_op_{prefix}") if self._wm is not None else 0
+        return identity.format_operational_id(pt, seq)
 
     def _record(self, user: Any, action: str, **detail: Any) -> None:
         if self._audit is not None:
@@ -95,11 +109,15 @@ class TeamService:
                    player_id: str = "", source: str = "scouting", shirt_number: str = "",
                    role: str = "") -> TeamMember:
         name = str(player_name or "").strip()
-        if not name and not operational_id:
-            raise ValueError("A player name or operational id is required.")
+        oid = str(operational_id or "").strip()
+        if not name and not oid:
+            raise ValueError("A player name is required.")
+        src = source if source in ("scouting", "first_team") else "scouting"
+        if not oid:                    # no id supplied -> auto-assign a unique one for this squad
+            t = self.repo.get(team_id)
+            oid = self._assign_operational_id(t.kind if t else "club")
         m = TeamMember(id=self._uid(), team_id=team_id, player_id=str(player_id or ""),
-                       operational_id=str(operational_id or "").strip(), player_name=name,
-                       source=(source if source in ("scouting", "first_team") else "scouting"),
+                       operational_id=oid, player_name=name, source=src,
                        shirt_number=str(shirt_number or "").strip(), role=str(role or "").strip())
         self.repo.add_member(m)
         self._record(user, "teams.member.add", team_id=team_id, name=name)
@@ -112,6 +130,153 @@ class TeamService:
         self.repo.remove_member(member_id)
         self._record(user, "teams.member.remove", member_id=member_id)
 
+    # ---- matches (T3) ----
+    @staticmethod
+    def _int_or_none(v: Any):
+        try:
+            return None if v is None or str(v).strip() == "" else int(v)
+        except (TypeError, ValueError):
+            return None
+
+    def create_match(self, user: Any, team_id: str, *, opponent: str, match_date: str = "",
+                     competition: str = "", venue: str = "home", our_score: Any = None,
+                     opp_score: Any = None, formation: str = "", notes: str = "",
+                     dataset_id: str = "", match_id: str = "") -> TeamMatch:
+        opp = str(opponent or "").strip()
+        if not opp:
+            raise ValueError("An opponent is required.")
+        m = TeamMatch(id=self._uid(), team_id=team_id, opponent=opp,
+                      match_date=str(match_date or "").strip(),
+                      competition=str(competition or "").strip(),
+                      venue=(venue if venue in VENUES else "home"),
+                      our_score=self._int_or_none(our_score), opp_score=self._int_or_none(opp_score),
+                      formation=str(formation or "").strip(), notes=str(notes or "").strip(),
+                      dataset_id=str(dataset_id or ""), match_id=str(match_id or "").strip(),
+                      created_by=getattr(user, "email", "") or "")
+        self.repo.add_match(m)
+        self._record(user, "teams.match.create", team_id=team_id, opponent=opp)
+        return m
+
+    def list_matches(self, team_id: str) -> list[TeamMatch]:
+        return self.repo.list_matches(team_id)
+
+    def get_match(self, match_row_id: str) -> TeamMatch | None:
+        return self.repo.get_match(match_row_id)
+
+    def update_match(self, user: Any, match_row_id: str, **fields: Any) -> TeamMatch | None:
+        for k in ("our_score", "opp_score"):
+            if k in fields:
+                fields[k] = self._int_or_none(fields[k])
+        self.repo.update_match(match_row_id, **fields)
+        self._record(user, "teams.match.update", match_id=match_row_id)
+        return self.repo.get_match(match_row_id)
+
+    def delete_match(self, user: Any, match_row_id: str) -> None:
+        self.repo.delete_match(match_row_id)
+        self._record(user, "teams.match.delete", match_id=match_row_id)
+
+    # ---- media: notes / videos / clips / charts (T4) ----
+    def add_note(self, user: Any, team_id: str, *, title: str = "", body: str = "",
+                 match_id: str = "") -> TeamMedia:
+        title, body = str(title or "").strip(), str(body or "").strip()
+        if not title and not body:
+            raise ValueError("A note title or body is required.")
+        m = TeamMedia(id=self._uid(), team_id=team_id, match_id=str(match_id or ""), kind="note",
+                      title=title, body=body, created_by=getattr(user, "email", "") or "")
+        self.repo.add_media(m)
+        self._record(user, "teams.media.note", team_id=team_id)
+        return m
+
+    def add_video(self, user: Any, team_id: str, *, url: str = "", data: bytes | None = None,
+                  filename: str = "", mime: str = "", title: str = "", match_id: str = "",
+                  kind: str = "video") -> TeamMedia:
+        u, file_id = str(url or "").strip(), ""
+        if data is not None:
+            if self._files is None:
+                raise ValueError("File storage is not configured.")
+            file_id = self._uid()
+            self._files.save(file_id, data, filename=filename, mime=mime)
+        elif not u:
+            raise ValueError("A video url or an uploaded file is required.")
+        m = TeamMedia(id=self._uid(), team_id=team_id, match_id=str(match_id or ""), kind=kind,
+                      title=str(title or "").strip(), url=u, file_id=file_id,
+                      created_by=getattr(user, "email", "") or "")
+        self.repo.add_media(m)
+        self._record(user, "teams.media.video", team_id=team_id)
+        return m
+
+    def add_chart(self, user: Any, team_id: str, data: bytes, mime: str, *, title: str = "",
+                  match_id: str = "", kind: str = "chart") -> TeamMedia:
+        if self._images is None:
+            raise ValueError("Image storage is not configured.")
+        image_id = self._uid()
+        self._images.save(image_id, data, mime=mime)
+        m = TeamMedia(id=self._uid(), team_id=team_id, match_id=str(match_id or ""), kind=kind,
+                      title=str(title or "").strip(), image_id=image_id,
+                      created_by=getattr(user, "email", "") or "")
+        self.repo.add_media(m)
+        self._record(user, "teams.media.chart", team_id=team_id)
+        return m
+
+    def list_media(self, team_id: str, *, match_id: str | None = None,
+                   kind: str | None = None) -> list[TeamMedia]:
+        return self.repo.list_media(team_id, match_id=match_id, kind=kind)
+
+    def media_bytes(self, media: TeamMedia) -> bytes | None:
+        try:
+            if media.image_id and self._images is not None:
+                return self._images.load(media.image_id)
+            if media.file_id and self._files is not None:
+                return self._files.load(media.file_id)
+        except Exception:
+            return None
+        return None
+
+    def delete_media(self, user: Any, media_id: str) -> None:
+        m = self.repo.get_media(media_id)
+        if m is not None:
+            if m.image_id and self._images is not None:
+                try:
+                    self._images.delete(m.image_id)
+                except Exception:
+                    pass
+            if m.file_id and self._files is not None:
+                try:
+                    self._files.delete(m.file_id)
+                except Exception:
+                    pass
+        self.repo.delete_media(media_id)
+        self._record(user, "teams.media.delete", media_id=media_id)
+
+    # ---- team-level aggregates & comparison (T5) ----
+    def team_record(self, team_id: str) -> dict[str, Any]:
+        """W/D/L record + goals from this team's SCORED matches. Pure aggregation — matches with
+        no score recorded are simply not counted (nothing fabricated)."""
+        p = w = d = l = gf = ga = 0
+        for mt in self.repo.list_matches(team_id):
+            if mt.our_score is None or mt.opp_score is None:
+                continue
+            p += 1
+            gf += int(mt.our_score)
+            ga += int(mt.opp_score)
+            if mt.our_score > mt.opp_score:
+                w += 1
+            elif mt.our_score < mt.opp_score:
+                l += 1
+            else:
+                d += 1
+        return {"played": p, "wins": w, "draws": d, "losses": l, "gf": gf, "ga": ga,
+                "gd": gf - ga, "points": w * 3 + d,
+                "win_pct": round(100.0 * w / p, 1) if p else 0.0}
+
+    def teams_comparison(self) -> list[dict[str, Any]]:
+        """Every team with roster/match counts + record — the T5 team-level comparison."""
+        out: list[dict[str, Any]] = []
+        for t in self.repo.list():
+            out.append({"id": t.id, "name": t.name, "kind": t.kind, "age_group": t.age_group,
+                        "players": self.repo.member_count(t.id), **self.team_record(t.id)})
+        return out
+
     def team_summaries(self) -> list[dict[str, Any]]:
         """Teams with roster counts — the T1 aggregate the Teams page lists (team-level
         aggregates/comparisons across rosters build on this in later phases)."""
@@ -119,5 +284,6 @@ class TeamService:
         for t in self.repo.list():
             out.append({"id": t.id, "name": t.name, "kind": t.kind, "age_group": t.age_group,
                         "competition": t.competition, "season": t.season,
-                        "members": self.repo.member_count(t.id), "crest": bool(t.crest_image_id)})
+                        "members": self.repo.member_count(t.id),
+                        "matches": self.repo.match_count(t.id), "crest": bool(t.crest_image_id)})
         return out

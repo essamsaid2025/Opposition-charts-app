@@ -81,13 +81,25 @@ class TeamsPage(Page):
             cols = st.columns([5, 1], vertical_alignment="center")
             tag = _KINDS.get(s["kind"], s["kind"]) + (f" · {s['age_group']}" if s["age_group"] else "")
             meta = " · ".join(x for x in (tag, s["competition"], s["season"],
-                                          f"{s['members']} player(s)") if x)
+                                          f"{s['members']} player(s)",
+                                          f"{s.get('matches', 0)} match(es)") if x)
             cols[0].markdown(f"**{_html.escape(s['name'])}**<br>"
                              f"<span style='color:var(--fap-text-muted)'>{_html.escape(meta)}</span>",
                              unsafe_allow_html=True)
             if cols[1].button("Open", key=f"tm_open_{s['id']}", use_container_width=True):
                 st.session_state[_SEL] = s["id"]
                 st.rerun()
+
+        # T5: team-level comparison table (records across all teams)
+        comp = [c for c in svc.teams_comparison() if c["played"] > 0]
+        if len(comp) >= 2:
+            st.markdown("#### Compare teams")
+            import pandas as pd
+            df = pd.DataFrame([{"Team": c["name"], "Players": c["players"], "P": c["played"],
+                                "W": c["wins"], "D": c["draws"], "L": c["losses"], "GF": c["gf"],
+                                "GA": c["ga"], "GD": c["gd"], "Pts": c["points"],
+                                "Win%": c["win_pct"]} for c in comp])
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
     # ---------------------------------------------------------------- detail
     def _team_detail(self, shell, svc, team_id) -> None:
@@ -105,31 +117,244 @@ class TeamsPage(Page):
                          f"{_html.escape(' · '.join(x for x in (tag, t.competition, t.season) if x))}"
                          f"</span>", unsafe_allow_html=True)
 
-        tabs = st.tabs(["Roster", "Info & crest"])
+        tabs = st.tabs(["Overview", "Roster", "Matches", "Media", "Info & crest"])
         with tabs[0]:
-            self._roster(shell, svc, t)
+            self._overview_tab(shell, svc, t)
         with tabs[1]:
+            self._roster(shell, svc, t)
+        with tabs[2]:
+            self._matches(shell, svc, t)
+        with tabs[3]:
+            self._media_section(shell, svc, t, match_id="")
+        with tabs[4]:
             self._info(shell, svc, t)
+
+    # ---------------------------------------------------------------- overview (T5)
+    def _overview_tab(self, shell, svc, t) -> None:
+        rec = svc.team_record(t.id)
+        n_players = len(svc.list_members(t.id))
+        c = st.columns(4)
+        c[0].metric("Players", n_players)
+        c[1].metric("Matches", rec["played"])
+        c[2].metric("W-D-L", f"{rec['wins']}-{rec['draws']}-{rec['losses']}")
+        c[3].metric("Points", rec["points"])
+        c2 = st.columns(4)
+        c2[0].metric("Goals for", rec["gf"])
+        c2[1].metric("Goals against", rec["ga"])
+        c2[2].metric("Goal diff", rec["gd"])
+        c2[3].metric("Win rate", f"{rec['win_pct']}%")
+        st.caption("Record is computed from matches that have a score recorded (nothing assumed).")
+
+    # ---------------------------------------------------------------- media (T4)
+    def _media_section(self, shell, svc, t, match_id: str = "") -> None:
+        if self._can_edit:
+            add = st.radio("Add", ["Note", "Video link", "Chart / image"], horizontal=True,
+                           key=f"tmm_type_{t.id}_{match_id}")
+            if add == "Note":
+                ti = st.text_input("Title", key=f"tmm_nt_{t.id}_{match_id}")
+                bo = st.text_area("Note", key=f"tmm_nb_{t.id}_{match_id}", height=80)
+                if st.button("Add note", key=f"tmm_nadd_{t.id}_{match_id}"):
+                    try:
+                        svc.add_note(shell.user, t.id, title=ti, body=bo, match_id=match_id)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.warning(str(exc))
+            elif add == "Video link":
+                vt = st.text_input("Title", key=f"tmm_vt_{t.id}_{match_id}")
+                vu = st.text_input("Video URL (YouTube / Vimeo / Hudl / …)",
+                                   key=f"tmm_vu_{t.id}_{match_id}")
+                if st.button("Add video", key=f"tmm_vadd_{t.id}_{match_id}"):
+                    try:
+                        svc.add_video(shell.user, t.id, url=vu, title=vt, match_id=match_id)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.warning(str(exc))
+            else:
+                ct = st.text_input("Title", key=f"tmm_ct_{t.id}_{match_id}")
+                up = st.file_uploader("Chart / image", type=["png", "jpg", "jpeg", "webp"],
+                                      key=f"tmm_cu_{t.id}_{match_id}")
+                if up is not None and st.button("Add chart / image", key=f"tmm_cadd_{t.id}_{match_id}"):
+                    svc.add_chart(shell.user, t.id, up.getvalue(), up.type or "image/png",
+                                  title=ct, match_id=match_id)
+                    st.rerun()
+        media = svc.list_media(t.id, match_id=match_id)
+        if not media:
+            st.caption("No notes, videos or charts yet.")
+            return
+        for md in media:
+            cols = st.columns([6, 1], vertical_alignment="center")
+            if md.kind == "note":
+                cols[0].markdown(f"**{_html.escape(md.title or 'Note')}**  \n"
+                                 f"{_html.escape(md.body)}")
+            elif md.kind in ("chart", "image"):
+                data = svc.media_bytes(md)
+                if data:
+                    cols[0].image(data, caption=md.title or md.kind, width=300)
+                else:
+                    cols[0].caption(md.title or md.kind)
+            else:  # video / clip
+                if md.url:
+                    cols[0].markdown(f"[{_html.escape(md.title or 'Video')}]({md.url})")
+                else:
+                    cols[0].caption(md.title or "Uploaded video")
+            if self._can_edit and cols[1].button("Delete", key=f"tmm_del_{md.id}",
+                                                  use_container_width=True):
+                svc.delete_media(shell.user, md.id)
+                st.rerun()
+
+    # ---------------------------------------------------------------- matches (T3)
+    def _matches(self, shell, svc, t) -> None:
+        matches = svc.list_matches(t.id)
+        if self._can_edit:
+            with st.expander("Add a match", expanded=not matches):
+                c = st.columns([3, 2, 2])
+                opp = c[0].text_input("Opponent", key=f"tmch_opp_{t.id}", placeholder="e.g. Barcelona")
+                date = c[1].text_input("Date", key=f"tmch_date_{t.id}", placeholder="2025-09-14")
+                venue = c[2].selectbox("Venue", ["home", "away", "neutral"], key=f"tmch_venue_{t.id}")
+                c2 = st.columns([2, 1, 1, 2])
+                comp = c2[0].text_input("Competition", key=f"tmch_comp_{t.id}")
+                us = c2[1].number_input("Us", min_value=0, max_value=99, step=1, value=0,
+                                        key=f"tmch_us_{t.id}")
+                them = c2[2].number_input("Them", min_value=0, max_value=99, step=1, value=0,
+                                          key=f"tmch_them_{t.id}")
+                form = c2[3].text_input("Formation", key=f"tmch_form_{t.id}", placeholder="4-3-3")
+                notes = st.text_area("Match notes", key=f"tmch_notes_{t.id}", height=80)
+                score_set = st.checkbox("Record the score", key=f"tmch_hasscore_{t.id}", value=False)
+                if st.button("Add match", type="primary", key=f"tmch_add_{t.id}"):
+                    try:
+                        svc.create_match(shell.user, t.id, opponent=opp, match_date=date,
+                                         competition=comp, venue=venue, formation=form, notes=notes,
+                                         our_score=(us if score_set else None),
+                                         opp_score=(them if score_set else None))
+                        st.rerun()
+                    except ValueError as exc:
+                        st.warning(str(exc))
+        if not matches:
+            C.render_empty_state("No matches yet", "Add a match above (e.g. vs Barcelona).",
+                                 icon_name="flag")
+            return
+        st.caption(f"{len(matches)} match(es)")
+        for mt in matches:
+            head = " · ".join(x for x in (mt.match_date, mt.competition,
+                                          {"home": "Home", "away": "Away", "neutral": "Neutral"}.get(mt.venue, "")) if x)
+            score = f"  {mt.scoreline} ({mt.result})" if mt.scoreline else ""
+            with st.expander(f"vs {mt.opponent}{score}  —  {head}".strip(" -")):
+                self._match_detail(shell, svc, t, mt)
+
+    def _match_detail(self, shell, svc, t, mt) -> None:
+        if not self._can_edit:
+            st.write(mt.notes or "_No notes._")
+            if mt.formation:
+                st.caption(f"Formation: {mt.formation}")
+            return
+        c = st.columns([2, 2, 2])
+        opp = c[0].text_input("Opponent", value=mt.opponent, key=f"md_opp_{mt.id}")
+        date = c[1].text_input("Date", value=mt.match_date, key=f"md_date_{mt.id}")
+        venue = c[2].selectbox("Venue", ["home", "away", "neutral"],
+                               index=["home", "away", "neutral"].index(mt.venue)
+                               if mt.venue in ("home", "away", "neutral") else 0, key=f"md_venue_{mt.id}")
+        c2 = st.columns([2, 1, 1, 2])
+        comp = c2[0].text_input("Competition", value=mt.competition, key=f"md_comp_{mt.id}")
+        us = c2[1].number_input("Us", 0, 99, int(mt.our_score) if mt.our_score is not None else 0,
+                                key=f"md_us_{mt.id}")
+        them = c2[2].number_input("Them", 0, 99, int(mt.opp_score) if mt.opp_score is not None else 0,
+                                  key=f"md_them_{mt.id}")
+        form = c2[3].text_input("Formation", value=mt.formation, key=f"md_form_{mt.id}")
+        notes = st.text_area("Match notes", value=mt.notes, key=f"md_notes_{mt.id}", height=100)
+        has_score = st.checkbox("Score recorded", value=(mt.our_score is not None),
+                                key=f"md_hasscore_{mt.id}")
+        # link the match data (an event dataset) — stored permanently, active-independent
+        mid = st.text_input("Match id in the dataset (optional)", value=mt.match_id, key=f"md_mid_{mt.id}")
+        linked = mt.dataset_id
+        try:
+            active = shell.wm.active_dataset(shell.user) if shell.wm else None
+        except Exception:
+            active = None
+        b = st.columns([1, 1, 2, 1])
+        if b[0].button("Save", type="primary", key=f"md_save_{mt.id}"):
+            svc.update_match(shell.user, mt.id, opponent=opp, match_date=date, competition=comp,
+                             venue=venue, formation=form, notes=notes, match_id=mid,
+                             our_score=(us if has_score else None),
+                             opp_score=(them if has_score else None))
+            st.rerun()
+        if active is not None and b[1].button("Link active dataset", key=f"md_link_{mt.id}"):
+            svc.update_match(shell.user, mt.id, dataset_id=active.id)
+            st.rerun()
+        if linked and b[2].button("Unlink data", key=f"md_unlink_{mt.id}"):
+            svc.update_match(shell.user, mt.id, dataset_id="")
+            st.rerun()
+        if b[3].button("Delete", key=f"md_del_{mt.id}"):
+            svc.delete_match(shell.user, mt.id); st.rerun()
+        if linked:
+            st.caption(f"Data linked (dataset id {linked[:8]}) — stays linked regardless of the "
+                       "active dataset.")
+        st.divider()
+        st.markdown("**Match media** — notes, clips, videos and charts for this match")
+        self._media_section(shell, svc, t, match_id=mt.id)
+
+    def _existing_players(self, shell, exclude) -> list[dict]:
+        """Players already registered elsewhere (scouting + first-team), for the roster picker.
+        UI-only reuse of the other platform services — the Teams service stays decoupled."""
+        out: list[dict] = []
+        plat = getattr(shell, "platform", None)
+        for svc_name, source, label in (("scouting", "scouting", "Scouting"),
+                                        ("players", "first_team", "First Team")):
+            svc2 = getattr(plat, svc_name, None) if plat else None
+            if svc2 is None or not hasattr(svc2, "search"):
+                continue
+            try:
+                for p in (svc2.search(shell.user) or []):
+                    if p.id in exclude:
+                        continue
+                    out.append({"key": f"{source}:{p.id}", "name": p.name, "player_id": p.id,
+                                "operational_id": _ident.operational_id_of(p),
+                                "source": source, "label": label})
+            except Exception:
+                continue
+        return out
 
     def _roster(self, shell, svc, t) -> None:
         members = svc.list_members(t.id)
+        exclude = {m.player_id for m in members if m.player_id}
         if self._can_edit:
-            with st.expander("Add player to roster", expanded=not members):
+            # T2: pick from players already in your scouting / first-team database (reuse id + name)
+            pool = self._existing_players(shell, exclude)
+            with st.expander("Add players from your database", expanded=bool(pool) and not members):
+                if pool:
+                    labels = {p["key"]: f"{p['name']} · {p['operational_id'] or 'no id'} · {p['label']}"
+                              for p in pool}
+                    picks = st.multiselect("Pick existing players", [p["key"] for p in pool],
+                                           format_func=lambda k: labels[k], key=f"tm_pick_{t.id}")
+                    if picks and st.button("Add selected to roster", key=f"tm_pickadd_{t.id}"):
+                        by_key = {p["key"]: p for p in pool}
+                        for k in picks:
+                            pk = by_key[k]
+                            svc.add_member(shell.user, t.id, player_name=pk["name"],
+                                           operational_id=pk["operational_id"],
+                                           player_id=pk["player_id"], source=pk["source"])
+                        st.rerun()
+                else:
+                    st.caption("No players found in your scouting / first-team database yet "
+                               "(or all of them are already in this roster).")
+            with st.expander("Add a new player manually", expanded=not members and not pool):
                 c = st.columns([3, 2, 1, 2])
                 nm = c[0].text_input("Player name", key=f"tm_mn_{t.id}")
-                oid = c[1].text_input("Operational id", key=f"tm_moid_{t.id}",
-                                      placeholder="ACD-… / CLB-… / SCT-…")
+                oid = c[1].text_input("Operational id (optional)", key=f"tm_moid_{t.id}",
+                                      placeholder="leave blank to auto-generate")
                 sh = c[2].text_input("No.", key=f"tm_msh_{t.id}")
                 role = c[3].text_input("Role/position", key=f"tm_mrole_{t.id}")
                 if st.button("Add to roster", key=f"tm_madd_{t.id}"):
                     try:
-                        svc.add_member(shell.user, t.id, player_name=nm, operational_id=oid,
-                                       shirt_number=sh, role=role)
+                        m = svc.add_member(shell.user, t.id, player_name=nm, operational_id=oid,
+                                           shirt_number=sh, role=role)
+                        st.toast(f"Added {m.player_name or 'player'} · {m.operational_id}")
                         st.rerun()
                     except ValueError as exc:
                         st.warning(str(exc))
-                st.caption("Later phases add a picker over existing scouting / first-team players; "
-                           "for now enter the player and their unique operational id.")
+                pfx = "ACD" if t.kind == "academy" else "CLB"
+                st.caption(f"Leave the id blank and each new player gets a unique **{pfx}-** id "
+                           "automatically. (Later phases: pick from your existing scouting / "
+                           "first-team players.)")
         if not members:
             C.render_empty_state("Empty roster", "Add players above.", icon_name="players")
             return

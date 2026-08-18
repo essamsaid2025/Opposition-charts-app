@@ -325,8 +325,9 @@ def _teams(reg: "ServiceRegistry"):
     from fap.workspaces.audit import AuditService
     from fap.workspaces.repositories import AuditRepository
     db = reg.get("db")
-    return TeamService(db, images=reg.get("image_storage"),
-                       audit=AuditService(AuditRepository(db)))
+    return TeamService(db, images=reg.get("image_storage"), files=reg.get("video_storage"),
+                       audit=AuditService(AuditRepository(db)),
+                       workspaces=reg.get("workspace_manager"))
 
 
 def _players(reg: "ServiceRegistry"):

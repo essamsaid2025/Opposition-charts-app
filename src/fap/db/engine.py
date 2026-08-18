@@ -811,7 +811,51 @@ MIGRATIONS: list[tuple[int, str]] = [
         );
         CREATE INDEX IF NOT EXISTS idx_team_members ON team_members(team_id);
     """),
-    # (15, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Team matches (T3): a match belongs to a team ("vs Barca") and records everything about it —
+    # opponent, date, competition, venue, score, formation, notes — plus an optional link to the
+    # event dataset holding its data (dataset_id + match_id), stored so it survives active-dataset
+    # changes (same active-independent pattern as scouting evidence). Media/charts land in T4.
+    (15, """
+        CREATE TABLE IF NOT EXISTS team_matches (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL,
+            opponent TEXT NOT NULL DEFAULT '',
+            match_date TEXT NOT NULL DEFAULT '',
+            competition TEXT NOT NULL DEFAULT '',
+            venue TEXT NOT NULL DEFAULT 'home',           -- home|away|neutral
+            our_score INTEGER,
+            opp_score INTEGER,
+            formation TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            dataset_id TEXT NOT NULL DEFAULT '',           -- linked event dataset (active-independent)
+            match_id TEXT NOT NULL DEFAULT '',             -- match id within that dataset
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_matches ON team_matches(team_id);
+    """),
+    # Team media (T4): notes / videos / clips / charts / images attached to a TEAM or one of its
+    # MATCHES (match_id='' = team-level). Reuses FileStorage (uploaded video/doc via file_id) and
+    # ImageStorage (charts/images via image_id); external videos keep only a url. One flexible table.
+    (16, """
+        CREATE TABLE IF NOT EXISTS team_media (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL,
+            match_id TEXT NOT NULL DEFAULT '',            -- '' = team-level, else team_matches.id
+            kind TEXT NOT NULL DEFAULT 'note',            -- note|video|clip|chart|image|document
+            title TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL DEFAULT '',                 -- note text
+            url TEXT NOT NULL DEFAULT '',                  -- external video/link
+            file_id TEXT NOT NULL DEFAULT '',              -- FileStorage id (uploads)
+            image_id TEXT NOT NULL DEFAULT '',             -- ImageStorage id (charts/images)
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_media ON team_media(team_id);
+    """),
+    # (17, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 
