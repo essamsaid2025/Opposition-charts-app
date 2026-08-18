@@ -184,6 +184,13 @@ class PlatformContext:
         return self.services.get("players")
 
     @property
+    def teams(self):
+        """Teams platform: club/academy squads (U19/U17…) grouping players, owning team
+        info/crest and (later phases) matches, media, charts and notes. Reuses the shared
+        engine, ImageStorage and the operational-id scheme; stores data persistently."""
+        return self.services.get("teams")
+
+    @property
     def datahub(self):
         """Universal Data Hub (Phase 12): the central import + dataset library.
         Reuses the ImportService engine and the WorkspaceManager dataset store;
@@ -264,6 +271,7 @@ def init_platform(root: Path | None = None, *,
     services.register("scouting", _scouting)
     services.register("setpieces", _setpieces)
     services.register("players", _players)
+    services.register("teams", _teams)
     services.register("datahub", _datahub)
 
     return PlatformContext(settings=settings, services=services,
@@ -308,6 +316,17 @@ def _scouting(reg: "ServiceRegistry"):
         images=reg.get("image_storage"), videos=reg.get("video_storage"),
         attachments=reg.get("attachment_storage"), workspaces=reg.get("workspace_manager"),
         themes=reg.get("themes"))
+
+
+def _teams(reg: "ServiceRegistry"):
+    """The Teams platform (club/academy squads). Reuses the shared relational engine,
+    ImageStorage (crest) and audit — no duplicate persistence or media store."""
+    from fap.teams.service import TeamService
+    from fap.workspaces.audit import AuditService
+    from fap.workspaces.repositories import AuditRepository
+    db = reg.get("db")
+    return TeamService(db, images=reg.get("image_storage"),
+                       audit=AuditService(AuditRepository(db)))
 
 
 def _players(reg: "ServiceRegistry"):

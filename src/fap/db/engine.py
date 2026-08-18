@@ -781,7 +781,37 @@ MIGRATIONS: list[tuple[int, str]] = [
     (13, """
         ALTER TABLE player_videos ADD COLUMN dataset_id TEXT NOT NULL DEFAULT '';
     """),
-    # (14, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
+    # Teams (club + academy squads: U19/U17…). A first-class container that GROUPS players
+    # (team_members reference existing scouting/first-team players by id) and will own team
+    # matches, media and notes in later phases. Crest reuses ImageStorage (crest_image_id).
+    (14, """
+        CREATE TABLE IF NOT EXISTS teams (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'club',            -- club|academy
+            age_group TEXT NOT NULL DEFAULT '',           -- U17|U19|… (academy)
+            competition TEXT NOT NULL DEFAULT '',
+            season TEXT NOT NULL DEFAULT '',
+            crest_image_id TEXT NOT NULL DEFAULT '',       -- ImageStorage id (reused)
+            info TEXT NOT NULL DEFAULT '',
+            created_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE IF NOT EXISTS team_members (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL,
+            player_id TEXT NOT NULL DEFAULT '',            -- immutable player anchor (if linked)
+            operational_id TEXT NOT NULL DEFAULT '',       -- ACD-/CLB-/SCT- human id
+            player_name TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'scouting',        -- scouting|first_team
+            shirt_number TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_team_members ON team_members(team_id);
+    """),
+    # (15, "ALTER TABLE ..."),  <- future schema changes append here, never edit above
 ]
 
 
