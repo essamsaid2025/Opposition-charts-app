@@ -112,13 +112,13 @@ class TeamRepository:
             """INSERT INTO team_members (id, team_id, player_id, operational_id, player_name,
                  source, shirt_number, role, secondary_role, date_of_birth, nationality,
                  preferred_foot, height_cm, weight_kg, joined_date, contract_end, availability,
-                 phone, email, emergency_contact, agent, notes)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 phone, email, emergency_contact, agent, notes, profile_image_id)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (m.id, m.team_id, m.player_id, m.operational_id, m.player_name,
              m.source, m.shirt_number, m.role, m.secondary_role, m.date_of_birth,
              m.nationality, m.preferred_foot, m.height_cm, m.weight_kg, m.joined_date,
              m.contract_end, m.availability, m.phone, m.email, m.emergency_contact, m.agent,
-             m.notes))
+             m.notes, m.profile_image_id))
 
     def list_members(self, team_id: str) -> list[TeamMember]:
         rows = self._db.query(
@@ -136,7 +136,7 @@ class TeamRepository:
         allowed = ("player_name", "operational_id", "shirt_number", "role", "secondary_role",
                    "date_of_birth", "nationality", "preferred_foot", "height_cm", "weight_kg",
                    "joined_date", "contract_end", "availability", "phone", "email",
-                   "emergency_contact", "agent", "notes")
+                   "emergency_contact", "agent", "notes", "profile_image_id")
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
@@ -191,4 +191,5 @@ class TeamRepository:
                           emergency_contact=(r["emergency_contact"] if "emergency_contact" in keys else ""),
                           agent=(r["agent"] if "agent" in keys else ""),
                           notes=(r["notes"] if "notes" in keys else ""),
+                          profile_image_id=(r["profile_image_id"] if "profile_image_id" in keys else ""),
                           created_at=r["created_at"])

@@ -590,6 +590,19 @@ class TeamsPage(Page):
         """High-level player dashboard, with profile editing kept out of the dashboard."""
         stats = svc.player_dashboard(member.team_id, member.id)
         charts = len(svc.player_portfolio(member.team_id, member.id))
+        hero = st.columns([1, 6], vertical_alignment="center")
+        photo = svc.member_photo_bytes(member.id)
+        if photo:
+            hero[0].image(photo, width=88)
+        else:
+            initials = "".join(part[:1] for part in (member.player_name or "Player").split()[:2]).upper()
+            hero[0].markdown(
+                f"<div style='width:88px;height:88px;border-radius:50%;display:flex;align-items:center;"
+                f"justify-content:center;background:var(--fap-surface-2,#eef1f5);font-size:28px;font-weight:700;'>"
+                f"{_html.escape(initials or '?')}</div>", unsafe_allow_html=True)
+        hero[1].markdown(f"### {_html.escape(member.player_name or member.operational_id or 'Player')}  \n"
+                         f"{_html.escape(member.role or 'Club player')} · "
+                         f"{_html.escape((member.availability or 'available').title())}")
         C.render_snapshot_counts([
             (icon("match", 16), str(stats["appearances"]), "Appearances"),
             (icon("datasets", 16), str(stats["linked_matches"]), "Linked matches"),
@@ -641,6 +654,19 @@ class TeamsPage(Page):
 
     def _edit_player_profile(self, shell, svc, member) -> None:
         """The editing form is intentionally separate from the performance dashboard."""
+        st.markdown("**Player photo**")
+        photo = svc.member_photo_bytes(member.id)
+        if photo:
+            st.image(photo, width=96)
+        upload = st.file_uploader("Upload player photo", type=["png", "jpg", "jpeg", "webp"],
+                                  key=f"po_photo_{member.id}")
+        if upload is not None and st.button("Save player photo", key=f"po_photo_save_{member.id}"):
+            try:
+                svc.set_member_photo(shell.user, member.id, upload.getvalue(), upload.type or "image/png")
+                st.toast("Player photo saved")
+                st.rerun()
+            except ValueError as exc:
+                st.warning(str(exc))
         c = st.columns(4)
         name = c[0].text_input("Player name", value=member.player_name, key=f"po_name_{member.id}")
         number = c[1].text_input("Squad number", value=member.shirt_number, key=f"po_no_{member.id}")

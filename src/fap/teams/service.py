@@ -74,6 +74,13 @@ class TeamService:
                 self._images.delete(t.crest_image_id)
             except Exception:
                 pass
+        if self._images is not None:
+            for member in self.repo.list_members(team_id):
+                if member.profile_image_id:
+                    try:
+                        self._images.delete(member.profile_image_id)
+                    except Exception:
+                        pass
         self.repo.delete(team_id)
         self._record(user, "teams.delete", team_id=team_id)
 
@@ -128,7 +135,7 @@ class TeamService:
     def _member_fields(fields: dict[str, Any]) -> dict[str, Any]:
         allowed = {"secondary_role", "date_of_birth", "nationality", "preferred_foot",
                    "height_cm", "weight_kg", "joined_date", "contract_end", "availability",
-                   "phone", "email", "emergency_contact", "agent", "notes"}
+                   "phone", "email", "emergency_contact", "agent", "notes", "profile_image_id"}
         out: dict[str, Any] = {}
         for key, value in fields.items():
             if key not in allowed:
@@ -149,10 +156,43 @@ class TeamService:
         self._record(user, "teams.member.update", member_id=member_id)
         return self.repo.get_member(member_id)
 
+    def set_member_photo(self, user: Any, member_id: str, data: bytes, mime: str) -> TeamMember | None:
+        """Store a club-player image using the shared ImageStorage, replacing any old photo."""
+        if self._images is None:
+            raise ValueError("Image storage is not configured.")
+        member = self.repo.get_member(member_id)
+        if member is None:
+            return None
+        if member.profile_image_id:
+            try:
+                self._images.delete(member.profile_image_id)
+            except Exception:
+                pass
+        image_id = self._uid()
+        self._images.save(image_id, data, mime=mime)
+        self.repo.update_member(member_id, profile_image_id=image_id)
+        self._record(user, "teams.member.photo", member_id=member_id)
+        return self.repo.get_member(member_id)
+
+    def member_photo_bytes(self, member_id: str) -> bytes | None:
+        member = self.repo.get_member(member_id)
+        if member is None or not member.profile_image_id or self._images is None:
+            return None
+        try:
+            return self._images.load(member.profile_image_id)
+        except Exception:
+            return None
+
     def list_members(self, team_id: str) -> list[TeamMember]:
         return self.repo.list_members(team_id)
 
     def remove_member(self, user: Any, member_id: str) -> None:
+        member = self.repo.get_member(member_id)
+        if member is not None and member.profile_image_id and self._images is not None:
+            try:
+                self._images.delete(member.profile_image_id)
+            except Exception:
+                pass
         self.repo.remove_member(member_id)
         self._record(user, "teams.member.remove", member_id=member_id)
 

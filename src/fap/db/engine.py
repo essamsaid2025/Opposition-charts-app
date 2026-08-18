@@ -879,6 +879,11 @@ MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE team_members ADD COLUMN agent TEXT NOT NULL DEFAULT '';
         ALTER TABLE team_members ADD COLUMN notes TEXT NOT NULL DEFAULT '';
     """),
+    # Club-player profile image. Image bytes remain in the shared ImageStorage; only its
+    # opaque id is stored here, matching team crests and the scouting player profile pattern.
+    (19, """
+        ALTER TABLE team_members ADD COLUMN profile_image_id TEXT NOT NULL DEFAULT '';
+    """),
 ]
 
 

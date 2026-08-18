@@ -95,4 +95,5 @@ class TeamMember:
     emergency_contact: str = ""
     agent: str = ""
     notes: str = ""
+    profile_image_id: str = ""      # ImageStorage id; player photo for the club dashboard
     created_at: str = ""
