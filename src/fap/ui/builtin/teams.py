@@ -16,6 +16,7 @@ from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.scouting import identity as _ident
 from fap.theme import components as C
+from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
 _KINDS = {"club": "Club / First Team", "academy": "Academy"}
@@ -475,7 +476,7 @@ class TeamsPage(Page):
         C.render_section_title(member.player_name or member.operational_id or "Player",
                                eyebrow=f"{t.name} · roster", subtitle=subtitle or t.name,
                                icon_name="players")
-        tabs = st.tabs(["Overview", "Analysis", "Portfolio"])
+        tabs = st.tabs(["Overview", "Analysis", "Evidence", "Media", "Reports"])
         with tabs[0]:
             self._player_overview(shell, svc, member)
         with tabs[1]:
@@ -511,28 +512,91 @@ class TeamsPage(Page):
                         key=f"pdviz_{member.id}_{mid}",
                         on_assign=(_save if self._can_edit else None), curate=curate_for_scouting)
         with tabs[2]:
-            port = svc.player_portfolio(t.id, member.id)
-            if not port:
-                st.caption("No saved charts yet. Generate charts in the Analysis tab and click "
-                           "Assign/Save to add them here.")
-            else:
-                st.caption(f"{len(port)} saved chart(s) across all matches")
-                pcols = st.columns(3)
-                for i, md in enumerate(port):
-                    b = svc.media_bytes(md)
-                    with pcols[i % 3]:
-                        if b:
-                            st.image(b, caption=md.title or "chart", use_container_width=True)
-                        else:
-                            st.caption(md.title or "chart")
-                        if self._can_edit and st.button("Delete", key=f"pd_del_{md.id}",
-                                                         use_container_width=True):
-                            svc.delete_media(shell.user, md.id); st.rerun()
+            self._player_evidence(svc, t, member)
+        with tabs[3]:
+            self._player_media(shell, svc, t, member)
+        with tabs[4]:
+            self._player_reports(svc, member)
+
+    def _player_evidence(self, svc, t, member) -> None:
+        """Match-level evidence, mirroring Scouting's evidence separation."""
+        matches = [m for m in svc.list_matches(t.id) if m.dataset_id]
+        C.render_dossier_label(f"Match evidence ({len(matches)})")
+        if not matches:
+            C.render_alert("No linked match data yet. Link a dataset in the team's Matches tab.", "info")
+            return
+        for mt in matches:
+            frame = svc.match_player_frame(mt.id, member.player_name)
+            event_count = len(frame) if frame is not None else 0
+            title = f"vs {mt.opponent}" if mt.opponent else "Match"
+            meta = " · ".join(x for x in (mt.match_date, mt.competition,
+                                           f"{event_count} player events") if x)
+            st.markdown(C.evidence_card_html(_html.escape(title), _html.escape(meta)),
+                        unsafe_allow_html=True)
+
+    def _player_media(self, shell, svc, t, member) -> None:
+        """Player-scoped notes, video links and saved visual evidence."""
+        if self._can_edit:
+            with st.expander("Add player media", expanded=False):
+                kind = st.radio("Add", ["Note", "Video link"], horizontal=True, key=f"pmed_kind_{member.id}")
+                title = st.text_input("Title", key=f"pmed_title_{member.id}")
+                if kind == "Note":
+                    body = st.text_area("Note", key=f"pmed_body_{member.id}", height=90)
+                    if st.button("Add note", key=f"pmed_note_{member.id}"):
+                        try:
+                            svc.add_note(shell.user, t.id, title=title, body=body, member_id=member.id)
+                            st.rerun()
+                        except ValueError as exc:
+                            st.warning(str(exc))
+                else:
+                    url = st.text_input("Video URL", key=f"pmed_url_{member.id}")
+                    if st.button("Add video", key=f"pmed_video_{member.id}"):
+                        try:
+                            svc.add_video(shell.user, t.id, title=title, url=url, member_id=member.id)
+                            st.rerun()
+                        except ValueError as exc:
+                            st.warning(str(exc))
+        media = svc.list_media(t.id, member_id=member.id)
+        if not media:
+            st.caption("No player media or saved visualizations yet.")
+            return
+        C.render_dossier_label(f"Player media ({len(media)})")
+        for md in media:
+            cols = st.columns([6, 1], vertical_alignment="center")
+            if md.kind == "note":
+                cols[0].markdown(f"**{_html.escape(md.title or 'Note')}**  \n{_html.escape(md.body)}")
+            elif md.kind in ("chart", "image"):
+                data = svc.media_bytes(md)
+                if data:
+                    cols[0].image(data, caption=md.title or "Visualization", width=320)
+            elif md.url:
+                cols[0].markdown(f"[{_html.escape(md.title or 'Video')}]({md.url})")
+            if self._can_edit and cols[1].button("Delete", key=f"pmed_del_{md.id}"):
+                svc.delete_media(shell.user, md.id); st.rerun()
+
+    def _player_reports(self, svc, member) -> None:
+        """Portable club-player dashboard export."""
+        stats = svc.player_dashboard(member.team_id, member.id)
+        rows = ["Metric,Value", *[f"{key.replace('_', ' ').title()},{value}"
+                                    for key, value in stats.items() if key != "pass_completion"]]
+        if stats["pass_completion"] is not None:
+            rows.append(f"Pass completion,{stats['pass_completion']}%")
+        st.caption("Player performance summary. Visual evidence remains available in Media.")
+        st.download_button("Download player performance summary", "\n".join(rows),
+                           file_name=f"{(member.player_name or 'player').replace(' ', '_')}_summary.csv",
+                           mime="text/csv", key=f"preport_{member.id}")
 
     def _player_overview(self, shell, svc, member) -> None:
         """High-level player dashboard, with profile editing kept out of the dashboard."""
         stats = svc.player_dashboard(member.team_id, member.id)
         charts = len(svc.player_portfolio(member.team_id, member.id))
+        C.render_snapshot_counts([
+            (icon("match", 16), str(stats["appearances"]), "Appearances"),
+            (icon("datasets", 16), str(stats["linked_matches"]), "Linked matches"),
+            (icon("grid", 16), str(charts), "Visualizations"),
+            (icon("layers", 16), str(stats["events"]), "Player events"),
+        ])
+        C.render_dossier_label("Performance dashboard", icon=icon("analysis", 13))
         top = st.columns(4)
         top[0].metric("Appearances", stats["appearances"])
         top[1].metric("Minutes", stats["minutes"] if stats["appearances"] else "—")

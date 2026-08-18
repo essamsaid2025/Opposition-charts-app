@@ -203,19 +203,20 @@ class TeamService:
 
     # ---- media: notes / videos / clips / charts (T4) ----
     def add_note(self, user: Any, team_id: str, *, title: str = "", body: str = "",
-                 match_id: str = "") -> TeamMedia:
+                 match_id: str = "", member_id: str = "") -> TeamMedia:
         title, body = str(title or "").strip(), str(body or "").strip()
         if not title and not body:
             raise ValueError("A note title or body is required.")
         m = TeamMedia(id=self._uid(), team_id=team_id, match_id=str(match_id or ""), kind="note",
-                      title=title, body=body, created_by=getattr(user, "email", "") or "")
+                      member_id=str(member_id or ""), title=title, body=body,
+                      created_by=getattr(user, "email", "") or "")
         self.repo.add_media(m)
         self._record(user, "teams.media.note", team_id=team_id)
         return m
 
     def add_video(self, user: Any, team_id: str, *, url: str = "", data: bytes | None = None,
                   filename: str = "", mime: str = "", title: str = "", match_id: str = "",
-                  kind: str = "video") -> TeamMedia:
+                  member_id: str = "", kind: str = "video") -> TeamMedia:
         u, file_id = str(url or "").strip(), ""
         if data is not None:
             if self._files is None:
@@ -225,7 +226,7 @@ class TeamService:
         elif not u:
             raise ValueError("A video url or an uploaded file is required.")
         m = TeamMedia(id=self._uid(), team_id=team_id, match_id=str(match_id or ""), kind=kind,
-                      title=str(title or "").strip(), url=u, file_id=file_id,
+                      member_id=str(member_id or ""), title=str(title or "").strip(), url=u, file_id=file_id,
                       created_by=getattr(user, "email", "") or "")
         self.repo.add_media(m)
         self._record(user, "teams.media.video", team_id=team_id)
