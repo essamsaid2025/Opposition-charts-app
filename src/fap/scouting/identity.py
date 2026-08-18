@@ -84,10 +84,11 @@ def next_statuses(status: str | None) -> list[str]:
 # identity metadata in document; the operational_id is a stable, human-readable
 # club-side identifier whose prefix reflects the pathway. The immutable player_id
 # is always the true anchor - the operational id never replaces it.
-PLAYER_TYPES: tuple[str, ...] = ("first_team", "academy", "trialist")
-TYPE_PREFIX: dict[str, str] = {"first_team": "CLB", "academy": "ACD", "trialist": "TRI"}
+PLAYER_TYPES: tuple[str, ...] = ("first_team", "academy", "trialist", "scouting")
+TYPE_PREFIX: dict[str, str] = {"first_team": "CLB", "academy": "ACD", "trialist": "TRI",
+                               "scouting": "SCT"}
 TYPE_LABEL: dict[str, str] = {"first_team": "First Team", "academy": "Academy",
-                              "trialist": "Trialist"}
+                              "trialist": "Trialist", "scouting": "Scouting"}
 # academy age-group vocabulary (display metadata; optional per player)
 AGE_GROUPS: tuple[str, ...] = ("U9", "U10", "U11", "U12", "U13", "U14", "U15",
                                "U16", "U17", "U18", "U19", "U21", "U23")
@@ -98,7 +99,7 @@ def normalize_player_type(value: str | None) -> str:
     if v in PLAYER_TYPES:
         return v
     return {"club": "first_team", "senior": "first_team", "youth": "academy",
-            "trial": "trialist"}.get(v, "first_team")
+            "trial": "trialist", "scout": "scouting"}.get(v, "first_team")
 
 
 def player_type_of(player: Any) -> str:
