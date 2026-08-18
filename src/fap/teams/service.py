@@ -276,6 +276,69 @@ class TeamService:
         """All charts saved for a roster player across the team's matches (their portfolio)."""
         return self.repo.list_media(team_id, member_id=member_id, kind="chart")
 
+    def player_dashboard(self, team_id: str, member_id: str) -> dict[str, Any]:
+        """High-level, evidence-backed player totals across this team's linked matches.
+
+        An appearance is counted only when the linked event data contains an event for the
+        roster player. This deliberately avoids presenting every team fixture as a player
+        appearance when no lineup/minutes data exists.
+        """
+        member = self.repo.get_member(member_id)
+        matches = self.repo.list_matches(team_id)
+        totals: dict[str, Any] = {"team_matches": len(matches), "linked_matches": 0,
+                                  "appearances": 0, "minutes": 0, "events": 0,
+                                  "passes": 0, "completed_passes": 0, "shots": 0,
+                                  "goals": 0, "assists": 0}
+        if member is None:
+            return totals
+        for mt in matches:
+            if not mt.dataset_id:
+                continue
+            totals["linked_matches"] += 1
+            frame = self.match_player_frame(mt.id, member.player_name)
+            if frame is None or getattr(frame, "empty", True):
+                continue
+            totals["appearances"] += 1
+            totals["events"] += int(len(frame))
+            columns = {str(c).lower(): c for c in frame.columns}
+            minute_col = columns.get("minute")
+            if minute_col is not None:
+                try:
+                    values = frame[minute_col].dropna()
+                    totals["minutes"] += int(float(values.max())) if len(values) else 0
+                except (TypeError, ValueError):
+                    pass
+            event_col = columns.get("event_type") or columns.get("type")
+            events = frame[event_col].astype(str).str.strip().str.lower() if event_col else None
+            if events is not None:
+                totals["passes"] += int(events.isin(["pass", "passing"]).sum())
+                totals["shots"] += int(events.isin(["shot", "shots"]).sum())
+                totals["goals"] += int(events.isin(["goal", "goals"]).sum())
+            outcome_col = columns.get("outcome") or columns.get("result")
+            if events is not None and outcome_col is not None:
+                outcomes = frame[outcome_col].astype(str).str.strip().str.lower()
+                totals["completed_passes"] += int((events.isin(["pass", "passing"]) &
+                                                    outcomes.isin(["successful", "success", "complete", "completed"])).sum())
+                totals["goals"] += int((events.isin(["shot", "shots"]) & outcomes.isin(["goal", "scored"])) .sum())
+            for candidate in ("is_goal", "goal"):
+                goal_col = columns.get(candidate)
+                if goal_col is not None and candidate == "is_goal":
+                    try:
+                        totals["goals"] += int(frame[goal_col].fillna(False).astype(bool).sum())
+                    except (TypeError, ValueError):
+                        pass
+                    break
+            assist_col = columns.get("assist") or columns.get("is_assist")
+            if assist_col is not None:
+                try:
+                    values = frame[assist_col]
+                    totals["assists"] += int(values.fillna(False).astype(bool).sum())
+                except (TypeError, ValueError):
+                    pass
+        totals["pass_completion"] = round(100 * totals["completed_passes"] / totals["passes"], 1) \
+            if totals["passes"] else None
+        return totals
+
     def media_bytes(self, media: TeamMedia) -> bytes | None:
         try:
             if media.image_id and self._images is not None:

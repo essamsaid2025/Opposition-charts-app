@@ -530,14 +530,30 @@ class TeamsPage(Page):
                             svc.delete_media(shell.user, md.id); st.rerun()
 
     def _player_overview(self, shell, svc, member) -> None:
-        """High-level player dashboard plus the complete editable roster profile."""
+        """High-level player dashboard, with profile editing kept out of the dashboard."""
+        stats = svc.player_dashboard(member.team_id, member.id)
         charts = len(svc.player_portfolio(member.team_id, member.id))
         top = st.columns(4)
-        top[0].metric("Squad number", f"#{member.shirt_number}" if member.shirt_number else "—")
-        top[1].metric("Primary position", member.role or "—")
-        top[2].metric("Availability", (member.availability or "available").title())
-        top[3].metric("Saved charts", charts)
-        st.markdown("#### Player profile")
+        top[0].metric("Appearances", stats["appearances"])
+        top[1].metric("Minutes", stats["minutes"] if stats["appearances"] else "—")
+        top[2].metric("Goals", stats["goals"])
+        top[3].metric("Assists", stats["assists"])
+        performance = st.columns(4)
+        performance[0].metric("Passes", stats["passes"])
+        performance[1].metric("Pass completion", f"{stats['pass_completion']}%" if stats["pass_completion"] is not None else "—")
+        performance[2].metric("Shots", stats["shots"])
+        performance[3].metric("Events", stats["events"])
+        st.caption(f"{stats['team_matches']} team match(es) recorded · {stats['linked_matches']} linked to event data · {charts} saved chart(s)")
+        if stats["linked_matches"]:
+            st.caption("Minutes are calculated from the latest recorded event minute in each linked match.")
+        if not stats["linked_matches"]:
+            C.render_alert("Link match event data in the Matches tab to populate appearances and performance metrics.", "info")
+        st.markdown("#### Player snapshot")
+        snapshot = st.columns(4)
+        snapshot[0].markdown(f"**Number**  \n{_html.escape('#' + member.shirt_number) if member.shirt_number else '—'}")
+        snapshot[1].markdown(f"**Position**  \n{_html.escape(member.role or '—')}")
+        snapshot[2].markdown(f"**Availability**  \n{_html.escape((member.availability or 'available').title())}")
+        snapshot[3].markdown(f"**Contract end**  \n{_html.escape(member.contract_end or '—')}")
         if not self._can_edit:
             details = [
                 ("Operational ID", member.operational_id), ("Secondary position", member.secondary_role),
@@ -556,6 +572,11 @@ class TeamsPage(Page):
                 st.markdown("**Notes**")
                 st.write(member.notes)
             return
+        with st.expander("Edit profile", expanded=False):
+            self._edit_player_profile(shell, svc, member)
+
+    def _edit_player_profile(self, shell, svc, member) -> None:
+        """The editing form is intentionally separate from the performance dashboard."""
         c = st.columns(4)
         name = c[0].text_input("Player name", value=member.player_name, key=f"po_name_{member.id}")
         number = c[1].text_input("Squad number", value=member.shirt_number, key=f"po_no_{member.id}")
