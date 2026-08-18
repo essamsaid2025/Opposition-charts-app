@@ -822,9 +822,9 @@ class FirstTeamPlayersPage(Page):
                     with c[4]:
                         if r["dataset_id"] and st.button("Open Analysis", key=f"ftp_ma_{i}"):
                             try:
-                                shell.goto("opponent_analysis")
+                                shell.goto("open_play_studio")
                             except Exception:
-                                st.info("Open Opponent Analysis from the navigation.")
+                                st.info("Open Open Play Studio from the navigation.")
             st.caption("Match statistics come from the linked datasets — never duplicated here.")
         else:
             st.info("No matches linked. Match data is never duplicated here — link an existing dataset below.")

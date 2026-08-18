@@ -25,6 +25,11 @@ if TYPE_CHECKING:                       # avoid importing the shell at module lo
 # sections sort last.
 NAV_SECTIONS: tuple[str, ...] = ("Overview", "Analysis", "Squad", "Workspace", "Admin")
 
+# Kept registered for saved workspaces and internal compatibility, but deliberately
+# omitted from every user-facing navigation surface. Open Play Studio is the supported
+# Open Play entry point; projects remain available to the workspace internals.
+HIDDEN_PAGE_IDS: frozenset[str] = frozenset({"opponent_analysis", "projects"})
+
 
 class Page(Plugin):
     """One screen. ``min_role`` gates visibility; ``section``/``order`` place it
@@ -75,7 +80,7 @@ def all_pages() -> list[Page]:
 
 def visible_pages(role: Role) -> list[Page]:
     """Pages this role may see, in navigation order. Never renders anything."""
-    return [p for p in all_pages() if role >= p.min_role]
+    return [p for p in all_pages() if role >= p.min_role and p.info.id not in HIDDEN_PAGE_IDS]
 
 
 def visible_by_section(role: Role) -> dict[str, list[Page]]:

@@ -484,12 +484,10 @@ def _render_controls_bar(ctx: "ShellContext", brand: theme.Branding) -> None:
     # The application has ONE fixed appearance, so there is no theme/appearance
     # control here (chart visualization themes remain selectable inside the chart
     # tools, unchanged).
-    cols = st.columns([3, 3, 8, 2], vertical_alignment="center")
+    cols = st.columns([3, 11, 2], vertical_alignment="center")
     with cols[0]:
         _workspace_selector(ctx)
-    with cols[1]:
-        _project_selector(ctx)
-    with cols[3]:
+    with cols[2]:
         _account_popover(ctx)
 
 

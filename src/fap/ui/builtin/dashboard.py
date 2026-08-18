@@ -15,13 +15,12 @@ import streamlit as st
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.theme import components as C
-from fap.ui.page import Page, get_page, page_registry, visible_pages
+from fap.ui.page import HIDDEN_PAGE_IDS, Page, get_page, page_registry, visible_pages
 
 # Modules offered as "Start analysis" launchers — shown only when the page exists
 # and the user's role can see it (no invented modules).
 _ACTIONS = [
     ("scouting", "Scouting", "Player identification, evaluation and recruitment analysis.", "scouting"),
-    ("opponent_analysis", "Opponent Analysis", "Evidence-backed opponent profiling and tactical analysis.", "target"),
     ("open_play_studio", "Open Play Studio", "Explore open-play behaviour and tactical patterns.", "analysis"),
     ("set_piece_analysis", "Set Piece Analysis", "Analyse attacking and defensive set pieces.", "flag"),
     ("tactical_board", "Tactical Board", "Build and review tactical scenarios.", "teams"),
@@ -46,7 +45,7 @@ class DashboardPage(Page):
                            title="Limited mode")
             return
 
-        datasets, projects, recents, audit, reports_n, ws_name, ds_name = _gather(shell)
+        datasets, _projects, recents, audit, reports_n, ws_name, ds_name = _gather(shell)
 
         # ---- greeting hero with live context ----
         C.render_hero(
@@ -59,8 +58,6 @@ class DashboardPage(Page):
         metrics = [
             C.metric_card_html("Datasets", f"{len(datasets)}", icon_name="datasets",
                                accent="primary", hint="in this workspace"),
-            C.metric_card_html("Projects", f"{len(projects)}", icon_name="projects",
-                               accent="info", hint="in this workspace"),
         ]
         if reports_n is not None:
             metrics.append(C.metric_card_html("Reports", f"{reports_n}", icon_name="reports",
@@ -210,7 +207,7 @@ def _recent_items(shell, datasets) -> list[tuple[str, str, str, str]]:
     out: list[tuple[str, str, str, str]] = []
     for ttype, tid in recents:
         if ttype == "page":
-            if tid == "dashboard":
+            if tid == "dashboard" or tid in HIDDEN_PAGE_IDS:
                 continue
             p = get_page(tid)
             if p is not None:
@@ -218,7 +215,7 @@ def _recent_items(shell, datasets) -> list[tuple[str, str, str, str]]:
         elif ttype == "dataset":
             out.append((ds_names.get(tid) or "Dataset", "Dataset", "datasets", "data_hub"))
         elif ttype == "project":
-            out.append(("Project", "Project", "projects", "projects"))
+            continue
         if len(out) >= 6:
             break
     return out

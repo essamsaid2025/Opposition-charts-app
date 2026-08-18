@@ -2140,9 +2140,8 @@ class OpenPlayStudioPage(Page):
         if engine is None:
             C.render_empty_state(
                 "Open Play engine not connected", "The Open Play visualization engine is not "
-                "available in this session. Open 'Opponent Analysis' once to initialise it, then return.",
-                icon_name="analysis", action_label="Open Opponent Analysis", key="ops_no_engine") \
-                and shell.goto("opponent_analysis")
+                "available in this session. Reload the app to reconnect the Open Play engine.",
+                icon_name="analysis")
             return
 
         can_edit = shell.user.role >= Role.PERFORMANCE_ANALYST
@@ -2226,6 +2225,7 @@ class OpenPlayStudioPage(Page):
     def _inject_css(self) -> None:
         st.markdown("""
 <style>
+.st-key-ops_qa_legacy { display: none; }
 .st-key-ops_toolbar { background: var(--fap-surface); border: 1px solid var(--fap-border);
   border-radius: 12px; padding: 8px 12px; margin-bottom: 10px; }
 .ops-tb-title { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
