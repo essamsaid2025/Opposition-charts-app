@@ -557,12 +557,17 @@ class ScoutingPage(Page):
                                           on_assign=on_assign)
             return
 
-        # no player-scouting dataset linked/active: event path if the player has events
+        # no player-scouting dataset linked/active: event path if the player has events.
+        # Curate the shared registry catalog to a PLAYER-CENTRIC subset (Phase B) so team/tactical
+        # Open-Play visuals never appear on a player page. Open Play Studio + First-Team pass no
+        # curator, so their catalogs are unchanged; the registry itself is untouched.
         if svc.active_dataset_kind(shell.user) == "event":
+            from fap.scouting.catalog import curate_for_scouting
             from fap.ui.components.viz_workspace import render_visualization_workspace
             frame = svc.player_event_frame(shell.user, p.id)
             render_visualization_workspace(shell, frame=frame, player_name=p.name,
-                                           key=f"sc_viz_{p.id}", on_assign=on_assign)
+                                           key=f"sc_viz_{p.id}", on_assign=on_assign,
+                                           curate=curate_for_scouting)
             if self._can_edit:
                 self._assigned_charts_panel(shell, svc, p)
             return

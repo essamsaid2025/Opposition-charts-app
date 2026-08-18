@@ -1,0 +1,15 @@
+id: athletic_editorial
+name: "The Athletic — Editorial"
+dark: false
+# Editorial / social-graphic look inspired by The Athletic's football analytics style
+# (design inspiration only — no logos or proprietary templates): warm off-white ground,
+# strong near-black typography, a single bold ORANGE accent, high contrast, minimal
+# decoration. Additive theme — selectable for Scouting visuals; changes no existing theme
+# and never touches the global app theme.
+colors: {bg: "#F7F5F0", panel: "#FFFFFF", pitch: "#F0EEE9", stripe: "#E8E4DC",
+  text: "#12100E", muted: "#6B6560", lines: "#1A1A1A", grid: "#DED9D0",
+  accent: "#E8552B", accent_2: "#2E2A26", danger: "#D1341B", warning: "#E8A33D",
+  success: "#2E8B57", grey: "#9A938B", bar: "#E8552B",
+  legend_bg: "#FFFFFF", legend_border: "#DED9D0", legend_text: "#12100E"}
+heatmap_cmaps: ["Oranges", "YlOrRd", "Greys", "magma"]
+tokens: {uppercase_titles: true, editorial: true}

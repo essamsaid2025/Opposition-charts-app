@@ -277,13 +277,19 @@ def _signature(viz_id: str, controls: dict, filt, theme_id: str, frame, scope: s
 
 # ---------------------------------------------------------------- entry point
 def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
-                                   on_assign=None) -> None:
+                                   on_assign=None, curate=None) -> None:
     """Render the player visualization workspace.
 
     ``on_assign`` (optional): a callback ``(png_bytes, title, viz_id) -> None``. When
     given, each rendered chart shows an "Assign to player report" button that hands
     the exact PNG to the callback (Scouting persists it to the player). Keeps this
     shared component decoupled - it never imports scouting/players, only calls back.
+
+    ``curate`` (optional): a callable ``list[catalog_dict] -> list[catalog_dict]`` that
+    filters/re-groups the registry catalog for a caller-specific presentation (Scouting
+    passes ``fap.scouting.catalog.curate_for_scouting`` to hide team/tactical visuals and
+    file the rest under player-centric headings). Default ``None`` = the full registry
+    catalog, unchanged — so First-Team and Open Play behave exactly as before.
     """
     try:
         active = shell.wm.active_dataset(shell.user) if shell.wm is not None else None
@@ -310,6 +316,11 @@ def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
 
     reg = _registry()
     infos = _catalog(reg)
+    if curate is not None:                    # caller-specific curation (e.g. Scouting player catalog)
+        try:
+            infos = curate(infos)
+        except Exception:
+            logger.exception("catalog curation failed; falling back to full registry catalog")
     if not infos:
         C.render_alert("No visualizations are registered.", "warning")
         return
