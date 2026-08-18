@@ -562,12 +562,39 @@ class ScoutingPage(Page):
         # Open-Play visuals never appear on a player page. Open Play Studio + First-Team pass no
         # curator, so their catalogs are unchanged; the registry itself is untouched.
         if svc.active_dataset_kind(shell.user) == "event":
+            from fap.scouting import map_filters as _mf
             from fap.scouting.catalog import curate_for_scouting
             from fap.ui.components.viz_workspace import render_visualization_workspace
             frame = svc.player_event_frame(shell.user, p.id)
+
+            def _map_event_filter(viz_id, ev_frame, key):
+                """Scouting Map Studio (C4): render only the SEMANTIC controls that apply to this
+                map + dataset, then return the player's events filtered through the canonical
+                map_filters core. Player-scoped; never mutates the source; honest empty/count."""
+                avail = _mf.available_filters(ev_frame, viz_id)
+                active = [f for f in _mf.applicable_filters(viz_id)
+                          if avail.get(f, {}).get("available")]
+                if not active:
+                    return ev_frame
+                st.markdown("**Map filters**")
+                cols = st.columns(min(len(active), 3))
+                sel = {}
+                for i, f in enumerate(active):
+                    sel[f] = cols[i % len(cols)].selectbox(
+                        f.replace("_", " ").title(), avail[f]["options"],
+                        key=f"{key}_mf_{viz_id}_{f}")
+                if st.button("Reset filters", key=f"{key}_mfreset_{viz_id}"):
+                    for f in active:
+                        st.session_state.pop(f"{key}_mf_{viz_id}_{f}", None)
+                    st.rerun()
+                summ = _mf.summarize(ev_frame, sel)
+                st.caption(f"{summ['events']} events · " + " · ".join(summ["filters"]) + " · Scope: Player")
+                return _mf.apply(ev_frame, sel)
+
             render_visualization_workspace(shell, frame=frame, player_name=p.name,
                                            key=f"sc_viz_{p.id}", on_assign=on_assign,
-                                           curate=curate_for_scouting)
+                                           curate=curate_for_scouting,
+                                           event_filter=_map_event_filter)
             if self._can_edit:
                 self._assigned_charts_panel(shell, svc, p)
             return

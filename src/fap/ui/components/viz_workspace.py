@@ -277,7 +277,7 @@ def _signature(viz_id: str, controls: dict, filt, theme_id: str, frame, scope: s
 
 # ---------------------------------------------------------------- entry point
 def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
-                                   on_assign=None, curate=None) -> None:
+                                   on_assign=None, curate=None, event_filter=None) -> None:
     """Render the player visualization workspace.
 
     ``on_assign`` (optional): a callback ``(png_bytes, title, viz_id) -> None``. When
@@ -361,7 +361,8 @@ def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
     if not sel or sel not in labels:
         st.caption("Select a visualization from the catalog to configure and render it.")
         return
-    _selected_workspace(shell, reg, key, sel, labels, frame, player_name, scope, infos, on_assign)
+    _selected_workspace(shell, reg, key, sel, labels, frame, player_name, scope, infos, on_assign,
+                        event_filter=event_filter)
 
 
 # ---------------------------------------------------------------- quick rows
@@ -498,7 +499,7 @@ def _cards(shell, key: str, section: str, items: list[dict], fav_ids: list[str])
 
 # ---------------------------------------------------------------- selected viz
 def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name, scope, infos,
-                        on_assign=None) -> None:
+                        on_assign=None, event_filter=None) -> None:
     info = next((i for i in infos if i["id"] == sel), {"id": sel, "name": labels.get(sel, sel)})
     try:
         viz = reg.create(sel)
@@ -518,6 +519,14 @@ def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name,
     if render_frame is None or getattr(render_frame, "empty", True):
         C.render_alert("No events available for the selected render scope.", "info")
         return
+    # Scouting Map Studio opt-in (C4): a caller-supplied event_filter renders the SEMANTIC map
+    # controls for THIS map and returns the filtered player-event frame (via fap.scouting.map_filters).
+    # First-Team / Open Play pass no event_filter, so this is a no-op for them. Player scope only.
+    if event_filter is not None and scope == "player":
+        render_frame = event_filter(sel, render_frame, key)
+        if render_frame is None or getattr(render_frame, "empty", True):
+            C.render_alert("No events match these filters. Reset filters or broaden the zone.", "info")
+            return
     if _needs_team_context(info) and scope != "whole":
         C.render_alert("This visualization needs whole-match (team) context. Switch Render "
                        "scope to 'Whole match' above.", "warning")
