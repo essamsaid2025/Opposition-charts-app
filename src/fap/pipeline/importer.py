@@ -18,6 +18,17 @@ from typing import Any
 
 import pandas as pd
 
+
+def _reshape_statsbomb(frame):
+    """Canonicalise a flattened-StatsBomb event CSV (location/type.name -> x/y/event_type) before
+    detection/classification. Guarded + never raises, so any other format passes through untouched."""
+    try:
+        from fap.pipeline.statsbomb_csv import reshape
+        return reshape(frame)
+    except Exception:
+        logger.exception("statsbomb-csv reshape skipped")
+        return frame
+
 from fap.cache import CacheManager
 from fap.core.exceptions import ProviderError
 from fap.pipeline import schema
@@ -131,6 +142,9 @@ class ImportService:
         import will use, without running or duplicating the pipeline."""
         provider, reported_id, detection = self._detect_and_resolve(data, filename, provider_id)
         raw = provider.load(BytesIO(data), filename, options=options)
+        _rf = _reshape_statsbomb(raw.frame)           # same canonicalisation the import applies,
+        if _rf is not raw.frame:                       # so classify() sees an EVENT dataset.
+            raw = replace(raw, frame=_rf)              # RawDataset is frozen -> replace, don't assign
         _detected, template_used = self.detect(raw.frame)
         return FilePreview(provider_id=reported_id, provider_name=provider.info.name,
                            frame=raw.frame, raw=raw, detection=detection,
@@ -181,6 +195,9 @@ class ImportService:
                 return replace(hit, cache_hit=True)
 
         raw = provider.load(BytesIO(data), filename, options=options)
+        _rf = _reshape_statsbomb(raw.frame)           # flattened-StatsBomb CSV -> canonical event cols
+        if _rf is not raw.frame:                       # RawDataset is frozen -> replace, don't assign
+            raw = replace(raw, frame=_rf)
 
         detected, template_used = self.detect(raw.frame)
         final_mapping = dict(raw.column_mapping)      # provider knowledge first

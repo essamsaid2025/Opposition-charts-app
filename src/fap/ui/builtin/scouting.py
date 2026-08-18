@@ -1025,7 +1025,7 @@ class ScoutingPage(Page):
                 st.caption("No match-level evidence available. Link an event dataset to this "
                            "player below to build a permanent, per-match evidence trail.")
             for m in matches:
-                cols = st.columns([5, 1], vertical_alignment="center")
+                cols = st.columns([5, 1, 1], vertical_alignment="center")
                 title = m["opponent"] or m["match_id"]
                 meta = " · ".join(x for x in (m.get("match_date"), m.get("competition"),
                                               f"{len(m['datasets'])} dataset(s)") if x)
@@ -1042,6 +1042,13 @@ class ScoutingPage(Page):
                         st.session_state["_scout_evidence_scope"] = {
                             "player_id": p.id, "match_id": m["match_id"], "dataset_id": ds0}
                         st.rerun()
+                # remove this match's evidence link(s) — unlinks the dataset evidence for this
+                # player (the source dataset itself is untouched; the persistent link is dropped).
+                if self._can_edit and cols[2].button("Delete", key=f"ev_del_{p.id}_{m['match_id']}"):
+                    for d in m.get("datasets", []):
+                        if d.get("link_id"):
+                            svc.unlink_match_evidence(shell.user, p.id, d["link_id"])
+                    st.rerun()
 
             # link the currently active event dataset to a match (no fabrication)
             if self._can_edit:

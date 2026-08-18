@@ -598,6 +598,7 @@ class ScoutingService:
                     "competition": "", "event_count": 0, "datasets": []})
                 g["datasets"].append({"dataset_id": link.dataset_id,
                                       "dataset_name": link.dataset_name,
+                                      "link_id": link.id,
                                       "event_count": m["event_count"]})
                 g["event_count"] += int(m["event_count"])
                 for k in ("opponent", "match_date", "competition"):
