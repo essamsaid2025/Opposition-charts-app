@@ -125,6 +125,38 @@ def test_fc_masar_template_renders_all_tier_a_charts(platform):
         assert platform.setpieces.visual_dataset(user, kind, workspace_id=ws.id), kind
 
 
+def test_real_world_setpiece_schema_classifies_and_filters_correctly(platform):
+    """Regression for the reported bug: a real export where the type is in
+    `set_piece` and a `Type` column means Attack/Defence. Free kicks / throw-ins
+    must NOT collapse into 'corner', attack/defence must split, and the Inswing
+    filter must return ONLY inswing (not outswing)."""
+    from fap.setpieces import analysis as SPA
+    from fap.setpieces.models import SetPieceFilter
+    user = _user()
+    ws = platform.workspace_manager.ensure_workspace(user)
+    raw = SPA.read_table((_AUDIT / "setpiece_schema_proxy_style.csv").read_bytes(), "px.csv")
+    frame = SPA.to_event_frame(raw)                     # set-piece schema -> canonical
+    _import_and_activate(platform, user, ws, frame.to_csv(index=False).encode(), "Proxy style")
+
+    svc = platform.setpieces
+    sps = svc.search(user, workspace_id=ws.id)
+    types = {}
+    for s in sps:
+        types[s.type] = types.get(s.type, 0) + 1
+    assert types == {"corner": 3, "free_kick": 2, "throw_in": 2, "penalty": 1}, types
+
+    def n(**kw):
+        return len(svc._filtered(user, SetPieceFilter(**kw), ws.id))
+    # free kicks and throw-ins are present (were being lost as 'corner')
+    assert n(type="free_kick") == 2 and n(type="throw_in") == 2
+    # attack / defence split correct
+    assert n(phase="defensive") == 2 and n(phase="offensive") == 6
+    # THE reported bug: inswing filter returns only inswing
+    assert n(delivery_type="inswing") == 3
+    assert n(delivery_type="outswing") == 2
+    assert n(type="corner", delivery_type="inswing") == 2   # PX1, PX3
+
+
 def test_tagging_set_piece_csv_enters_through_data_hub(platform):
     """A Set Piece CSV produced by the Tagging Studio imports the SAME way and
     becomes available to Set Piece analysis — no Tagging->SetPiece special path."""

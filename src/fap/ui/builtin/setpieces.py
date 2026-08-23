@@ -845,10 +845,17 @@ class SetPieceAnalysisPage(Page):
         name = st.text_input("Dataset name", value=up.name.rsplit(".", 1)[0], key="sp_ds_name")
         if st.button("Import via Data Hub", type="primary", key="sp_import_datahub"):
             try:
-                res = datahub.analyze(up.getvalue(), up.name)
+                from fap.setpieces import analysis as SPA
+                raw = SPA.read_table(up.getvalue(), up.name)
+                # normalize the set-piece schema (set_piece / Type=Attack-Defence /
+                # x,y,x2,y2 / delivery_type …) into a canonical event frame, then feed
+                # the standard Data Hub pipeline — one ingestion path, real files welcome.
+                frame = SPA.to_event_frame(raw)
+                data = frame.to_csv(index=False).encode("utf-8")
+                res = datahub.analyze(data, (name or up.name) + ".csv")
                 if getattr(res, "import_result", None) is None:
-                    st.error("The Data Hub did not recognise this as an event dataset. Ensure it "
-                             "carries event_type / x / y (or a set_piece column).")
+                    st.error("The Data Hub did not recognise this file. Expected set-piece "
+                             "columns (set_piece / type, x, y) or canonical events.")
                     return
                 ds = datahub.save_dataset(shell.user, res.import_result, name=name or up.name,
                                           workspace_id=shell.workspace_id,

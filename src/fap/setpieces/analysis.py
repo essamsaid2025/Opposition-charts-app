@@ -47,8 +47,11 @@ _PHASE_ALIASES = {
 }
 _PERSPECTIVE_ALIASES = {
     "own": "own", "own_team": "own", "us": "own", "team": "own", "self": "own",
+    "attack": "own", "attacking": "own", "offensive": "own", "offence": "own", "offense": "own",
     "opposition": "opposition", "opponent": "opposition", "opp": "opposition",
     "against": "opposition", "them": "opposition",
+    "defence": "opposition", "defense": "opposition", "defending": "opposition",
+    "defensive": "opposition",
 }
 
 
@@ -149,8 +152,10 @@ def read_table(data: bytes, filename: str) -> pd.DataFrame:
 # --------------------------------------------------------- column-alias mapping
 # field -> candidate source column names (lower-cased, punctuation-insensitive).
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "type": ("type", "set_piece", "set_piece_type", "event", "event_type", "play_pattern", "situation"),
-    "phase": ("phase", "direction", "for_against", "attack_defend"),
+    # ``set_piece`` wins over a generic ``type`` column: real exports often carry a
+    # ``Type`` column that means Attack/Defence (the phase), NOT the set-piece kind.
+    "type": ("set_piece", "set_piece_type", "situation", "play_pattern", "event_type", "event", "type"),
+    "phase": ("phase", "direction", "for_against", "attack_defend", "attack_defence", "att_def"),
     "perspective": ("perspective", "own_opposition", "team_perspective", "side_of_analysis"),
     "team": ("team", "team_name", "attacking_team"),
     "opponent": ("opponent", "opposition", "against"),
@@ -197,14 +202,48 @@ def _clean_col(name: str) -> str:
     return str(name).strip().lower().replace(" ", "_").replace("-", "_").replace(".", "_")
 
 
-def detect_mapping(columns: list[str]) -> dict[str, str]:
-    """Best-effort field -> actual-column map from a source header."""
+_ATTACK_DEFENCE = {"attack", "defence", "defense", "attacking", "defending",
+                   "offensive", "defensive", "offence", "offense", "att", "def"}
+_SP_TYPE_VALUES = set(_TYPE_ALIASES)
+
+
+def detect_mapping(columns: list[str], df: "pd.DataFrame | None" = None) -> dict[str, str]:
+    """Best-effort field -> actual-column map from a source header.
+
+    Value-aware when ``df`` is given: a column literally named ``Type`` (or similar)
+    whose VALUES are Attack/Defence is the phase dimension, not the set-piece kind —
+    so it is bound to ``phase`` and never hijacks ``type``. This is what makes a real
+    export (``set_piece`` = kind, ``Type`` = Attack/Defence) classify correctly."""
     lookup = {_clean_col(c): c for c in columns}
     mapping: dict[str, str] = {}
+
+    def _values(col: str) -> set[str]:
+        if df is None or col not in df.columns:
+            return set()
+        return {_norm_token(v) for v in df[col].dropna().astype(str).head(50)}
+
+    # pre-classify each source column by its values so we can disambiguate collisions
+    ad_cols = {c for c in columns if _values(c) and _values(c) <= (_ATTACK_DEFENCE | {""})}
+    type_cols = {c for c in columns if _values(c) & _SP_TYPE_VALUES}
+
     for field, aliases in FIELD_ALIASES.items():
         for alias in aliases:
-            if alias in lookup:
-                mapping[field] = lookup[alias]
+            if alias not in lookup:
+                continue
+            col = lookup[alias]
+            if field == "type" and df is not None:
+                # never let an Attack/Defence column become the set-piece type;
+                # prefer a column whose values ARE set-piece kinds when one exists.
+                if col in ad_cols and (type_cols - ad_cols):
+                    continue
+            mapping[field] = col
+            break
+
+    # bind the Attack/Defence column to phase when it isn't already mapped there
+    if df is not None and "phase" not in mapping:
+        for c in columns:
+            if c in ad_cols and c not in mapping.values():
+                mapping["phase"] = c
                 break
     return mapping
 
@@ -225,6 +264,51 @@ def _to_float(value: Any) -> float | None:
 def _to_int(value: Any) -> int | None:
     f = _to_float(value)
     return int(f) if f is not None else None
+
+
+_GOAL_WORDS = ("goal",)
+_SHOT_WORDS = ("shot", "threat", "on target", "saved", "post", "blocked")
+
+
+def to_event_frame(df: pd.DataFrame, *, defaults: dict[str, Any] | None = None) -> pd.DataFrame:
+    """Convert a set-piece-schema file (``set_piece``/``Type``/``delivery_type``/
+    ``x,y,x2,y2`` …) into the CANONICAL event frame the Data Hub ingests: one row
+    per set-piece delivery with ``event_type`` (the set-piece kind), ``x,y`` origin,
+    ``end_x,end_y`` landing, ``perspective``/``phase`` (from Attack/Defence),
+    ``delivery_type``, ``side``, ``outcome`` and a ``shot_result`` signal. This is the
+    ONE adapter that lets a real set-piece export flow through the standard Data Hub
+    pipeline and the standard derivation — no separate set-piece dataframe."""
+    mapping = detect_mapping(list(df.columns), df)
+    rows, _ = normalize_rows(df, mapping, defaults=defaults)
+    result_col = None
+    for cand in ("result", "end_result"):
+        if cand in {_clean_col(c): c for c in df.columns}:
+            result_col = {_clean_col(c): c for c in df.columns}[cand]
+            break
+    out: list[dict[str, Any]] = []
+    for i, rec in enumerate(rows):
+        raw = df.iloc[i]
+        result = str(raw[result_col]).strip().lower() if result_col is not None else ""
+        outcome = str(rec.get("outcome", "") or "").strip().lower()
+        goal = any(w in result for w in _GOAL_WORDS) or "goal" in outcome
+        shot = goal or any(w in result for w in _SHOT_WORDS)
+        out.append({
+            "event_type": rec.get("type", "corner"), "set_piece": rec.get("type", "corner"),
+            "team": rec.get("team", ""), "opponent": rec.get("opponent", ""),
+            "player": rec.get("taker", ""), "x": rec.get("start_x"), "y": rec.get("start_y"),
+            "end_x": rec.get("end_x"), "end_y": rec.get("end_y"),
+            "perspective": rec.get("perspective", "own"), "phase": rec.get("phase", "offensive"),
+            "delivery_type": rec.get("delivery_type", ""), "side": rec.get("side", ""),
+            "foot": rec.get("foot", ""), "outcome": rec.get("outcome", ""),
+            "shot_result": ("Goal" if goal else "Shot" if shot else ""),
+            "players_in_box": rec.get("players_in_box"), "xg": rec.get("xg"),
+            "first_contact_team": rec.get("first_contact_team", ""),
+            "target_zone": (str(raw.get("target_zone", "")).strip() if "target_zone" in df.columns else ""),
+            "competition": rec.get("competition", ""), "season": rec.get("season", ""),
+            "match_id": rec.get("match_id", ""), "minute": rec.get("minute"),
+            "period": rec.get("period"),
+        })
+    return pd.DataFrame(out)
 
 
 def normalize_rows(df: pd.DataFrame, mapping: dict[str, str], *,
@@ -253,8 +337,14 @@ def normalize_rows(df: pd.DataFrame, mapping: dict[str, str], *,
             # canonicalize controlled vocabularies
             rec["type"] = canonical_type(rec.get("type", defaults.get("type", "corner")))
             rec["phase"] = canonical_phase(rec.get("phase", defaults.get("phase", "offensive")))
-            rec["perspective"] = canonical_perspective(
-                rec.get("perspective", defaults.get("perspective", "own")))
+            # when the file only carries an Attack/Defence dimension (mapped to phase),
+            # the perspective follows it: Attack -> own, Defence -> opposition.
+            if "perspective" in mapping:
+                rec["perspective"] = canonical_perspective(rec.get("perspective"))
+            elif "phase" in mapping:
+                rec["perspective"] = "own" if rec["phase"] == "offensive" else "opposition"
+            else:
+                rec["perspective"] = canonical_perspective(defaults.get("perspective", "own"))
             if rec.get("delivery_type"):
                 rec["delivery_type"] = canonical_delivery(rec["delivery_type"])
             if rec.get("side"):

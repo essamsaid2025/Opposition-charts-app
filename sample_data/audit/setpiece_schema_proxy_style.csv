@@ -1,0 +1,9 @@
+ID,team,opponent,competition,set_piece,Type,side,delivery_type,taker,x,y,x2,y2,target_zone,outcome,result
+PX1,Proxy FC,Rivals,League,corner,Attack,Right,Inswing,7,98,2,95,48,small area,Successful,Goal
+PX2,Proxy FC,Rivals,League,corner,Attack,Left,Outswing,10,98,98,96,40,Near post,Unsuccessful,Cleareance
+PX3,Proxy FC,Rivals,League,corner,Defence,Right,Inswing,,98,95,94,55,Penalty area,Unsuccessful,Threat
+PX4,Proxy FC,Rivals,League,Free kick,Attack,Right,Outswing,7,62,90,88,40,Penalty area,Successful,shot
+PX5,Proxy FC,Rivals,League,Free kick,Attack,Left,Inswing,10,58,15,86,52,Far post,Unsuccessful,Cleareance
+PX6,Proxy FC,Rivals,League,Throw in,Attack,Left,,3,80,1,90,45,Near post,Unsuccessful,Cleareance
+PX7,Proxy FC,Rivals,League,Throw in,Defence,Right,,,82,96,91,60,Near post,Successful,Cleareance
+PX8,Proxy FC,Rivals,League,penalty,Attack,Central,,7,88,50,100,50,,Successful,Goal

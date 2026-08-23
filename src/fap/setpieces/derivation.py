@@ -23,7 +23,7 @@ from fap.setpieces.models import SetPiece
 # Bump whenever the derivation OUTPUT changes (id scheme, fields, classification).
 # It is part of the derived-set-piece cache key, so a logic fix is never masked by
 # a stale cached result computed by an older version. v2: unique per-row derived ids.
-DERIVATION_VERSION = 3
+DERIVATION_VERSION = 4
 
 # canonical event_type / set_piece values -> the module's controlled type
 _TYPE_MAP = {
@@ -77,12 +77,20 @@ def _b(row: dict[str, Any], *keys: str) -> bool:
     return _s(row, *keys).lower() in _TRUTHY
 
 
+def _norm(v: Any) -> str:
+    return str(v or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
 def _classify(row: dict[str, Any]) -> str | None:
-    et = str(row.get("event_type", "") or "").strip().lower()
-    if et in _TYPE_MAP:
-        return _TYPE_MAP[et]
-    sp = str(row.get("set_piece", "") or "").strip().lower()
-    return _TYPE_MAP.get(sp)
+    """Reuse the canonical set-piece type vocabulary (handles 'Free kick', 'throw in',
+    'ck', 'fk', … — one source of truth with the importer)."""
+    from fap.setpieces.analysis import _TYPE_ALIASES
+    for key in ("event_type", "set_piece"):
+        v = _norm(row.get(key))
+        t = _TYPE_ALIASES.get(v) or (_TYPE_MAP.get(v) if v in _TYPE_MAP else None)
+        if t:
+            return t
+    return None
 
 
 def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
@@ -95,12 +103,14 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
     if frame is None or getattr(frame, "empty", True):
         return []
     df = frame
-    keys = set(_TYPE_MAP)
+    from fap.setpieces.analysis import _TYPE_ALIASES
+    keys = set(_TYPE_MAP) | set(_TYPE_ALIASES)         # one vocabulary with the importer
     mask = pd.Series(False, index=df.index)
-    if "event_type" in df.columns:
-        mask = mask | df["event_type"].astype(str).str.lower().str.strip().isin(keys)
-    if "set_piece" in df.columns:
-        mask = mask | df["set_piece"].astype(str).str.lower().str.strip().isin(keys)
+    for col in ("event_type", "set_piece"):
+        if col in df.columns:
+            norm = df[col].astype(str).str.strip().str.lower().str.replace(
+                "-", "_", regex=False).str.replace(" ", "_", regex=False)
+            mask = mask | norm.isin({k.replace(" ", "_").replace("-", "_") for k in keys})
     subset = df[mask]
     if subset.empty:
         return []
@@ -121,7 +131,21 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
         if t is None:
             continue
         team = str(row.get("team", "") or "").strip()
-        own = bool(primary) and team == primary
+        # explicit perspective/phase in the frame wins over the team heuristic — a
+        # single-team export (team always the analysed side) distinguishes attack vs
+        # defence by a perspective/phase column, not by the team name.
+        persp_raw = _norm(row.get("perspective"))
+        phase_raw = _norm(row.get("phase"))
+        if persp_raw in ("own", "attack", "attacking", "offensive"):
+            own = True
+        elif persp_raw in ("opposition", "opponent", "defence", "defense", "defending", "defensive"):
+            own = False
+        elif phase_raw in ("offensive", "attack", "attacking"):
+            own = True
+        elif phase_raw in ("defensive", "defence", "defense", "defending"):
+            own = False
+        else:
+            own = bool(primary) and team == primary
         shot_result = str(row.get("shot_result", "") or "").strip().lower()
         outcome = str(row.get("outcome", "") or "").strip().lower()
         goal = shot_result in _GOALISH or outcome in _GOALISH
