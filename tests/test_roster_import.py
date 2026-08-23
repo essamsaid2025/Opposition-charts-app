@@ -166,6 +166,28 @@ def test_scouting_callback_creates_targets(platform):
     assert rows[0]["operational_id"].startswith("CLB-")
 
 
+def test_teams_roster_callback_creates_members(platform):
+    """The Teams roster import must satisfy TeamService.add_member with just a
+    name (auto operational id) and with optional profile columns."""
+    user = _user()
+    svc = platform.teams
+    team = svc.create_team(user, "U19", kind="academy", age_group="U19")
+
+    def create_row(row: dict) -> None:                        # mirrors teams.py
+        name = str(row.pop("player_name", "")).strip()
+        svc.add_member(user, team.id, player_name=name, source="scouting", **row)
+
+    create_row({"player_name": "Just A Name"})                # minimum: name only
+    create_row({"player_name": "Full Row", "shirt_number": "9", "role": "ST",
+                "nationality": "Ghana", "preferred_foot": "Left", "height_cm": 182})
+    members = {m.player_name: m for m in svc.list_members(team.id)}
+    assert set(members) == {"Just A Name", "Full Row"}
+    assert members["Just A Name"].operational_id.startswith("ACD-")
+    full = members["Full Row"]
+    assert full.shirt_number == "9" and full.role == "ST"
+    assert full.preferred_foot == "Left" and full.height_cm == 182
+
+
 def test_excel_roundtrip():
     frame = pd.DataFrame([{"Player": "Ada", "No": 7}])
     buf = frame.to_excel  # ensure openpyxl path is available

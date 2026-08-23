@@ -445,6 +445,7 @@ class TeamsPage(Page):
                 st.caption(f"Leave the id blank and each new player gets a unique **{pfx}-** id "
                            "automatically. (Later phases: pick from your existing scouting / "
                            "first-team players.)")
+            self._import_roster(shell, svc, t)
         if not members:
             C.render_empty_state("Empty roster", "Add players above.", icon_name="players")
             return
@@ -464,6 +465,52 @@ class TeamsPage(Page):
             if self._can_edit and cols[2].button("Remove", key=f"tm_mrm_{m.id}",
                                                   use_container_width=True):
                 svc.remove_member(shell.user, m.id); st.rerun()
+
+    def _import_roster(self, shell, svc, t) -> None:
+        """Bulk-import a roster from a CSV/Excel file — at minimum a column of
+        names. Reuses the shared roster-import component and the same
+        ``add_member`` service as the manual form (no duplicate persistence).
+        Each row becomes a squad player; a blank operational id is auto-assigned."""
+        from fap.ui.components.roster_import import FieldSpec, render_roster_import
+
+        source = "first_team" if t.kind == "club" else "scouting"
+        with st.expander("Import roster from CSV / Excel", expanded=False):
+            st.caption("Upload a squad list — a **Name** column is all that's required; "
+                       "any other columns below are matched automatically.")
+            specs = [
+                FieldSpec("player_name", "Name",
+                          ("name", "player", "player name", "full name"), required=True),
+                FieldSpec("shirt_number", "Shirt number",
+                          ("number", "no", "shirt", "shirt no", "squad number")),
+                FieldSpec("role", "Position", ("position", "pos", "primary position")),
+                FieldSpec("secondary_role", "Secondary position",
+                          ("secondary position", "other position")),
+                FieldSpec("operational_id", "Operational id", ("id", "player id", "op id")),
+                FieldSpec("date_of_birth", "Date of birth",
+                          ("dob", "birth date", "born")),
+                FieldSpec("nationality", "Nationality", ("nation", "country")),
+                FieldSpec("preferred_foot", "Preferred foot", ("foot",),
+                          choices=("Right", "Left", "Both")),
+                FieldSpec("height_cm", "Height (cm)", ("height", "height cm"), kind="int"),
+                FieldSpec("weight_kg", "Weight (kg)", ("weight", "weight kg"), kind="int"),
+                FieldSpec("joined_date", "Joined date", ("joined", "join date", "signed")),
+                FieldSpec("contract_end", "Contract end",
+                          ("contract", "contract until", "contract expiry")),
+                FieldSpec("availability", "Availability", (),
+                          choices=("available", "injured", "suspended", "unavailable")),
+                FieldSpec("agent", "Agent", ("representative",)),
+                FieldSpec("email", "Email", ()),
+                FieldSpec("phone", "Phone", ("mobile",)),
+                FieldSpec("notes", "Notes", ("note", "comment")),
+            ]
+
+            def create_row(row: dict) -> None:
+                name = str(row.pop("player_name", "")).strip()
+                svc.add_member(shell.user, t.id, player_name=name, source=source, **row)
+
+            render_roster_import(key=f"tm_import_{t.id}", specs=specs,
+                                 create_row=create_row, noun="player",
+                                 can_edit=self._can_edit)
 
     # ---------------------------------------------------------------- player page (T6)
     def _player_detail(self, shell, svc, t, member) -> None:
