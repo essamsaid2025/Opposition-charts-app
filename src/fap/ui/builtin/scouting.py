@@ -210,6 +210,7 @@ class ScoutingPage(Page):
         if self._can_edit:
             st.divider()
             self._add_player_form(shell, svc)
+            self._import_players(shell, svc)
 
     def _add_player_form(self, shell, svc) -> None:
         """Professional, pathway-aware registration. Only fields relevant to the
@@ -314,6 +315,55 @@ class ScoutingPage(Page):
                 st.session_state[SEL] = p.id
                 st.toast(f"Created {p.name} — {identity.operational_id_of(p)}")
                 st.rerun()
+
+    def _import_players(self, shell, svc) -> None:
+        """Bulk-import scouting targets from a CSV/Excel export. Reuses the shared
+        roster-import component and the same ``create_player`` service as the
+        single-player form; creation never depends on any active dataset."""
+        from fap.scouting import identity, player_profile
+        from fap.ui.components.roster_import import FieldSpec, render_roster_import
+
+        with st.expander("⬆ Import players from CSV / Excel", expanded=False):
+            st.caption("Upload a player list (e.g. a league or scouting export). "
+                       "Columns are matched automatically — review the mapping, "
+                       "then import. Every player is created as a first-team target.")
+            specs = [
+                FieldSpec("name", "Full name", ("player", "player name", "full name"),
+                          required=True),
+                FieldSpec("display_name", "Display name",
+                          ("preferred name", "known as", "nickname")),
+                FieldSpec("club", "Club", ("team", "current club")),
+                FieldSpec("league", "League", ("competition", "division")),
+                FieldSpec("position", "Primary position", ("pos", "role")),
+                FieldSpec("secondary_positions", "Secondary positions",
+                          ("other positions",), kind="list"),
+                FieldSpec("dob", "Date of birth", ("dob", "birth date", "born")),
+                FieldSpec("age", "Age", (), kind="int"),
+                FieldSpec("nationality", "Nationality", ("nation", "country")),
+                FieldSpec("foot", "Preferred foot", ("foot",),
+                          choices=tuple(f for f in player_profile.FOOT_VALUES if f)),
+                FieldSpec("height", "Height (cm)", ("height cm",), kind="int"),
+                FieldSpec("weight", "Weight (kg)", ("weight kg",), kind="int"),
+                FieldSpec("shirt_number", "Shirt number",
+                          ("number", "no", "shirt", "shirt no"), kind="int"),
+                FieldSpec("contract_until", "Contract expiry",
+                          ("contract until", "contract", "expiry")),
+                FieldSpec("market_value", "Market value", ("value",), kind="float"),
+                FieldSpec("agent", "Agent", ()),
+                FieldSpec("source", "Source", ("data source",)),
+                FieldSpec("status", "Recruitment status", (),
+                          choices=tuple(identity.RECRUITMENT_STATUSES)),
+                FieldSpec("priority", "Priority", (),
+                          choices=tuple(p for p in identity.RECRUITMENT_PRIORITIES if p)),
+            ]
+
+            def create_row(row: dict) -> None:
+                name = str(row.pop("name", "")).strip()
+                svc.create_player(shell.user, name, workspace_id=shell.workspace_id,
+                                  player_type="first_team", **row)
+
+            render_roster_import(key="scout_import", specs=specs, create_row=create_row,
+                                 noun="player", can_edit=self._can_edit)
 
     def _registry_card(self, shell, svc, r: dict) -> None:
         from fap.theme import components as C

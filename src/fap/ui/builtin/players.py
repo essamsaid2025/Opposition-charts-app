@@ -26,6 +26,7 @@ from fap.ui.page import Page, page_registry
 
 SEL = "_ftp_id"            # selected first-team player
 ADD = "_ftp_add"           # add-player wizard open flag
+IMPORT = "_ftp_import"     # bulk CSV/Excel import open flag
 OPEN_REPORT = "_open_report_id"   # Report Studio navigation key (reused)
 
 
@@ -79,6 +80,9 @@ class FirstTeamPlayersPage(Page):
         if st.session_state.get(ADD) and self._can_edit:
             self._wizard(shell, svc)
             return
+        if st.session_state.get(IMPORT) and self._can_edit:
+            self._import(shell, svc)
+            return
         self._squad(shell, svc)
 
     # ---------------------------------------------------------------- squad
@@ -101,6 +105,10 @@ class FirstTeamPlayersPage(Page):
             if self._can_edit and st.button("Add player", type="primary", key="ftp_addbtn",
                                             use_container_width=True):
                 st.session_state[ADD] = True
+                st.rerun()
+            if self._can_edit and st.button("Import CSV / Excel", key="ftp_importbtn",
+                                            use_container_width=True):
+                st.session_state[IMPORT] = True
                 st.rerun()
 
         side, grid = st.columns([1, 3])
@@ -333,6 +341,56 @@ class FirstTeamPlayersPage(Page):
             st.rerun()
         except Exception as exc:
             st.error(f"Could not create player: {exc}")
+
+    # ---------------------------------------------------------------- bulk import
+    def _import(self, shell, svc) -> None:
+        """Bulk-create squad players from a CSV/Excel upload. Reuses the shared
+        roster-import component and the same ``create_player``/``add_contract``
+        services as the single-player wizard — no duplicate persistence."""
+        from fap.ui.components.roster_import import FieldSpec, render_roster_import
+
+        if st.button("← Back to squad", key="ftp_imp_back"):
+            st.session_state[IMPORT] = False
+            st.rerun()
+        st.subheader("Import players")
+        st.caption("Upload a squad list (CSV or Excel). Columns are matched to "
+                   "player fields automatically — review the mapping, then import.")
+
+        specs = [
+            FieldSpec("display_name", "Name", ("name", "player", "player name",
+                      "full name", "display name"), required=True),
+            FieldSpec("first_name", "First name", ("first", "given name")),
+            FieldSpec("last_name", "Last name", ("last", "surname", "family name")),
+            FieldSpec("shirt_number", "Shirt number",
+                      ("number", "no", "shirt", "shirt no", "kit number",
+                       "squad number", "squad no"), kind="int"),
+            FieldSpec("dob", "Date of birth", ("dob", "birth date", "birthdate", "born")),
+            FieldSpec("nationality", "Nationality", ("nation", "country")),
+            FieldSpec("foot", "Preferred foot", ("foot",),
+                      choices=("left", "right", "both")),
+            FieldSpec("primary_position", "Primary position",
+                      ("position", "pos", "role")),
+            FieldSpec("secondary_positions", "Secondary positions",
+                      ("other positions", "alt positions"), kind="list"),
+            FieldSpec("height", "Height (cm)", ("height cm",), kind="int"),
+            FieldSpec("weight", "Weight (kg)", ("weight kg",), kind="int"),
+            FieldSpec("join_date", "Join date", ("joined", "signed", "join date")),
+            FieldSpec("contract_end", "Contract end",
+                      ("contract until", "contract expiry", "contract", "expiry")),
+            FieldSpec("market_value", "Market value", ("value",), kind="float"),
+        ]
+
+        def create_row(row: dict) -> None:
+            contract = {k: row.pop(k) for k in ("contract_end", "market_value")
+                        if k in row}
+            p = svc.create_player(shell.user, workspace_id=shell.workspace_id, **row)
+            if any(v for v in contract.values()):
+                svc.add_contract(shell.user, p.id,
+                                 contract_end=contract.get("contract_end", ""),
+                                 market_value=contract.get("market_value"))
+
+        render_roster_import(key="ftp_import", specs=specs, create_row=create_row,
+                             noun="player", can_edit=self._can_edit)
 
     # ---------------------------------------------------------------- profile hub
     def _profile(self, shell, svc, player_id) -> None:
