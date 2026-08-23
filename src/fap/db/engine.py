@@ -884,6 +884,14 @@ MIGRATIONS: list[tuple[int, str]] = [
     (19, """
         ALTER TABLE team_members ADD COLUMN profile_image_id TEXT NOT NULL DEFAULT '';
     """),
+    # Team-level linked datasets (an opposition team's data file, etc.). Links live in
+    # teams.document['datasets'] and are read BY dataset_id (active-independent) — the same
+    # pattern as scouting/first-team dataset links: the data keeps showing regardless of
+    # which dataset is active in the Data Hub. Additive & defaulted ('{}' = no links) so
+    # every existing team row is unchanged.
+    (20, """
+        ALTER TABLE teams ADD COLUMN document TEXT NOT NULL DEFAULT '{}';
+    """),
 ]
 
 

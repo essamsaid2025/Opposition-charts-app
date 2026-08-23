@@ -277,7 +277,8 @@ def _signature(viz_id: str, controls: dict, filt, theme_id: str, frame, scope: s
 
 # ---------------------------------------------------------------- entry point
 def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
-                                   on_assign=None, curate=None, event_filter=None) -> None:
+                                   on_assign=None, curate=None, event_filter=None,
+                                   dataset_context=None) -> None:
     """Render the player visualization workspace.
 
     ``on_assign`` (optional): a callback ``(png_bytes, title, viz_id) -> None``. When
@@ -290,14 +291,25 @@ def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
     passes ``fap.scouting.catalog.curate_for_scouting`` to hide team/tactical visuals and
     file the rest under player-centric headings). Default ``None`` = the full registry
     catalog, unchanged — so First-Team and Open Play behave exactly as before.
+
+    ``dataset_context`` (optional): an explicit ``(dataset_id, dataset_name)`` for the
+    dataset the ``frame`` was read from. When given, the workspace renders that frame
+    WITHOUT requiring (or changing) the globally active dataset — so a caller that reads
+    a dataset BY ID (e.g. a team's linked opposition data, Teams) shows the same charts
+    regardless of what is active in the Data Hub. Default ``None`` = use the active
+    dataset, unchanged.
     """
-    try:
-        active = shell.wm.active_dataset(shell.user) if shell.wm is not None else None
-    except Exception:
-        # a lookup error would otherwise render as the legitimate "No active dataset"
-        # empty state below, hiding a real backend failure - log the real cause.
-        logger.exception("active dataset lookup failed in viz workspace")
-        active = None
+    if dataset_context is not None:
+        from types import SimpleNamespace
+        active = SimpleNamespace(id=dataset_context[0], name=dataset_context[1])
+    else:
+        try:
+            active = shell.wm.active_dataset(shell.user) if shell.wm is not None else None
+        except Exception:
+            # a lookup error would otherwise render as the legitimate "No active dataset"
+            # empty state below, hiding a real backend failure - log the real cause.
+            logger.exception("active dataset lookup failed in viz workspace")
+            active = None
 
     # --- empty states (Data Hub aware) ---
     if active is None:

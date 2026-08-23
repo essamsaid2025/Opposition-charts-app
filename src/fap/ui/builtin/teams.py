@@ -127,16 +127,18 @@ class TeamsPage(Page):
                          f"{_html.escape(' · '.join(x for x in (tag, t.competition, t.season) if x))}"
                          f"</span>", unsafe_allow_html=True)
 
-        tabs = st.tabs(["Overview", "Roster", "Matches", "Media", "Info & crest"])
+        tabs = st.tabs(["Overview", "Data", "Roster", "Matches", "Media", "Info & crest"])
         with tabs[0]:
             self._overview_tab(shell, svc, t)
         with tabs[1]:
-            self._roster(shell, svc, t)
+            self._data_tab(shell, svc, t)
         with tabs[2]:
-            self._matches(shell, svc, t)
+            self._roster(shell, svc, t)
         with tabs[3]:
-            self._media_section(shell, svc, t, match_id="")
+            self._matches(shell, svc, t)
         with tabs[4]:
+            self._media_section(shell, svc, t, match_id="")
+        with tabs[5]:
             self._info(shell, svc, t)
 
     # ---------------------------------------------------------------- overview (T5)
@@ -154,6 +156,113 @@ class TeamsPage(Page):
         c2[2].metric("Goal diff", rec["gd"])
         c2[3].metric("Win rate", f"{rec['win_pct']}%")
         st.caption("Record is computed from matches that have a score recorded (nothing assumed).")
+
+    # ---------------------------------------------------------------- data (linked datasets)
+    def _data_tab(self, shell, svc, t) -> None:
+        """Link Data Hub datasets (e.g. an opposition team's data file) to this team.
+        Links are stored on the team and read BY id, so the data keeps showing even
+        after a different dataset is activated in the Data Hub — same as scouting."""
+        st.markdown("**Linked data**")
+        st.caption("Link this team's data file(s) from the Data Hub. A link stays with the team, "
+                   "and its data keeps showing even after you activate a different dataset in the hub.")
+
+        if self._can_edit:
+            available = svc.available_datasets(shell.workspace_id)
+            linked_ids = {l["dataset_id"] for l in svc.list_linked_datasets(t.id)}
+            choices = [d for d in available if d.id not in linked_ids]
+            if choices:
+                labels = {d.id: (d.name + (f" · {d.rows:,} rows" if getattr(d, "rows", 0) else ""))
+                          for d in choices}
+                c = st.columns([4, 2, 1], vertical_alignment="bottom")
+                pick = c[0].selectbox("Data Hub dataset", list(labels),
+                                      format_func=lambda i: labels[i], key=f"tm_ds_pick_{t.id}")
+                mid = c[1].text_input("Match id (optional)", key=f"tm_ds_mid_{t.id}",
+                                      help="Restrict to one match inside the dataset, if it holds many.")
+                if c[2].button("Link", type="primary", key=f"tm_ds_link_{t.id}",
+                               use_container_width=True):
+                    try:
+                        svc.link_dataset(shell.user, t.id, pick, match_id=mid.strip())
+                        st.toast("Dataset linked")
+                        st.rerun()
+                    except ValueError as exc:
+                        st.warning(str(exc))
+            else:
+                st.caption("No unlinked datasets in this workspace. Import one in the Data Hub, "
+                           "then link it here.")
+
+        links = svc.list_linked_datasets(t.id, user=shell.user)
+        if not links:
+            C.render_empty_state("No linked data", "Link this team's dataset above to analyse it "
+                                 "here — independent of the active dataset.", icon_name="datasets")
+            return
+        for l in links:
+            cols = st.columns([5, 2, 1], vertical_alignment="center")
+            badges = [C.badge_html("Active now", "success")] if l["is_active"] else []
+            badges.append(C.badge_html("Available", "info") if l["available"]
+                          else C.badge_html("Missing from hub", "danger"))
+            meta = " · ".join(x for x in (
+                (f"{l['current_rows']:,} rows" if l.get("current_rows") else ""),
+                (f"match {l['match_id']}" if l.get("match_id") else ""),
+                (f"linked {l['linked_at'][:10]}" if l.get("linked_at") else "")) if x)
+            cols[0].markdown(
+                f"**{_html.escape(l.get('current_name') or l.get('dataset_name', ''))}** &nbsp; "
+                f"{' '.join(badges)}<br><span style='color:var(--fap-text-muted)'>"
+                f"{_html.escape(meta)}</span>", unsafe_allow_html=True)
+            if l["available"] and cols[1].button("Analyse", key=f"tm_ds_an_{t.id}_{l['dataset_id']}",
+                                                  use_container_width=True):
+                st.session_state[f"tm_ds_sel_{t.id}"] = l["dataset_id"]
+                st.rerun()
+            if self._can_edit and cols[2].button("Unlink", key=f"tm_ds_rm_{t.id}_{l['dataset_id']}",
+                                                  use_container_width=True):
+                svc.unlink_dataset(shell.user, t.id, l["dataset_id"])
+                st.session_state.pop(f"tm_ds_sel_{t.id}", None)
+                st.rerun()
+
+        sel = st.session_state.get(f"tm_ds_sel_{t.id}")
+        sel_link = next((l for l in links if l["dataset_id"] == sel and l["available"]), None)
+        if sel_link is None:
+            st.caption("Select **Analyse** on a linked dataset to explore it (independent of the "
+                       "active dataset in the Data Hub).")
+            return
+        st.divider()
+        self._data_analysis(shell, svc, t, sel_link)
+
+    @staticmethod
+    def _distinct_count(df, cols) -> int:
+        for col in cols:
+            if col in df.columns:
+                return int(df[col].astype(str).str.strip().replace("", None).dropna().nunique())
+        return 0
+
+    def _data_analysis(self, shell, svc, t, link) -> None:
+        """Explore a team's linked dataset — summary, preview and the full visualization
+        workspace — read BY id and rendered independent of the active dataset."""
+        frame = svc.team_dataset_frame(t.id, link["dataset_id"])
+        if frame is None:
+            C.render_alert("This dataset has no readable rows (it may have been removed).", "warning")
+            return
+        df = frame
+        if link.get("match_id") and "match_id" in df.columns:
+            df = df[df["match_id"].astype(str) == str(link["match_id"])]
+        st.markdown(f"**Analysing:** {_html.escape(link.get('current_name') or '')}")
+        c = st.columns(4)
+        c[0].metric("Rows", f"{len(df):,}")
+        c[1].metric("Columns", len(df.columns))
+        c[2].metric("Players", self._distinct_count(df, ("player", "player_name", "player.name")))
+        c[3].metric("Matches", self._distinct_count(df, ("match_id",)))
+        with st.expander("Data preview", expanded=False):
+            st.dataframe(df.head(50), use_container_width=True, hide_index=True)
+        st.caption("Tip: set **Render scope → Whole match** for team-level maps and networks.")
+        from fap.ui.components.viz_workspace import render_visualization_workspace
+
+        def _save(png, title, viz_id):
+            svc.add_chart(shell.user, t.id, png, "image/png", title=title, kind="chart")
+
+        render_visualization_workspace(
+            shell, frame=df, player_name=t.name,
+            key=f"tmdsviz_{t.id}_{link['dataset_id']}",
+            on_assign=(_save if self._can_edit else None),
+            dataset_context=(link["dataset_id"], link.get("current_name") or t.name))
 
     # ---------------------------------------------------------------- media (T4)
     def _media_section(self, shell, svc, t, match_id: str = "") -> None:

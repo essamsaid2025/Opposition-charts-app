@@ -1,6 +1,7 @@
 """Relational persistence for teams + team members (mirrors the scouting repositories)."""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fap.db.engine import Database
@@ -15,10 +16,10 @@ class TeamRepository:
     def add(self, t: Team) -> None:
         self._db.execute(
             """INSERT INTO teams (id, name, kind, age_group, competition, season,
-                 crest_image_id, info, created_by)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                 crest_image_id, info, created_by, document)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (t.id, t.name, t.kind, t.age_group, t.competition, t.season,
-             t.crest_image_id, t.info, t.created_by))
+             t.crest_image_id, t.info, t.created_by, json.dumps(t.document or {})))
 
     def list(self) -> list[Team]:
         rows = self._db.query("SELECT * FROM teams ORDER BY kind, age_group, name")
@@ -29,10 +30,13 @@ class TeamRepository:
         return self._team(rows[0]) if rows else None
 
     def update(self, team_id: str, **fields: Any) -> None:
-        allowed = ("name", "kind", "age_group", "competition", "season", "crest_image_id", "info")
+        allowed = ("name", "kind", "age_group", "competition", "season", "crest_image_id",
+                   "info", "document")
         sets = {k: v for k, v in fields.items() if k in allowed}
         if not sets:
             return
+        if "document" in sets:                       # store the extensible bag as JSON text
+            sets["document"] = json.dumps(sets["document"] or {})
         cols = ", ".join(f"{k} = ?" for k in sets)
         self._db.execute(f"UPDATE teams SET {cols} WHERE id = ?", (*sets.values(), team_id))
 
@@ -150,10 +154,17 @@ class TeamRepository:
     # ---- row mappers ----
     @staticmethod
     def _team(r: Any) -> Team:
+        keys = r.keys()
+        raw = r["document"] if "document" in keys else "{}"
+        try:
+            doc = json.loads(raw) if raw else {}
+        except (TypeError, ValueError):
+            doc = {}
         return Team(id=r["id"], name=r["name"], kind=r["kind"], age_group=r["age_group"],
                     competition=r["competition"], season=r["season"],
                     crest_image_id=r["crest_image_id"], info=r["info"],
-                    created_by=r["created_by"], created_at=r["created_at"])
+                    created_by=r["created_by"], created_at=r["created_at"],
+                    document=doc if isinstance(doc, dict) else {})
 
     @staticmethod
     def _media(r: Any) -> TeamMedia:

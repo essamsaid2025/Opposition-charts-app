@@ -1,7 +1,8 @@
 """Plain typed records for the Teams module (migration 14 tables)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 TEAM_KINDS: tuple[str, ...] = ("club", "academy")
 
@@ -18,6 +19,9 @@ class Team:
     info: str = ""
     created_by: str = ""
     created_at: str = ""
+    # extensible bag (survives upgrades without migrations). ``document['datasets']``
+    # holds active-independent links to Data Hub datasets (opposition data files).
+    document: dict[str, Any] = field(default_factory=dict)
 
 
 VENUES: tuple[str, ...] = ("home", "away", "neutral")

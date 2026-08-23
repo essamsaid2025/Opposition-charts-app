@@ -111,6 +111,104 @@ class TeamService:
         except Exception:
             return None
 
+    # ---- linked datasets (opposition data files) --------------------------------
+    # A team can link one or more Data Hub datasets (e.g. an opposition team's event
+    # data file). Links live in teams.document['datasets'] and are read BY dataset_id
+    # (active-INDEPENDENT): the data keeps showing regardless of which dataset is
+    # currently active in the Data Hub — mirroring the scouting/first-team pattern.
+    @staticmethod
+    def _now() -> str:
+        import datetime as _dt
+        return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
+
+    @staticmethod
+    def _links(t: Team) -> list[dict[str, Any]]:
+        doc = getattr(t, "document", None) or {}
+        links = doc.get("datasets")
+        return [dict(x) for x in links] if isinstance(links, list) else []
+
+    def available_datasets(self, workspace_id: str | None = None) -> list[Any]:
+        """Datasets in the workspace the user can link (Data Hub datasets)."""
+        if self._wm is None:
+            return []
+        try:
+            return self._wm.list_datasets(workspace_id=workspace_id)
+        except Exception:
+            return []
+
+    def link_dataset(self, user: Any, team_id: str, dataset_id: str, *,
+                     match_id: str = "") -> Team | None:
+        """Link a Data Hub dataset to a team by id. Idempotent (re-linking refreshes
+        the cached name/rows). Never changes the active dataset or the dataset itself."""
+        dataset_id = str(dataset_id or "").strip()
+        if not dataset_id:
+            raise ValueError("Choose a dataset to link.")
+        t = self.repo.get(team_id)
+        if t is None:
+            return None
+        if self._wm is None:
+            raise ValueError("Data Hub is not available in this session.")
+        ds = self._wm.get_dataset(dataset_id)
+        if ds is None:
+            raise ValueError("That dataset no longer exists in the Data Hub.")
+        links = [x for x in self._links(t) if x.get("dataset_id") != dataset_id]
+        links.append({"dataset_id": dataset_id, "dataset_name": ds.name,
+                      "match_id": str(match_id or "").strip(), "rows": int(getattr(ds, "rows", 0) or 0),
+                      "linked_by": getattr(user, "email", "") or "", "linked_at": self._now()})
+        doc = dict(t.document or {})
+        doc["datasets"] = links
+        self.repo.update(team_id, document=doc)
+        self._record(user, "teams.dataset.link", team_id=team_id, dataset_id=dataset_id)
+        return self.repo.get(team_id)
+
+    def unlink_dataset(self, user: Any, team_id: str, dataset_id: str) -> Team | None:
+        t = self.repo.get(team_id)
+        if t is None:
+            return None
+        links = [x for x in self._links(t) if x.get("dataset_id") != str(dataset_id)]
+        doc = dict(t.document or {})
+        doc["datasets"] = links
+        self.repo.update(team_id, document=doc)
+        self._record(user, "teams.dataset.unlink", team_id=team_id, dataset_id=dataset_id)
+        return self.repo.get(team_id)
+
+    def list_linked_datasets(self, team_id: str, *, user: Any = None) -> list[dict[str, Any]]:
+        """The team's linked datasets, each enriched (read by id, active-independent)
+        with live availability, current row count, and whether it is the active one.
+        ``user`` is used only to flag which link (if any) is the active dataset."""
+        t = self.repo.get(team_id)
+        if t is None:
+            return []
+        active_id = None
+        if self._wm is not None and user is not None:
+            try:
+                active_id = self._wm.active_dataset_id(user)
+            except Exception:
+                active_id = None
+        out: list[dict[str, Any]] = []
+        for link in self._links(t):
+            ds_id = link.get("dataset_id", "")
+            ds = self._wm.get_dataset(ds_id) if self._wm is not None else None
+            out.append({**link, "available": ds is not None,
+                        "current_name": (ds.name if ds is not None else link.get("dataset_name", "")),
+                        "current_rows": int(getattr(ds, "rows", 0) or 0) if ds is not None else link.get("rows", 0),
+                        "is_active": bool(active_id) and ds_id == active_id})
+        return out
+
+    def team_dataset_frame(self, team_id: str, dataset_id: str):
+        """The full event frame of a team's linked dataset, read BY id (active-independent).
+        None when the link is missing or the dataset is gone/empty."""
+        t = self.repo.get(team_id)
+        if t is None or self._wm is None:
+            return None
+        if not any(x.get("dataset_id") == str(dataset_id) for x in self._links(t)):
+            return None
+        try:
+            frame = self._wm.dataset_frame(dataset_id)
+        except Exception:
+            return None
+        return frame if frame is not None and not getattr(frame, "empty", True) else None
+
     # ---- roster ----
     def add_member(self, user: Any, team_id: str, *, player_name: str, operational_id: str = "",
                    player_id: str = "", source: str = "scouting", shirt_number: str = "",
