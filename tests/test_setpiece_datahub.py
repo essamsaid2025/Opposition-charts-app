@@ -157,6 +157,40 @@ def test_real_world_setpiece_schema_classifies_and_filters_correctly(platform):
     assert n(type="corner", delivery_type="inswing") == 2   # PX1, PX3
 
 
+def test_ported_delivery_charts_render_from_structure_columns(platform):
+    """The charts ported from the standalone Set-Pieces app render from a rich export's
+    delivery-structure columns (zones, first/second-ball wins, player counts, taker) —
+    no manual position/contact tagging."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    from fap.core.types import RenderContext
+    from fap.setpieces import analysis as SPA
+    from fap.setpieces.models import SetPieceFilter
+    from fap.themes import ThemeManager
+    from fap.visuals import Renderer, visual_registry
+    from fap.visuals.setpieces import load_setpiece_visuals
+
+    user = _user()
+    ws = platform.workspace_manager.ensure_workspace(user)
+    raw = SPA.read_table((_AUDIT / "setpiece_schema_proxy_style.csv").read_bytes(), "px.csv")
+    _import_and_activate(platform, user, ws, SPA.to_event_frame(raw).to_csv(index=False).encode(), "Px")
+    load_setpiece_visuals()
+    theme = ThemeManager("assets/themes").get("opta_light")
+
+    rows = platform.setpieces.visual_dataset(user, "delivery_full", workspace_id=ws.id)
+    assert rows and "first_contact_win" in rows[0] and "players_near_post" in rows[0]
+    df = pd.DataFrame(rows)
+    for vid in ("sp_delivery_zones", "sp_first_contact_win_zone", "sp_second_ball_map",
+                "sp_target_zone_breakdown", "sp_taker_profile", "sp_defensive_structure"):
+        assert vid in visual_registry, vid
+        fig = Renderer().render(visual_registry.create(vid),
+                                RenderContext(df=df, theme=theme, controls={}, meta={}))
+        assert fig.axes and len(fig.axes[0].get_children()) > 0
+        plt.close(fig)
+
+
 def test_tagging_set_piece_csv_enters_through_data_hub(platform):
     """A Set Piece CSV produced by the Tagging Studio imports the SAME way and
     becomes available to Set Piece analysis — no Tagging->SetPiece special path."""

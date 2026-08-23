@@ -82,6 +82,33 @@ def _delivery_trajectory(svc, sps):
             if None not in (s.start_x, s.start_y, s.end_x, s.end_y)]
 
 
+def _delivery_full(svc, sps):
+    """One rich row per set-piece delivery, exposing the delivery-structure columns
+    a real export carries (target zone, first/second-ball wins, near/far-post player
+    and defender counts, taker). Feeds the ported delivery charts — no manual tagging."""
+    out = []
+    for s in sps:
+        d = s.document if isinstance(s.document, dict) else {}
+        out.append({
+            "x": s.start_x, "y": s.start_y, "end_x": s.end_x, "end_y": s.end_y,
+            "type": s.type, "side": s.side, "delivery_type": s.delivery_type,
+            "perspective": s.perspective, "phase": s.phase, "taker": s.taker,
+            "outcome": s.outcome, "shot": s.shot, "goal": s.goal, "xg": s.xg,
+            "players_in_box": s.players_in_box,
+            "target_zone": d.get("target_zone", ""), "result": d.get("result", ""),
+            "first_contact_win": d.get("first_contact_win"),
+            "second_ball_win": d.get("second_ball_win"),
+            "players_near_post": d.get("players_near_post"),
+            "players_far_post": d.get("players_far_post"),
+            "players_small_area": d.get("players_small_area"),
+            "players_penalty_area": d.get("players_penalty_area"),
+            "defenders_near_post": d.get("defenders_near_post"),
+            "defenders_far_post": d.get("defenders_far_post"),
+            "defenders_small_area": d.get("defenders_small_area"),
+        })
+    return out
+
+
 # ------------------------------------------------------------------ contacts
 def _shot(svc, sps):
     contacts = svc._contacts_of(sps)
@@ -293,6 +320,7 @@ _KINDS = {
     "occ_timeline": _occ_timeline, "def_positions": _def_positions,
     "delivery": _delivery, "delivery_success": _delivery_success,
     "delivery_accuracy": _delivery_accuracy, "delivery_trajectory": _delivery_trajectory,
+    "delivery_full": _delivery_full,
     "shot": _shot, "goals": _goals, "first_contact": _first_contact,
     "second_ball": _second_ball, "clearance": _clearance, "flick_on": _flick_on,
     "shot_assist": _shot_assist, "threat": _threat,

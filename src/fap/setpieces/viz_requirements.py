@@ -104,6 +104,13 @@ _add(DatasetSpec("delivery_trajectory", "Delivery trajectory", "A", 5,
 _add(DatasetSpec("occ_timeline", "Set pieces over time", "A", 5, ("minute",),
                  sources=_src("A"), demo="delivery", count_by="set_pieces",
                  reason="Counts set pieces per 15-minute band from the event minute."))
+_add(DatasetSpec("delivery_full", "Delivery structure", "A", 5, ("end_x", "end_y"),
+                 optional_inputs=("target_zone", "first_contact_win", "second_ball_win",
+                                  "players_near_post", "players_far_post", "taker"),
+                 sources=_src("A"), demo="delivery",
+                 reason="Delivery zones, first/second-ball wins, defensive structure and taker "
+                        "profile — all read straight from a rich set-piece export (no manual "
+                        "positions/contacts). Missing structure columns simply hide their chart."))
 _add(DatasetSpec("delivery_accuracy", "Delivery accuracy", "B", 5,
                  ("target_x", "target_y", "end_x", "end_y"), derived_inputs=("error",),
                  sources={"csv": "no", "excel": "no", "json": "no", "manual": "yes",

@@ -23,7 +23,7 @@ from fap.setpieces.models import SetPiece
 # Bump whenever the derivation OUTPUT changes (id scheme, fields, classification).
 # It is part of the derived-set-piece cache key, so a logic fix is never masked by
 # a stale cached result computed by an older version. v2: unique per-row derived ids.
-DERIVATION_VERSION = 4
+DERIVATION_VERSION = 5
 
 # canonical event_type / set_piece values -> the module's controlled type
 _TYPE_MAP = {
@@ -183,5 +183,23 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
             marking=_s(row, "marking", "marking_scheme"),
             venue=_s(row, "venue", "home_away"),
             match_date=_s(row, "match_date", "date"),
-            match_label=_s(row, "match_label", "match", "fixture")))
+            match_label=_s(row, "match_label", "match", "fixture"),
+            # delivery-structure detail (from a rich set-piece export) kept in the
+            # extensible document so the ported delivery charts render from the CSV
+            # with no schema migration and no manual position/contact tagging.
+            document={k: v for k, v in {
+                "target_zone": _s(row, "target_zone", "zone"),
+                "result": _s(row, "result", "end_result"),
+                "first_contact_win": _b(row, "first_contact_win", "first_contact_won"),
+                "second_ball_win": _b(row, "second_ball_win", "second_ball_won"),
+                "players_near_post": _int(row.get("players_near_post")),
+                "players_far_post": _int(row.get("players_far_post")),
+                "players_small_area": _int(row.get("players_small_area")),
+                "players_penalty_area": _int(row.get("players_penalty_area")),
+                "defenders_near_post": _int(row.get("defenders_near_post")),
+                "defenders_far_post": _int(row.get("defenders_far_post")),
+                "defenders_small_area": _int(row.get("defenders_small_area")),
+                "first_contact_player": _s(row, "first_contact_player"),
+                "shot_player": _s(row, "shot_player"),
+            }.items() if v not in (None, "")}))
     return out

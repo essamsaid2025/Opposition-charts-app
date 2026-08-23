@@ -285,6 +285,27 @@ def to_event_frame(df: pd.DataFrame, *, defaults: dict[str, Any] | None = None) 
         if cand in {_clean_col(c): c for c in df.columns}:
             result_col = {_clean_col(c): c for c in df.columns}[cand]
             break
+    clean = {_clean_col(c): c for c in df.columns}
+
+    def rawget(*names: str) -> Any:
+        for nm in names:
+            if nm in clean:
+                v = df.iloc[i][clean[nm]]
+                if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                    return v
+        return None
+
+    def rawstr(*names: str) -> str:
+        v = rawget(*names)
+        return "" if v is None else str(v).strip()
+
+    def rawint(*names: str) -> Any:
+        return _to_int(rawget(*names))
+
+    def rawbool(*names: str) -> Any:
+        v = rawget(*names)
+        return None if v is None else _to_bool(v)
+
     out: list[dict[str, Any]] = []
     for i, rec in enumerate(rows):
         raw = df.iloc[i]
@@ -303,7 +324,22 @@ def to_event_frame(df: pd.DataFrame, *, defaults: dict[str, Any] | None = None) 
             "shot_result": ("Goal" if goal else "Shot" if shot else ""),
             "players_in_box": rec.get("players_in_box"), "xg": rec.get("xg"),
             "first_contact_team": rec.get("first_contact_team", ""),
-            "target_zone": (str(raw.get("target_zone", "")).strip() if "target_zone" in df.columns else ""),
+            "target_zone": rawstr("target_zone", "zone"), "result": rawstr("result", "end_result"),
+            # delivery-structure columns a real set-piece export carries — passed
+            # through so the ported delivery charts (zones, first-contact, second
+            # ball, structure, taker) render straight from the CSV.
+            "first_contact_win": rawbool("first_contact_win", "first_contact"),
+            "second_ball_win": rawbool("second_ball_win", "second_ball"),
+            "players_near_post": rawint("players_near_post"),
+            "players_far_post": rawint("players_far_post"),
+            "players_small_area": rawint("players_small_area", "players_small area"),
+            "players_penalty_area": rawint("players_penalty_area", "players_penalty area"),
+            "defenders_near_post": rawint("defenders_near_post"),
+            "defenders_far_post": rawint("defenders_far_post"),
+            "defenders_small_area": rawint("defenders_small_area", "defenders_small area"),
+            "first_contact_player": rawstr("first_contact_player"),
+            "shot_player": rawstr("shot_player"),
+            "target_player": rawstr("target_player"),
             "competition": rec.get("competition", ""), "season": rec.get("season", ""),
             "match_id": rec.get("match_id", ""), "minute": rec.get("minute"),
             "period": rec.get("period"),

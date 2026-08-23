@@ -22,6 +22,7 @@ def load_setpiece_visuals() -> None:
     from fap.visuals.layers.base import load_builtin_layers
     load_builtin_layers()                      # ensure the layers we compose exist
     import fap.visuals.setpieces.library        # noqa: F401 - import registers plugins
+    import fap.visuals.setpieces.delivery_extra  # noqa: F401 - ported delivery charts
     _LOADED = True
 
 
