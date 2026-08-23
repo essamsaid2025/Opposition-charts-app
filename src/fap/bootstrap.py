@@ -191,6 +191,12 @@ class PlatformContext:
         return self.services.get("teams")
 
     @property
+    def tagging(self):
+        """Tagging Studio persistence: live-session autosave + named tagging projects,
+        stored via the WorkspaceManager (autosave scope + presets)."""
+        return self.services.get("tagging")
+
+    @property
     def datahub(self):
         """Universal Data Hub (Phase 12): the central import + dataset library.
         Reuses the ImportService engine and the WorkspaceManager dataset store;
@@ -272,6 +278,7 @@ def init_platform(root: Path | None = None, *,
     services.register("setpieces", _setpieces)
     services.register("players", _players)
     services.register("teams", _teams)
+    services.register("tagging", _tagging)
     services.register("datahub", _datahub)
 
     return PlatformContext(settings=settings, services=services,
@@ -328,6 +335,13 @@ def _teams(reg: "ServiceRegistry"):
     return TeamService(db, images=reg.get("image_storage"), files=reg.get("video_storage"),
                        audit=AuditService(AuditRepository(db)),
                        workspaces=reg.get("workspace_manager"))
+
+
+def _tagging(reg: "ServiceRegistry"):
+    """The Tagging Studio persistence service. Reuses the WorkspaceManager for
+    session autosave and named tagging projects (presets) — no new store."""
+    from fap.tagging.service import TaggingService
+    return TaggingService(workspaces=reg.get("workspace_manager"))
 
 
 def _players(reg: "ServiceRegistry"):

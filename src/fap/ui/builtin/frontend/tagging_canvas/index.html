@@ -1,0 +1,181 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; padding: 0; background: transparent;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #wrap { display: flex; flex-direction: column; gap: 6px; }
+  #stage { position: relative; border-radius: 12px; overflow: hidden; line-height: 0;
+    border: 1px solid rgba(0,0,0,.12); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  #stage:focus, #stage:focus-visible { outline: none; }
+  #bg { display: block; width: 100%; height: auto; user-select: none; -webkit-user-drag: none; }
+  #svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #hud { display: flex; justify-content: space-between; align-items: center;
+    font-size: 12px; color: #6b7280; padding: 0 4px; min-height: 16px; }
+  #coord { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .hot { cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage" tabindex="0">
+    <img id="bg" draggable="false" />
+    <svg id="svg" preserveAspectRatio="none"></svg>
+  </div>
+  <div id="hud"><span id="coord">X: —  Y: —</span><span id="hint"></span></div>
+</div>
+<script>
+(function () {
+  function send(type, extra) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, extra || {}), "*");
+  }
+  function ready() { send("streamlit:componentReady", { apiVersion: 1 }); }
+  function setHeight() { send("streamlit:setFrameHeight", { height: document.body.scrollHeight + 2 }); }
+
+  var _ts = 0;
+  function nextTs() { _ts += 1; return _ts; }
+  function emit(payload) {
+    payload.ts = nextTs();
+    send("streamlit:setComponentValue", { dataType: "json", value: payload });
+  }
+
+  var stage = document.getElementById("stage");
+  var bg = document.getElementById("bg");
+  var svg = document.getElementById("svg");
+  var coordEl = document.getElementById("coord");
+  var hintEl = document.getElementById("hint");
+
+  var STATE = { image: "", overlay: [], mode: "point", bbox: { left:0, right:1, top:0, bottom:1 },
+                colors: {}, editable: true, nonce: "" };
+  var pending = null;   // {ifx, ify} start of a line
+
+  function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+
+  // image fraction -> interior fraction (0..1 within the pitch/goal interior)
+  function toInterior(fx, fy) {
+    var b = STATE.bbox;
+    var w = (b.right - b.left) || 1, h = (b.bottom - b.top) || 1;
+    return { ifx: clamp01((fx - b.left) / w), ify: clamp01((fy - b.top) / h) };
+  }
+  // interior fraction -> image fraction (for drawing markers)
+  function toImage(ifx, ify) {
+    var b = STATE.bbox;
+    return { fx: b.left + ifx * (b.right - b.left), fy: b.top + ify * (b.bottom - b.top) };
+  }
+  function canonical(ifx, ify) { return { x: ifx * 100, y: (1 - ify) * 100 }; }
+
+  function eventFraction(ev) {
+    var r = bg.getBoundingClientRect();
+    return { fx: clamp01((ev.clientX - r.left) / (r.width || 1)),
+             fy: clamp01((ev.clientY - r.top) / (r.height || 1)) };
+  }
+
+  function nearestMarker(ifx, ify) {
+    var best = null, bestD = 0.045 * 0.045;   // selection radius in interior-fraction units
+    for (var i = 0; i < STATE.overlay.length; i++) {
+      var m = STATE.overlay[i];
+      var pts = [[m.ifx, m.ify]];
+      if (m.ifx2 != null) pts.push([m.ifx2, m.ify2]);
+      for (var j = 0; j < pts.length; j++) {
+        var dx = pts[j][0] - ifx, dy = pts[j][1] - ify, d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = m.id; }
+      }
+    }
+    return best;
+  }
+
+  function svgXY(ifx, ify) {
+    var im = toImage(ifx, ify);
+    return { x: im.fx * 1000, y: im.fy * 1000 };   // viewBox 0..1000
+  }
+
+  function draw(cursor) {
+    var parts = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%">'];
+    var save = STATE.colors.save || "#6D28D9", goal = STATE.colors.goal || "#D64045";
+    var faded = "rgba(0,0,0,.0)";
+    STATE.overlay.forEach(function (m) {
+      var col = m.kind === "goal" ? goal : save;
+      var fill = m.kind === "goal" ? goal : "rgba(255,255,255,.65)";
+      var a = svgXY(m.ifx, m.ify);
+      if (m.ifx2 != null) {
+        var b = svgXY(m.ifx2, m.ify2);
+        parts.push('<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="'+col+'" stroke-width="'+(m.selected?6:4)+'" opacity="0.9"/>');
+        parts.push('<circle cx="'+b.x+'" cy="'+b.y+'" r="'+(m.selected?11:8)+'" fill="'+col+'" opacity="0.9"/>');
+      }
+      var r = (m.selected ? 15 : 11);
+      parts.push('<circle class="hot" cx="'+a.x+'" cy="'+a.y+'" r="'+r+'" fill="'+fill+'" stroke="'+col+'" stroke-width="'+(m.selected?5:3.5)+'"/>');
+      if (m.selected)
+        parts.push('<circle cx="'+a.x+'" cy="'+a.y+'" r="'+(r+7)+'" fill="none" stroke="'+col+'" stroke-width="1.5" stroke-dasharray="4 4"/>');
+    });
+    if (pending && cursor) {
+      var p = svgXY(pending.ifx, pending.ify), c = svgXY(cursor.ifx, cursor.ify);
+      parts.push('<line x1="'+p.x+'" y1="'+p.y+'" x2="'+c.x+'" y2="'+c.y+'" stroke="'+save+'" stroke-width="4" stroke-dasharray="8 6" opacity="0.8"/>');
+      parts.push('<circle cx="'+p.x+'" cy="'+p.y+'" r="9" fill="'+save+'"/>');
+    }
+    parts.push('</svg>');
+    svg.outerHTML = parts.join("");
+    svg = document.getElementById("svg") || document.querySelector("#stage svg");
+    svg.id = "svg";
+  }
+
+  function onMove(ev) {
+    var f = eventFraction(ev), it = toInterior(f.fx, f.fy);
+    var c = canonical(it.ifx, it.ify);
+    coordEl.textContent = "X: " + c.x.toFixed(1) + "   Y: " + c.y.toFixed(1);
+    if (pending) draw(it);
+  }
+
+  function onClick(ev) {
+    if (!STATE.editable) return;
+    stage.focus();
+    var f = eventFraction(ev), it = toInterior(f.fx, f.fy);
+    // selection takes priority (unless finishing a line)
+    if (!pending) {
+      var hit = nearestMarker(it.ifx, it.ify);
+      if (hit) { emit({ action: "select", select: hit }); return; }
+    }
+    if (STATE.mode === "line") {
+      if (!pending) { pending = it; draw(it); }
+      else { emit({ action: "line", ifx: pending.ifx, ify: pending.ify, ifx2: it.ifx, ify2: it.ify }); pending = null; }
+    } else {
+      emit({ action: "point", ifx: it.ifx, ify: it.ify });
+    }
+  }
+
+  function onKey(ev) {
+    if (ev.key === "Escape") { if (pending) { pending = null; draw(null); } emit({ action: "cancel" }); }
+    else if (ev.key === "Delete" || ev.key === "Backspace") { ev.preventDefault(); emit({ action: "delete" }); }
+  }
+
+  stage.addEventListener("mousemove", onMove);
+  stage.addEventListener("click", onClick);
+  window.addEventListener("keydown", onKey);
+
+  function apply(args) {
+    if (!args) return;
+    STATE.image = args.image || "";
+    STATE.overlay = Array.isArray(args.overlay) ? args.overlay : [];
+    STATE.mode = args.mode || "point";
+    STATE.bbox = args.readout && args.readout.bbox ? args.readout.bbox : STATE.bbox;
+    STATE.colors = args.colors || {};
+    STATE.editable = args.editable !== false;
+    if (args.nonce !== STATE.nonce) { pending = null; STATE.nonce = args.nonce; }
+    hintEl.textContent = STATE.mode === "line" ? "Click start, then end · Esc cancels" :
+                         "Click to tag · click a marker to select · Delete removes";
+    if (bg.getAttribute("src") !== STATE.image) bg.setAttribute("src", STATE.image);
+    draw(null);
+    setHeight();
+  }
+
+  window.addEventListener("message", function (ev) {
+    var d = ev.data || {};
+    if (d.type === "streamlit:render") { apply(d.args); }
+  });
+  bg.addEventListener("load", setHeight);
+  ready();
+  setHeight();
+})();
+</script>
+</body>
+</html>
