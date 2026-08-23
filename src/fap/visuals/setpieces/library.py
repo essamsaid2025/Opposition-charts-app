@@ -182,17 +182,13 @@ def _bar(ctx: LayerContext, label_col: str, value_col: str, title: str) -> None:
 
 
 def _goal_grid(ctx: LayerContext, value: str) -> None:
-    """3x3 goal grid shaded by penalty count per cell."""
+    """3x3 placement heatmap over the CANONICAL goal frame, shaded by count."""
     import numpy as np
+    from matplotlib.colors import to_rgba
+
+    from fap.visuals import goal as G
     ax, c = ctx.ax, ctx.theme.colors
-    ax.set_facecolor(c["panel"])
-    ax.set_xlim(-0.2, 3.2)
-    ax.set_ylim(-0.2, 3.4)
-    ax.set_xticks([]); ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    # goal frame
-    ax.plot([0, 0, 3, 3], [0, 3, 3, 0], color=c["lines"], lw=3)
+    G.draw_goal(ax, ctx.theme)
     counts = np.zeros((3, 3))
     df = ctx.df
     if df is not None and not df.empty and {"gx", "gy"}.issubset(df.columns):
@@ -202,33 +198,26 @@ def _goal_grid(ctx: LayerContext, value: str) -> None:
                 counts[gy, gx] += 1
     mx = counts.max() or 1
     accent = ctx.controls.get("primary_color") or c["accent"]
-    from matplotlib.colors import to_rgba
     for gy in range(3):
         for gx in range(3):
             n = counts[gy, gx]
-            ax.add_patch(_cell(gx, gy, to_rgba(accent, 0.15 + 0.75 * n / mx)))
+            ax.add_patch(G.cell_rect(gx, gy, 3, 3, to_rgba(accent, 0.15 + 0.75 * n / mx)))
             if n:
-                ax.text(gx + 0.5, gy + 0.5, str(int(n)), ha="center", va="center",
+                cx, cy = G.cell_center(gx, gy, 3, 3)
+                ax.text(cx, cy, str(int(n)), ha="center", va="center",
                         color=c["text"], fontweight="bold", fontsize=ctx.style("label_size") + 2)
     ax.set_title("Penalty placement", color=c["text"], fontsize=ctx.style("label_size") + 1)
 
 
-def _cell(gx: int, gy: int, color):
-    from matplotlib.patches import Rectangle
-    return Rectangle((gx + 0.03, gy + 0.03), 0.94, 0.94, color=color, ec="none")
-
-
 def _zone_grid(ctx: LayerContext, value: str, invert: bool = False) -> None:
-    """3x3 goal grid shaded by a per-cell value (attempts or conversion %).
-    ``invert`` highlights the LOW-value cells (failure zones)."""
+    """3x3 zone heatmap over the CANONICAL goal frame, shaded by a per-cell value
+    (attempts or conversion %). ``invert`` highlights the LOW-value cells."""
     import numpy as np
     from matplotlib.colors import to_rgba
+
+    from fap.visuals import goal as G
     ax, c = ctx.ax, ctx.theme.colors
-    ax.set_facecolor(c["panel"]); ax.set_xlim(-0.2, 3.2); ax.set_ylim(-0.2, 3.4)
-    ax.set_xticks([]); ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.plot([0, 0, 3, 3], [0, 3, 3, 0], color=c["lines"], lw=3)
+    G.draw_goal(ax, ctx.theme)
     vals = np.zeros((3, 3))
     labels = np.zeros((3, 3))
     df = ctx.df
@@ -243,32 +232,34 @@ def _zone_grid(ctx: LayerContext, value: str, invert: bool = False) -> None:
     accent = ctx.controls.get("primary_color") or (c["danger"] if invert else c["success"])
     for gy in range(3):
         for gx in range(3):
-            ax.add_patch(_cell(gx, gy, to_rgba(accent, 0.12 + 0.8 * vals[gy, gx] / mx)))
+            ax.add_patch(G.cell_rect(gx, gy, 3, 3, to_rgba(accent, 0.12 + 0.8 * vals[gy, gx] / mx)))
             if vals[gy, gx]:
                 txt = f"{int(labels[gy, gx])}%" if value == "conversion_pct" else f"{int(vals[gy, gx])}"
-                ax.text(gx + 0.5, gy + 0.5, txt, ha="center", va="center",
+                cx, cy = G.cell_center(gx, gy, 3, 3)
+                ax.text(cx, cy, txt, ha="center", va="center",
                         color=c["text"], fontweight="bold", fontsize=ctx.style("label_size") + 1)
     ax.set_title("Failure zones" if invert else "Zones", color=c["text"],
                  fontsize=ctx.style("label_size") + 1)
 
 
 def _reach_grid(ctx: LayerContext) -> None:
-    """Goalkeeper reach/dive endpoints plotted across the goal mouth."""
+    """Goalkeeper reach/dive endpoints plotted on the CANONICAL goal frame:
+    saved shots as hollow save markers, beaten (conceded) as filled goal markers."""
+    from fap.visuals import goal as G
     ax, c = ctx.ax, ctx.theme.colors
-    ax.set_facecolor(c["panel"]); ax.set_xlim(-1.0, 4.0); ax.set_ylim(-0.3, 3.4)
-    ax.set_xticks([]); ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.plot([0, 0, 3, 3], [0, 3, 3, 0], color=c["lines"], lw=3)
+    G.draw_goal(ax, ctx.theme)
     df = ctx.df
     if df is None or df.empty or "gx" not in df.columns:
-        ax.text(1.5, 1.5, "No data", ha="center", va="center", color=c["muted"])
+        ax.text(G.GOAL_WIDTH / 2, G.GOAL_HEIGHT / 2, "No data", ha="center",
+                va="center", color=c["muted"])
+        ax.set_title("Goalkeeper reach", color=c["text"], fontsize=ctx.style("label_size") + 1)
         return
+    xs, ys, is_goal = [], [], []
     for _, r in df.iterrows():
-        saved = bool(r.get("saved"))
-        ax.scatter([float(r["gx"]) * 1.5], [float(r.get("gy", 1)) * 1.5],
-                   s=140, color=c["success"] if saved else c["danger"],
-                   edgecolors=c["lines"], alpha=0.8, zorder=5)
+        cx, cy = G.cell_center(int(r["gx"]), int(r.get("gy", 1)), 3, 3)
+        xs.append(cx); ys.append(cy)
+        is_goal.append(not bool(r.get("saved")))       # saved -> hollow; beaten -> filled goal
+    G.draw_shots(ax, ctx.theme, xs=xs, ys=ys, is_goal=is_goal)
     ax.set_title("Goalkeeper reach", color=c["text"], fontsize=ctx.style("label_size") + 1)
 
 

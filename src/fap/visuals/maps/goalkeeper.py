@@ -29,40 +29,49 @@ density_map("gk_positioning", "GK Positioning",
 
 
 class _GoalMouthBase(ChartVisualization):
-    """Shots plotted across the goal mouth (end_y across the frame)."""
+    """Shots plotted across the goal mouth on the canonical Opta goal renderer.
+
+    Rendering only: the shot/goal selection, xG columns and result classification
+    are the existing data semantics — this class merely maps ``end_y`` across the
+    goal and hands the points to :mod:`fap.visuals.goal`."""
     selector = staticmethod(lambda df: A.shots(df))
     control_groups = ("titles", "markers", "colors", "legend", "text",
                       "export", "layout")
+    show_difficulty_legend = True         # markers are sized by the existing xG metric
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
         def draw(lctx: LayerContext) -> None:
-            ax, c = lctx.ax, lctx.theme.colors
-            ax.set_facecolor(c["pitch"])
-            # goal frame: canonical goal spans y 46.2 - 53.8 -> widen for display
-            ax.plot([44, 44, 56, 56], [0, 4, 4, 0], color=c["lines"], lw=3)
-            d = self.selector(lctx.df).dropna(subset=["end_y"])
-            d = d[d["end_y"].between(38, 62)]
-            if d.empty:
-                ax.set_xlim(35, 65); ax.set_ylim(-0.5, 6); ax.axis("off")
+            from fap.visuals import goal as G
+            ax = lctx.ax
+            G.draw_goal(ax, lctx.theme)
+            d = self.selector(lctx.df)
+            if "end_y" not in d.columns:
                 return
-            goals = d[d["shot_result"].str.lower().eq("goal")]
-            others = d.drop(goals.index)
-            heights_o = pd.Series(1.2, index=others.index)
-            heights_g = pd.Series(2.2, index=goals.index)
-            size = float(lctx.style("marker_size"))
-            if len(others):
-                ax.scatter(others["end_y"], heights_o, s=size,
-                           c=lctx.controls.get("primary_color") or c["grey"],
-                           edgecolors=c["lines"], alpha=0.85, label="Saved / missed")
-            if len(goals):
-                ax.scatter(goals["end_y"], heights_g, s=size * 1.4,
-                           c=lctx.controls.get("fail_color") or c["danger"],
-                           edgecolors=c["lines"], label="Goal")
-            ax.set_xlim(35, 65); ax.set_ylim(-0.5, 6); ax.axis("off")
-            if lctx.controls.get("legend", True):
-                ax.legend(loc="upper right", facecolor=c["panel"],
-                          edgecolor=c["grid"], labelcolor=c["text"],
-                          fontsize=lctx.style("legend_size"))
+            end_y = pd.to_numeric(d["end_y"], errors="coerce")
+            d = d[end_y.between(38, 62)]
+            if d.empty:
+                return
+            end_y = pd.to_numeric(d["end_y"], errors="coerce")
+            # posts sit at canonical y 44/56 -> map arrival across the goal width;
+            # clamp wide (off-target) shots to just outside the posts, as in the reference
+            lo, hi = -14.0, G.GOAL_WIDTH + 14.0
+            xs = [min(hi, max(lo, G.map_across_goal(v, 44.0, 56.0))) for v in end_y]
+            ys = [G.GOAL_HEIGHT * 0.5] * len(d)      # arrival is a horizontal distribution
+            is_goal = list(d["shot_result"].astype(str).str.lower().eq("goal"))
+            sizes = None                              # size by the existing xG column when present
+            for col in ("post_shot_xg", "shot_xg", "xg"):
+                if col in d.columns and pd.to_numeric(d[col], errors="coerce").notna().any():
+                    sizes = pd.to_numeric(d[col], errors="coerce").fillna(0.0).tolist()
+                    break
+            G.draw_shots(ax, lctx.theme, xs=xs, ys=ys, is_goal=is_goal, sizes=sizes,
+                         save_color=lctx.controls.get("primary_color"),
+                         goal_color=lctx.controls.get("fail_color"),
+                         legend=(lctx.legend if lctx.controls.get("legend", True) else None))
+            if sizes is not None and self.show_difficulty_legend:
+                lx = G.GOAL_WIDTH + G.POST + G.GROUND_EXTEND + 10.0
+                G.draw_difficulty_legend(ax, lctx.theme, x=lx, y=G.GOAL_HEIGHT * 0.62)
+                x0, x1 = ax.get_xlim()
+                ax.set_xlim(x0, max(x1, lx + 48.0))   # give the legend room on the right
         return [layer_registry.create("custom_artist", artist=draw)]
 
 
