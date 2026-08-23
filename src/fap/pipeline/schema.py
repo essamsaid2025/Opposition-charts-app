@@ -63,6 +63,19 @@ def apply_constants(df: pd.DataFrame, constants: dict[str, str] | None) -> pd.Da
     return df
 
 
+_TRUTHY: frozenset[str] = frozenset({"1", "1.0", "true", "yes", "y", "t"})
+
+
+def _to_bool(series: pd.Series) -> pd.Series:
+    """Coerce a source boolean column to real booleans. Blank/NaN/0/'false'/'no'
+    become False; only explicit truthy tokens become True. Without this a blank
+    cell survives as NaN and ``NaN.astype(bool)`` is True — which would make flag
+    filters (key_pass, assist, under_pressure, pressure) silently match every row."""
+    if series.dtype == bool:
+        return series
+    return series.astype(str).str.strip().str.lower().isin(_TRUTHY)
+
+
 def coerce_schema(df: pd.DataFrame) -> pd.DataFrame:
     """One controlled copy; every column of the canonical contract exists and
     has the right dtype afterwards."""
@@ -76,6 +89,8 @@ def coerce_schema(df: pd.DataFrame) -> pd.DataFrame:
     for col in BOOLEAN:
         if col not in df.columns:
             df[col] = False
+        else:
+            df[col] = _to_bool(df[col])
     df["period"] = pd.to_numeric(df["period"], errors="coerce").fillna(1)
 
     # legacy alias sync: end_x/end_y are canonical, x2/y2 kept identical

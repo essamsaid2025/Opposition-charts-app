@@ -1,0 +1,6 @@
+event_id,event_type,team,player,x,y,end_x,end_y,goal_x,goal_y,outcome,shot_result,coordinate_space,minute,second,period,match_id
+GM001,shot,Team A,A6,90,45,100,50,50,40,,Goal,goal,35,0,1,M3
+GM002,shot,Team A,A16,88,52,100,48,30,55,,Saved,goal,42,0,1,M3
+GM003,shot,Team A,A17,86,40,100,54,72,30,,Saved,goal,55,0,1,M3
+GM004,shot,Team B,B3,85,55,100,44,12,60,,Missed,goal,60,0,1,M3
+GM005,shot,Team A,A6,91,48,100,52,88,20,,Saved,goal,70,0,1,M3

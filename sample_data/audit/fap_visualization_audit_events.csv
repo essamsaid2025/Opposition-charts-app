@@ -1,0 +1,30 @@
+event_id,event_type,team,player,position,x,y,end_x,end_y,outcome,shot_result,sub_event,key_pass,set_piece,minute,second,period,match_id
+P001,pass,Team A,A1,CM,20,50,70,50,successful,,,,,10,1,1,M1
+P002,pass,Team A,A2,CM,40,30,45,70,successful,,,,,10,5,1,M1
+P003,pass,Team A,A3,CB,60,50,40,50,successful,,,,,11,0,1,M1
+P004,pass,Team A,A4,CM,30,20,85,40,successful,,,,,11,20,1,M1
+P005,pass,Team B,B1,CM,50,40,53,80,unsuccessful,,,,,12,0,1,M1
+K040,pass,Team A,A7,AM,70,40,88,50,successful,,,1,,20,3,1,M1
+C010,carry,Team A,A5,RW,25,50,75,50,successful,,,,,13,0,1,M1
+C011,carry,Team B,B2,CB,50,50,55,52,successful,,,,,13,30,1,M1
+S020,shot,Team A,A6,ST,88,50,100,48,,Saved,,,,30,0,1,M1
+S021,shot,Team A,A6,ST,90,45,100,45,,Goal,,,,35,0,1,M1
+S022,shot,Team B,B3,ST,85,55,100,58,,Off Target,,,,40,0,1,M1
+X030,cross,Team A,A8,RW,80,95,92,50,successful,,,,,22,0,1,M1
+D050,interception,Team B,B4,CB,40,50,,,successful,,,,,25,0,1,M1
+D051,recovery,Team B,B5,DM,35,60,,,successful,,,,,26,0,1,M1
+D052,tackle,Team B,B6,FB,30,40,,,won,,,,,27,0,1,M1
+D053,pressure,Team B,B7,CM,45,55,,,successful,,,,,28,0,1,M1
+D054,clearance,Team B,B8,CB,10,50,,,successful,,,,,29,0,1,M1
+D055,duel,Team B,B9,CB,50,50,,,won,,aerial duel,,,31,0,1,M1
+D056,block,Team B,B10,CB,15,50,,,successful,,,,,32,0,1,M1
+FT060,pass,Team A,A9,CM,60,50,75,50,successful,,,,,14,0,1,M1
+FT061,pass,Team A,A9,CM,70,50,90,50,successful,,,,,14,30,1,M1
+PA070,pass,Team A,A10,AM,80,50,90,50,successful,,,,,15,0,1,M1
+PA071,pass,Team A,A10,AM,88,50,95,50,successful,,,,,15,30,1,M1
+SPC001,corner,Team A,A11,RW,100,100,92,48,successful,,,,corner,45,0,1,M1
+SPC002,corner,Team A,A11,RW,100,0,92,52,successful,,,,corner,60,0,1,M1
+SPFK001,free_kick,Team A,A12,CM,70,20,88,50,successful,,,,free_kick,50,0,1,M1
+SPTI001,throw_in,Team A,A13,FB,80,100,85,90,successful,,,,throw_in,52,0,1,M1
+SPP001,penalty,Team A,A14,ST,88,50,100,50,,Goal,,,penalty,70,0,2,M1
+SPS001,shot,Team A,A11,ST,90,48,100,50,,Saved,,,corner,45,10,1,M1

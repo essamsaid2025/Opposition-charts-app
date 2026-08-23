@@ -1,0 +1,9 @@
+event_id,event_type,team,player,x,y,end_x,end_y,outcome,shot_result,set_piece,minute,second,period,match_id
+CRN001,corner,Team A,A11,100,100,92,48,successful,,corner,5,0,1,M2
+CRN002,corner,Team A,A11,100,0,90,50,successful,,corner,25,0,1,M2
+FK001,free_kick,Team A,A12,65,15,88,50,successful,,free_kick,15,0,1,M2
+FK002,free_kick,Team A,A12,55,85,80,50,unsuccessful,,free_kick,40,0,1,M2
+TI001,throw_in,Team A,A13,75,100,82,88,successful,,throw_in,10,0,1,M2
+PEN001,penalty,Team A,A14,88,50,100,49,,Goal,penalty,70,0,2,M2
+SPSHOT001,shot,Team A,A15,89,46,100,50,,Saved,corner,5,10,1,M2
+NORMALSHOT001,shot,Team B,B3,86,52,100,55,,Off Target,,60,0,1,M2
