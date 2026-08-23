@@ -52,13 +52,18 @@ class TaggingStudioPage(Page):
             subtitle="Tag events on the pitch and in the goal, then export analysis-ready CSV.")
 
         # ---- toolbar ----
-        bar = st.columns([1, 1, 6, 1, 1])
+        bar = st.columns([1, 4, 1.6, 1, 1])
         layer = bar[0].radio("Layer", ["Pitch", "Goal"], key="tag_layer",
                              horizontal=True, label_visibility="collapsed")
         space = "pitch" if layer == "Pitch" else "goal"
+        if bar[2].button("→ Open Play", use_container_width=True, key="tag_send_op",
+                         type="primary", help="Import these tags into the Data Hub and "
+                         "activate them so they render on the Open Play maps."):
+            self._send_open_play(shell, svc, session)
         if bar[3].button("Save", use_container_width=True, key="tag_save_btn"):
             self._save_project(shell, svc, session)
         self._export_button(bar[4], session)
+        self._sent_banner(shell)
 
         controls = self._controls(session, space)
         left, right = st.columns([3, 2])
@@ -326,6 +331,31 @@ class TaggingStudioPage(Page):
                             file_name="tagging.csv", mime="text/csv",
                             use_container_width=True, key="tag_export_csv",
                             disabled=not session.events)
+
+    def _send_open_play(self, shell, svc, session) -> None:
+        if svc is None:
+            st.warning("Tagging service unavailable.")
+            return
+        name = (session.match_id or "").strip() or "Tagging session"
+        try:
+            ds = svc.send_to_datahub(shell.user, session, name=name,
+                                     workspace_id=shell.workspace_id)
+            st.session_state["_tag_sent"] = ds.name
+            st.toast(f"Imported & activated '{ds.name}'.")
+        except ValueError as exc:
+            st.warning(str(exc))
+
+    def _sent_banner(self, shell) -> None:
+        name = st.session_state.get("_tag_sent")
+        if not name:
+            return
+        C.render_alert(f"Imported **{name}** into the Data Hub and set it active. "
+                       "Open the Open Play Studio to render the maps.", "success")
+        cols = st.columns([1, 4])
+        if cols[0].button("Open Play Studio", key="tag_goto_op", type="primary"):
+            st.session_state.pop("_tag_sent", None)
+            shell.goto("openplay_studio")
+            st.rerun()
 
     def _save_project(self, shell, svc, session) -> None:
         import json

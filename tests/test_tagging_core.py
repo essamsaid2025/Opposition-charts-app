@@ -154,11 +154,16 @@ def test_csv_has_stable_schema_and_blanks_irrelevant_fields():
                          goal_x=83.2, goal_y=42.7, player="P9", outcome="Goal"))
     rows = session_to_rows(s)
     assert list(rows[0].keys()) == list(CSV_COLUMNS)          # deterministic order
-    # pass: goal coords blank; goal event: pitch coords blank
+    # pass: canonical line coords + goal coords blank
+    assert rows[0]["event_type"] == "pass" and rows[0]["end_x"] == 62.7
     assert rows[0]["goal_x"] == "" and rows[0]["goal_y"] == ""
-    assert rows[1]["x"] == "" and rows[1]["x2"] == ""
-    assert rows[0]["coordinate_space"] == "pitch" and rows[1]["coordinate_space"] == "goal"
-    assert rows[0]["match_id"] == "M1"
+    assert rows[0]["coordinate_space"] == "pitch" and rows[0]["match_id"] == "M1"
+    # goal event: emitted as a SHOT (Open-Play compatible) with end_y + shot_result,
+    # pitch x/y blank, original tag preserved, raw goal coords kept
+    g = rows[1]
+    assert g["event_type"] == "shot" and g["tag_type"] == "shot_on_target"
+    assert g["shot_result"] == "Goal" and 44 <= float(g["end_y"]) <= 56
+    assert g["x"] == "" and g["goal_x"] == 83.2 and g["coordinate_space"] == "goal"
     csv_text = session_to_csv(s)
     assert csv_text.splitlines()[0] == ",".join(CSV_COLUMNS)
 
@@ -168,7 +173,7 @@ def test_csv_coordinates_are_in_range():
     s.add_event(TagEvent(event_type="carry", coordinate_space="pitch",
                          x=10, y=20, x2=30, y2=40))
     for row in session_to_rows(s):
-        for f in ("x", "y", "x2", "y2"):
+        for f in ("x", "y", "end_x", "end_y"):
             if row[f] != "":
                 assert 0 <= float(row[f]) <= 100
 

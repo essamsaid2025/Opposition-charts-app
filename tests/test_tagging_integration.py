@@ -69,6 +69,39 @@ def test_tagged_data_renders_in_maps(viz_id):
     assert fig.axes and len(fig.axes[0].get_children()) > 0
 
 
+def test_exported_csv_imports_through_pipeline_and_goalmouth_is_not_empty():
+    """The reported bug: tag goal-mouth -> export CSV -> load in Open Play -> the
+    Goal Mouth Map must render the shots (not empty). Replays the whole path:
+    CSV text -> pandas -> DataPipeline (Data Hub ingestion) -> GoalMouthMap."""
+    import io
+    import pandas as pd
+    from fap.pipeline.pipeline import DataPipeline
+    from fap.providers.base import RawDataset
+    from fap.tagging.export import session_to_csv
+    from fap.visuals import analysis as A
+
+    s = TaggingSession(match_id="M1")
+    for gx, gy, out in [(62, 48, "Goal"), (20, 30, "Saved"), (80, 60, "Saved"),
+                        (48, 20, "Missed")]:
+        s.add_event(TagEvent(event_type="shot_on_target", coordinate_space="goal",
+                             goal_x=gx, goal_y=gy, player="P9", outcome=out))
+    csv_text = session_to_csv(s)                             # what the analyst downloads
+
+    raw = pd.read_csv(io.StringIO(csv_text))                 # what the Data Hub reads
+    frame = DataPipeline().run(RawDataset(frame=raw))        # canonical event frame
+    # the pipeline sees them as shots with an across-goal end_y in the goal-mouth band
+    shots = A.shots(frame)
+    assert len(shots) == 4
+    assert shots["end_y"].dropna().between(38, 62).all()
+
+    fig = _render("goal_mouth_map", frame)
+    ax = fig.axes[0]
+    from matplotlib.patches import Circle
+    markers = [p for p in ax.patches if isinstance(p, Circle)]
+    assert len(markers) >= 4, "Goal Mouth Map rendered empty for tagged goal data"
+    plt.close(fig)
+
+
 def test_pitch_and_goal_tags_coexist_when_switching_layers():
     s = _mixed_session()
     pitch = [e for e in s.events if e.coordinate_space == "pitch"]
@@ -103,6 +136,53 @@ def test_canvas_click_round_trips_to_the_same_event_marker():
     gx, gy = TC.canonical_from_goal_fraction(fx, fy)
     gifx, gify = TC.goal_fraction_from_canonical(gx, gy)
     assert gifx == pytest.approx(fx, abs=1e-3) and gify == pytest.approx(fy, abs=1e-3)
+
+
+# ------------------------------------------------------------------ one-click Data Hub bridge
+def _settings(tmp_path):
+    from dataclasses import replace
+    from fap.config.settings import (AppSettings, CacheSettings, DatabaseSettings,
+                                     StorageSettings)
+    return replace(AppSettings(environment="development"),
+                   user_data_dir=str(tmp_path / "ud"),
+                   database=DatabaseSettings(path=str(tmp_path / "ud" / "fap.sqlite3")),
+                   cache=CacheSettings(backend="memory"), storage=StorageSettings(backend="local"))
+
+
+def _user():
+    from fap.identity.models import User
+    from fap.identity.roles import Role
+    return User(email="analyst@club.com", name="A", role=Role.SUPER_ADMIN, provider_id="dev")
+
+
+def test_send_to_datahub_activates_a_renderable_open_play_dataset(tmp_path):
+    """The one-click bridge: tag goal-mouth -> send_to_datahub -> it becomes the ACTIVE
+    dataset and the active frame renders on the Goal Mouth Map (no manual CSV step)."""
+    from fap.bootstrap import init_platform
+    platform = init_platform(settings=_settings(tmp_path))
+    user = _user()
+    ws = platform.workspace_manager.ensure_workspace(user)
+    s = TaggingSession(match_id="Tagged vs Rivals")
+    for gx, gy, out in [(62, 48, "Goal"), (20, 30, "Saved"), (80, 60, "Saved")]:
+        s.add_event(TagEvent(event_type="shot_on_target", coordinate_space="goal",
+                             goal_x=gx, goal_y=gy, player="P9", outcome=out))
+    try:
+        ds = platform.tagging.send_to_datahub(user, s, name="Tagged vs Rivals",
+                                              workspace_id=ws.id)
+        assert ds is not None
+        # it is now the active dataset every module reads
+        assert platform.workspace_manager.active_dataset_id(user) == ds.id
+        frame = platform.workspace_manager.active_frame(user)
+        assert frame is not None and (frame["event_type"] == "shot").sum() == 3
+        fig = _render("goal_mouth_map", frame)
+        from matplotlib.patches import Circle
+        assert len([p for p in fig.axes[0].patches if isinstance(p, Circle)]) >= 3
+        plt.close(fig)
+    finally:
+        try:
+            platform.db.close()
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------------ page registration

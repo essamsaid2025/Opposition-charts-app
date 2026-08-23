@@ -341,7 +341,7 @@ def _tagging(reg: "ServiceRegistry"):
     """The Tagging Studio persistence service. Reuses the WorkspaceManager for
     session autosave and named tagging projects (presets) — no new store."""
     from fap.tagging.service import TaggingService
-    return TaggingService(workspaces=reg.get("workspace_manager"))
+    return TaggingService(workspaces=reg.get("workspace_manager"), datahub=reg.get("datahub"))
 
 
 def _players(reg: "ServiceRegistry"):
