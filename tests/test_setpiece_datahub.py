@@ -96,6 +96,35 @@ def test_no_independent_import_needed_dashboard_populated(platform):
     assert platform.setpieces.dashboard(user)["total"] >= 6
 
 
+def test_fc_masar_template_renders_all_tier_a_charts(platform):
+    """The FC Masar single-game template: import via Data Hub → every delivery-level
+    (Tier A) set-piece dataset is populated for both attacking and defending phases."""
+    user = _user()
+    ws = platform.workspace_manager.ensure_workspace(user)
+    data = (_AUDIT / "fc_masar_set_pieces.csv").read_bytes()
+    _import_and_activate(platform, user, ws, data, "FC Masar Set Pieces")
+
+    sps = platform.setpieces.search(user, workspace_id=ws.id)
+    assert len(sps) == 50
+    kinds = {}
+    persp = {}
+    for sp in sps:
+        kinds[sp.type] = kinds.get(sp.type, 0) + 1
+        persp[sp.perspective] = persp.get(sp.perspective, 0) + 1
+    assert kinds == {"corner": 23, "free_kick": 13, "throw_in": 9, "penalty": 5}
+    assert persp["own"] == 33 and persp["opposition"] == 17     # attacking AND defending
+
+    # delivery-level detail survives ingestion (side/swing/box/first-contact)
+    corner = next(sp for sp in sps if sp.type == "corner" and sp.side)
+    assert corner.side in ("left", "right") and corner.delivery_type
+    assert corner.players_in_box and corner.first_contact_team
+
+    # every CSV-reachable (Tier A) dataset is non-empty
+    for kind in ("delivery", "delivery_success", "delivery_trajectory", "occ_timeline",
+                 "pen_outcome", "pen_shooter"):
+        assert platform.setpieces.visual_dataset(user, kind, workspace_id=ws.id), kind
+
+
 def test_tagging_set_piece_csv_enters_through_data_hub(platform):
     """A Set Piece CSV produced by the Tagging Studio imports the SAME way and
     becomes available to Set Piece analysis — no Tagging->SetPiece special path."""

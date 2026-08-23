@@ -23,7 +23,7 @@ from fap.setpieces.models import SetPiece
 # Bump whenever the derivation OUTPUT changes (id scheme, fields, classification).
 # It is part of the derived-set-piece cache key, so a logic fix is never masked by
 # a stale cached result computed by an older version. v2: unique per-row derived ids.
-DERIVATION_VERSION = 2
+DERIVATION_VERSION = 3
 
 # canonical event_type / set_piece values -> the module's controlled type
 _TYPE_MAP = {
@@ -59,6 +59,22 @@ def _did(row_key: Any, match_id: Any, minute: Any, second: Any, t: str,
     # immutable frame -> the same ids, so the per-dataset derivation cache stays valid.
     raw = f"{row_key}|{match_id}|{minute}|{second}|{t}|{x}|{y}|{player}"
     return "af_" + hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
+
+
+_TRUTHY = {"1", "1.0", "true", "yes", "y", "t"}
+
+
+def _s(row: dict[str, Any], *keys: str) -> str:
+    """First non-empty string among ``keys`` (case/space tolerant column names)."""
+    for k in keys:
+        v = row.get(k)
+        if v is not None and str(v).strip() and str(v).strip().lower() != "nan":
+            return str(v).strip()
+    return ""
+
+
+def _b(row: dict[str, Any], *keys: str) -> bool:
+    return _s(row, *keys).lower() in _TRUTHY
 
 
 def _classify(row: dict[str, Any]) -> str | None:
@@ -121,8 +137,27 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
             team=team, opponent=str(row.get("opponent", "") or ""),
             perspective="own" if own else "opposition",
             phase="offensive" if own else "defensive",
-            type=t, taker=str(row.get("player", "") or ""),
+            type=t, taker=_s(row, "taker", "player", "delivered_by"),
             minute=_int(row.get("minute")), period=_int(row.get("period")),
             start_x=x, start_y=y, end_x=_num(row.get("end_x")), end_y=_num(row.get("end_y")),
-            outcome=("goal" if goal else outcome), shot=shot, goal=goal, source=source))
+            outcome=("goal" if goal else outcome), shot=shot, goal=goal, source=source,
+            # delivery-level detail read straight from the canonical frame when present,
+            # so the CSV/Data-Hub path powers the delivery/side/swing/first-contact charts
+            # too (not only the bare-minimum delivery landing map). Absent -> defaults.
+            side=_s(row, "side", "corner_side", "flank"),
+            foot=_s(row, "foot", "delivery_foot", "kicking_foot"),
+            subtype=_s(row, "subtype", "routine", "variation"),
+            delivery_type=_s(row, "delivery_type", "delivery", "swing", "swing_type"),
+            delivery_height=_s(row, "delivery_height", "height"),
+            delivery_length=_s(row, "delivery_length", "length"),
+            players_in_box=_int(row.get("players_in_box")
+                                if row.get("players_in_box") not in (None, "") else row.get("in_box")),
+            xg=_num(row.get("xg") if row.get("xg") not in (None, "") else row.get("shot_xg")),
+            first_contact_team=_s(row, "first_contact_team", "first_contact"),
+            second_ball_team=_s(row, "second_ball_team", "second_ball"),
+            retained=_b(row, "retained", "retention"),
+            marking=_s(row, "marking", "marking_scheme"),
+            venue=_s(row, "venue", "home_away"),
+            match_date=_s(row, "match_date", "date"),
+            match_label=_s(row, "match_label", "match", "fixture")))
     return out
