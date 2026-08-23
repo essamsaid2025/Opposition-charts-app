@@ -61,6 +61,12 @@ _PITCH_TAGS: tuple[TagDefinition, ...] = (
     TagDefinition("foul", "Foul", "point", "pitch", _WON_LOST, "f", "Defensive"),
     TagDefinition("defensive_action", "Defensive Action", "point", "pitch", _OK, "", "Defensive"),
     TagDefinition("set_piece", "Set Piece", "point", "pitch", _OK, "", "Set Piece"),
+    # set-piece deliveries tagged on the pitch. Their key is the canonical set-piece
+    # event_type, so an exported tag classifies as a corner/free_kick/throw_in through
+    # the SAME Data Hub derivation every other set-piece dataset uses (no special path).
+    TagDefinition("corner", "Corner", "line", "pitch", _OK, "", "Set Piece"),
+    TagDefinition("free_kick", "Free Kick", "line", "pitch", _OK, "", "Set Piece"),
+    TagDefinition("throw_in", "Throw-in", "line", "pitch", _OK, "", "Set Piece"),
     TagDefinition("custom", "Custom Event", "point", "pitch", (), "", "General"),
 )
 

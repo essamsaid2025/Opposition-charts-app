@@ -275,8 +275,12 @@ class SetPieceService:
                     perspective: str = "own", phase: str = "offensive",
                     workspace_id: str | None = None, provider: str = "generic",
                     mapping: dict[str, str] | None = None) -> ImportResult:
-        """Provider-agnostic ingest: read the file, detect columns, normalize rows
-        and persist the set pieces. One import batch row records the provenance."""
+        """DEPRECATED — the independent set-piece import. The authoritative ingestion
+        path is now the Data Hub (Import → classify → persist → activate), and Set Pieces
+        derive from ``WorkspaceManager.active_frame`` (see ``_active_set_pieces``). This
+        method is retained only for the manual/legacy store and back-compat; the UI no
+        longer calls it. Do NOT add new callers — route files through the Data Hub instead.
+        Provider-agnostic ingest: read the file, detect columns, normalize rows and persist."""
         self._require(user, Capability.EDIT_SETPIECE)
         df = A.read_table(data, filename)
         return self._import_frame(user, df, filename=filename, perspective=perspective,

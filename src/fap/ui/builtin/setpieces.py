@@ -828,52 +828,37 @@ class SetPieceAnalysisPage(Page):
         if not self._can_edit:
             st.warning("You need edit permission to import set pieces.")
             return
-        st.caption("Provider-agnostic import — CSV, Excel or JSON. Columns are auto-detected "
-                   "and normalized into the internal set-piece model.")
-        a, b = st.columns(2)
-        perspective = a.selectbox("Default perspective", PERSPECTIVES,
-                                  format_func=lambda p: "Own team" if p == "own" else "Opposition",
-                                  key="sp_imp_persp")
-        phase = b.selectbox("Default phase", PHASES, format_func=str.title, key="sp_imp_phase")
-        up = st.file_uploader("Set-piece file", type=["csv", "xlsx", "xls", "json"])
+        C.render_alert(
+            "Set Pieces reads from the **Data Hub active dataset** — the one import path "
+            "for the whole platform. Upload here and the file is ingested by the Data Hub "
+            "(classified, normalized, persisted and activated); every set-piece dashboard "
+            "then reads it automatically. There is no separate set-piece import.", "info")
+        datahub = getattr(shell.platform, "datahub", None) if shell.platform else None
+        if datahub is None:
+            st.warning("The Data Hub is unavailable in this session.")
+            return
+        up = st.file_uploader("Set-piece file (CSV / Excel)", type=["csv", "xlsx", "xls"])
         if not up:
+            st.caption("Want mapping, quality and lineage controls? Open **Data Hub → Import** — "
+                       "any dataset with set-piece events becomes available here automatically.")
             return
-        data = up.getvalue()
-        try:
-            preview = svc.preview_mapping(shell.user, data, up.name)
-        except Exception as exc:
-            st.error(f"Could not read the file: {exc}")
-            return
-        # intelligent column detection (Part 5/6) — auto-mapped, shown for confidence
-        st.write(f"**{preview['rows']}** rows · **{len(preview['mapping'])}** columns auto-detected "
-                 "and mapped")
-        detected = preview["mapping"]
-        mapped_cols = set(detected.values())
-        unmapped = [c for c in preview["columns"] if c not in mapped_cols]
-        m1, m2 = st.columns(2)
-        with m1:
-            st.caption("Detected → mapped (applied automatically)")
-            st.dataframe([{"Your column": v, "→ maps to": k} for k, v in detected.items()]
-                         or [{"Your column": "—", "→ maps to": "—"}],
-                         use_container_width=True, hide_index=True)
-        with m2:
-            st.caption("Unmapped columns (ignored)")
-            st.dataframe([{"Column": c} for c in unmapped] or [{"Column": "none"}],
-                         use_container_width=True, hide_index=True)
-        if not detected:
-            st.warning("No known columns detected — rows will use the defaults above. "
-                       "Expected columns include type, team, taker, end_x, end_y, outcome…")
-
-        if st.button("Import file", type="primary"):
-            result = svc.import_file(shell.user, data, up.name, perspective=perspective,
-                                     phase=phase, workspace_id=shell.workspace_id)
-            st.success(f"Imported {result.imported} of {result.batch.rows} set pieces "
-                       f"({result.batch.skipped} skipped).")
-            if result.errors:
-                with st.expander(f"{len(result.errors)} row issue(s)"):
-                    for err in result.errors[:50]:
-                        st.text(err)
-            self._compatibility_scanner(shell, svc)
+        name = st.text_input("Dataset name", value=up.name.rsplit(".", 1)[0], key="sp_ds_name")
+        if st.button("Import via Data Hub", type="primary", key="sp_import_datahub"):
+            try:
+                res = datahub.analyze(up.getvalue(), up.name)
+                if getattr(res, "import_result", None) is None:
+                    st.error("The Data Hub did not recognise this as an event dataset. Ensure it "
+                             "carries event_type / x / y (or a set_piece column).")
+                    return
+                ds = datahub.save_dataset(shell.user, res.import_result, name=name or up.name,
+                                          workspace_id=shell.workspace_id,
+                                          metadata={"tags": ["set_piece"]})
+                datahub.choose(shell.user, ds.id)
+                st.success(f"Imported and activated '{ds.name}' through the Data Hub — "
+                           "set-piece dashboards now read it automatically.")
+                self._compatibility_scanner(shell, svc)
+            except Exception as exc:
+                st.error(f"Import failed: {exc}")
 
     def _compatibility_scanner(self, shell, svc) -> None:
         """Part 9 — immediately after import, show what the dataset can generate."""
