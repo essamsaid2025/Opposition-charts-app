@@ -472,6 +472,22 @@ class SetPieceAnalysisPage(Page):
         except Exception as exc:
             st.error(f"Visualization library unavailable: {exc}")
             return
+        # hide charts that can't render from the current data (empty pitches) by
+        # default — the picker shows only what THIS dataset actually supports.
+        only_renderable = st.checkbox("Show only charts my data can render", value=True,
+                                      key="spv_only_render")
+        if only_renderable:
+            try:
+                compat = svc.dataset_compatibility(shell.user, workspace_id=shell.workspace_id)
+                ready = {c["id"] for c in compat if c.get("can_render")}
+                filtered = [v for v in catalog if v["id"] in ready]
+                if filtered:
+                    catalog = filtered
+                else:
+                    st.info("No chart is renderable from the active dataset yet — showing all "
+                            "so you can see what each one needs.")
+            except Exception:
+                pass
         cats = sorted({v["category"] for v in catalog})
         a, b, c = st.columns([2, 2, 1])
         category = a.selectbox("Category", cats, key="spv_cat")
