@@ -84,7 +84,10 @@ def _pitch(ctx):
     ``x``=depth, ``y``=across, ``ax=ctx.ax``)."""
     from mplsoccer import Pitch, VerticalPitch
     c = ctx.theme.colors
-    orient = str(ctx.controls.get("sp_orientation", "vertical")).lower()
+    orient = str(ctx.controls.get("sp_orientation")
+                 or ctx.controls.get("orientation") or "vertical").lower()
+    if orient not in ("vertical", "horizontal"):
+        orient = "vertical"                             # e.g. framework "auto"
     kw = dict(pitch_type="opta", half=True, pitch_color=c.get("bg", c["panel"]),
               line_color=c["lines"], linewidth=1.5, pad_top=2, goal_type="box",
               goal_alpha=1.0)

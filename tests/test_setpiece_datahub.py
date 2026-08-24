@@ -191,6 +191,23 @@ def test_ported_delivery_charts_render_from_structure_columns(platform):
         plt.close(fig)
 
 
+def test_filter_options_come_from_the_active_dataset(platform):
+    """Regression: the filter dropdowns must reflect the ACTIVE dataset (what the
+    charts render), not a leftover persisted/demo store — otherwise selecting an
+    option that isn't in the data makes filtering look broken."""
+    from fap.setpieces import analysis as SPA
+    user = _user()
+    ws = platform.workspace_manager.ensure_workspace(user)
+    raw = SPA.read_table((_AUDIT / "setpiece_schema_proxy_style.csv").read_bytes(), "px.csv")
+    _import_and_activate(platform, user, ws, SPA.to_event_frame(raw).to_csv(index=False).encode(),
+                         "Proxy style")
+    opts = platform.setpieces.filter_options(user, workspace_id=ws.id)
+    assert opts["team"] == ["Proxy FC"]                 # the active dataset's team, not a demo
+    assert set(opts["type"]) == {"corner", "free_kick", "throw_in", "penalty"}
+    assert set(opts["delivery_type"]) == {"inswing", "outswing"}
+    assert "Demo FC" not in opts["team"]
+
+
 def test_tagging_set_piece_csv_enters_through_data_hub(platform):
     """A Set Piece CSV produced by the Tagging Studio imports the SAME way and
     becomes available to Set Piece analysis — no Tagging->SetPiece special path."""

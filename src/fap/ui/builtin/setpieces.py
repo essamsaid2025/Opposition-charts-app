@@ -155,7 +155,7 @@ class SetPieceAnalysisPage(Page):
         self._report_button(shell, svc, filt, key=phase, phase=phase)
 
     def _filter_bar(self, shell, svc, *, key: str) -> SetPieceFilter:
-        opts = svc.filter_options(shell.user)
+        opts = svc.filter_options(shell.user, workspace_id=shell.workspace_id)
 
         def pick(col_label, col, c):
             values = opts.get(col, [])
@@ -498,7 +498,9 @@ class SetPieceAnalysisPage(Page):
         orient = st.radio("Pitch orientation", ["vertical", "horizontal"], horizontal=True,
                           key="spv_orient", format_func=str.title,
                           help="Vertical shows the box with the goal at the top (set-piece view).")
-        controls = {"sp_orientation": orient}
+        # both keys: the new delivery charts read `sp_orientation`; the older
+        # framework pitch charts read the standard `orientation` control.
+        controls = {"sp_orientation": orient, "orientation": orient}
         filt = self._filter_bar(shell, svc, key="viz")
 
         self._health_dashboard(shell, svc, filt)

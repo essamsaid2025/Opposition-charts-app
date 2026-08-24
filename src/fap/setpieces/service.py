@@ -457,14 +457,26 @@ class SetPieceService:
             "marking": AN.classify_marking(positions),
         }
 
-    def filter_options(self, user: User) -> dict[str, list[str]]:
-        """Distinct values per filterable column - populates the dashboard filter
-        bar. Cheap: a handful of DISTINCT queries."""
+    def filter_options(self, user: User, *, workspace_id: str | None = None
+                       ) -> dict[str, list[str]]:
+        """Distinct values per filterable column, populating the dashboard filter bar.
+
+        Reads from the SAME source the charts render from: when a dataset is active,
+        the options are the distinct values of the DERIVED set pieces (so the dropdown
+        can never offer a value the active data doesn't contain, e.g. a leftover demo
+        team). Falls back to the persisted store only when no dataset is active."""
         self._require(user, Capability.VIEW_SETPIECE)
+        cols = ("team", "opponent", "competition", "season", "match_id",
+                "taker", "delivery_type", "outcome", "type", "side")
+        active = self._active_set_pieces(user, workspace_id)
+        if active is not None:
+            out: dict[str, list[str]] = {}
+            for col in cols:
+                vals = {str(getattr(sp, col, "") or "").strip() for sp in active}
+                out[col] = sorted(v for v in vals if v)
+            return out
         r = self.set_pieces
-        return {col: r.distinct_values(col) for col in
-                ("team", "opponent", "competition", "season", "match_id",
-                 "taker", "delivery_type", "outcome", "type", "side")}
+        return {col: r.distinct_values(col) for col in cols}
 
     # =============================================================== visualizations (9.2)
     def visual_dataset(self, user: User, kind: str, filt: SetPieceFilter | None = None, *,
