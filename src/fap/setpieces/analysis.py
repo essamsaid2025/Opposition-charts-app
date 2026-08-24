@@ -313,10 +313,13 @@ def to_event_frame(df: pd.DataFrame, *, defaults: dict[str, Any] | None = None) 
         outcome = str(rec.get("outcome", "") or "").strip().lower()
         goal = any(w in result for w in _GOAL_WORDS) or "goal" in outcome
         shot = goal or any(w in result for w in _SHOT_WORDS)
+        taker = str(rec.get("taker", "") or "").strip()
+        if taker.endswith(".0") and taker[:-2].isdigit():   # shirt number read as float
+            taker = taker[:-2]
         out.append({
             "event_type": rec.get("type", "corner"), "set_piece": rec.get("type", "corner"),
             "team": rec.get("team", ""), "opponent": rec.get("opponent", ""),
-            "player": rec.get("taker", ""), "x": rec.get("start_x"), "y": rec.get("start_y"),
+            "player": taker, "x": rec.get("start_x"), "y": rec.get("start_y"),
             "end_x": rec.get("end_x"), "end_y": rec.get("end_y"),
             "perspective": rec.get("perspective", "own"), "phase": rec.get("phase", "offensive"),
             "delivery_type": rec.get("delivery_type", ""), "side": rec.get("side", ""),

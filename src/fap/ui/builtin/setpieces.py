@@ -495,6 +495,10 @@ class SetPieceAnalysisPage(Page):
         viz = b.selectbox("Visualization", in_cat, format_func=lambda v: v["name"], key="spv_viz")
         themes = svc.theme_ids(shell.user) or ["opta_light", "opta_dark"]
         theme = c.selectbox("Theme", themes, key="spv_theme")
+        orient = st.radio("Pitch orientation", ["vertical", "horizontal"], horizontal=True,
+                          key="spv_orient", format_func=str.title,
+                          help="Vertical shows the box with the goal at the top (set-piece view).")
+        controls = {"sp_orientation": orient}
         filt = self._filter_bar(shell, svc, key="viz")
 
         self._health_dashboard(shell, svc, filt)
@@ -513,8 +517,9 @@ class SetPieceAnalysisPage(Page):
             if val.can_render:
                 if st.button("Render preview", type="primary", key="spv_render"):
                     try:
-                        png = svc.render_visual(shell.user, viz["id"], filt, theme_id=theme, dpi=200,
-                                                fmt="png", workspace_id=shell.workspace_id)
+                        png = svc.render_visual(shell.user, viz["id"], filt, controls=controls,
+                                                theme_id=theme, dpi=200, fmt="png",
+                                                workspace_id=shell.workspace_id)
                         st.image(png, use_container_width=True)
                         d1, d2 = st.columns(2)
                         d1.download_button("⬇ PNG (hi-res)", data=png, file_name=f"{viz['id']}.png",
@@ -522,8 +527,9 @@ class SetPieceAnalysisPage(Page):
                         d2.download_button(
                             "⬇ PDF", key="spv_dlpdf", file_name=f"{viz['id']}.pdf",
                             mime="application/pdf",
-                            data=svc.render_visual(shell.user, viz["id"], filt, theme_id=theme,
-                                                   dpi=300, fmt="pdf", workspace_id=shell.workspace_id))
+                            data=svc.render_visual(shell.user, viz["id"], filt, controls=controls,
+                                                   theme_id=theme, dpi=300, fmt="pdf",
+                                                   workspace_id=shell.workspace_id))
                     except Exception as exc:
                         st.error(f"Render failed: {exc}")
             else:

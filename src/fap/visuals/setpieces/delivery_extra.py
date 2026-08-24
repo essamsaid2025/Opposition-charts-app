@@ -5,17 +5,23 @@ target zone, first/second-ball wins, near/far-post player & defender counts,
 taker) — NO manual position/contact tagging. They consume the ``delivery_full``
 dataset (one row per delivery, built in ``fap.setpieces.build_frames``).
 
-Pitch charts use a shared VERTICAL penalty-box view (goal at the top, attacking
-upward), matching the standalone app: canonical ``x`` (depth, attacking->100) is
-the vertical axis and canonical ``y`` (across the goal) is the horizontal axis.
+Pitch charts draw on a real football pitch via ``mplsoccer`` (correct proportions,
+goal at the top). Orientation is a control (``sp_orientation`` = vertical|horizontal).
+Coordinates are canonical: ``x`` = depth (attacking toward 100 = the goal line),
+``y`` = across the goal (0-100) — fed to mplsoccer's Opta pitch as (x=length, y=width).
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 
+from fap.core.types import Control
 from fap.visuals.setpieces.builders import (CAT_CONTACTS, CAT_DEFENSIVE, CAT_DELIVERY,
                                             sp_chart)
 from fap.visuals.setpieces.library import _chart_axes, _reg
+
+ORIENT = Control("sp_orientation", "Pitch orientation", "select", default="vertical",
+                 options=("vertical", "horizontal"),
+                 help="Draw the set-piece box vertically (goal at top) or horizontally.")
 
 # named delivery zones inside the box (canonical x depth, y across; 0-100).
 _ZONES = (
@@ -33,6 +39,15 @@ _DELIVERY_COLORS = {
 }
 
 
+def _fnum(v):
+    try:
+        if v is None or str(v).strip() in ("", "nan"):
+            return None
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _zone_of(x, y):
     fx, fy = _fnum(x), _fnum(y)
     if fx is None or fy is None:
@@ -41,15 +56,6 @@ def _zone_of(x, y):
         if x0 <= fx <= x1 and y0 <= fy <= y1:
             return name
     return ""
-
-
-def _fnum(v):
-    try:
-        if v is None or str(v).strip() in ("", "nan"):
-            return None
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def _df(ctx):
@@ -72,45 +78,103 @@ def _dcolor(ctx, dt):
     return c.get(_DELIVERY_COLORS.get(str(dt).strip().lower(), "accent"), c["accent"])
 
 
-# ---- shared VERTICAL penalty-box view (goal at top) -------------------------
-def _vbox(ctx):
-    """Draw the attacking penalty area vertically (goal at top). Returns ``T`` that
-    maps canonical ``(x_depth, y_across)`` to screen ``(x, y)`` = ``(across, depth)``."""
-    from matplotlib.patches import Arc, Rectangle
-    ax, c = ctx.ax, ctx.theme.colors
-    line = c["lines"]
-    ax.set_facecolor(c.get("bg", c["panel"]))
-    # penalty area + six-yard + goal, drawn in (across, depth) screen coords
-    ax.add_patch(Rectangle((21.1, 83.0), 57.8, 17.0, fill=False, edgecolor=line, lw=1.6))
-    ax.add_patch(Rectangle((36.8, 94.5), 26.4, 5.5, fill=False, edgecolor=line, lw=1.6))
-    ax.plot([44.2, 55.8], [100.0, 100.0], color=line, lw=4.0, solid_capstyle="butt")
-    ax.add_patch(Arc((50.0, 88.5), 18.0, 12.0, theta1=200, theta2=340, color=line, lw=1.4))
-    ax.scatter([50.0], [88.5], s=10, color=line, zorder=3)
-    ax.set_xlim(14.0, 86.0)
-    ax.set_ylim(73.0, 101.5)
-    ax.set_aspect("equal")
-    ax.axis("off")
-    return lambda cx, cy: (cy, cx)
+def _pitch(ctx):
+    """A half-pitch focused on the attacking box, honoring the orientation control.
+    Returns the mplsoccer pitch (use ``p.scatter/arrows/lines/kdeplot`` with canonical
+    ``x``=depth, ``y``=across, ``ax=ctx.ax``)."""
+    from mplsoccer import Pitch, VerticalPitch
+    c = ctx.theme.colors
+    orient = str(ctx.controls.get("sp_orientation", "vertical")).lower()
+    kw = dict(pitch_type="opta", half=True, pitch_color=c.get("bg", c["panel"]),
+              line_color=c["lines"], linewidth=1.5, pad_top=2, goal_type="box",
+              goal_alpha=1.0)
+    p = (Pitch(**kw) if orient == "horizontal" else VerticalPitch(**kw))
+    p.draw(ax=ctx.ax)
+    ctx.ax.set_facecolor(c.get("bg", c["panel"]))
+    ax = ctx.ax
+    # zoom to the attacking third (box + edge) so the set-piece area fills the frame,
+    # and put "across" in natural orientation (low y = left) so a left corner reads on
+    # the left — mplsoccer inverts the width axis for the attacking view by default.
+    if orient == "horizontal":
+        ax.set_xlim(74.0, 101.0)
+        y0, y1 = ax.get_ylim(); ax.set_ylim(min(y0, y1), max(y0, y1))
+    else:
+        ax.set_ylim(73.5, 101.0)
+        x0, x1 = ax.get_xlim(); ax.set_xlim(min(x0, x1), max(x0, x1))
+    return p
 
 
 def _ends(df):
-    """(across, depth) screen points for delivery landings + the source rows."""
-    pts = []
+    out = []
     for _, r in df.iterrows():
         x, y = _fnum(r.get("end_x")), _fnum(r.get("end_y"))
         if x is not None and y is not None:
-            pts.append((y, x, r))                       # (screen_x=across, screen_y=depth, row)
-    return pts
+            out.append((x, y, r))                       # (depth, across, row)
+    return out
+
+
+# named corner zones (canonical depth x0..x1, across y0..y1) + fixed zone colours
+# matching the standalone app's corner-zone map (independent of the chart theme).
+_CORNER_ZONES = (
+    ("Six Yard", 94.2, 39.0, 100.0, 61.0, "#B59B3A", 0.60),      # checked first (specific)
+    ("Penalty Spot", 83.0, 39.0, 94.2, 61.0, "#2E8B57", 0.55),
+    ("Near Post Short", 83.0, 2.0, 100.0, 21.0, "#2E6E8E", 0.30),
+    ("Near Post", 83.0, 21.0, 100.0, 39.0, "#2E6E8E", 0.48),
+    ("Far Post", 83.0, 61.0, 100.0, 79.0, "#3E5C8A", 0.48),
+    ("Far Post Long", 83.0, 79.0, 100.0, 98.0, "#3E5C8A", 0.30),
+    ("Box Front", 74.0, 30.0, 83.0, 70.0, "#5A6472", 0.28),
+)
+
+
+def _corner_zone_of(x, y):
+    fx, fy = _fnum(x), _fnum(y)
+    if fx is None or fy is None:
+        return ""
+    for name, x0, y0, x1, y1, _c, _a in _CORNER_ZONES:
+        if x0 <= fx <= x1 and y0 <= fy <= y1:
+            return name
+    return ""
+
+
+def _axy(p, x_depth, y_across):
+    """Canonical (depth, across) -> the mplsoccer axes data coords for the pitch."""
+    from mplsoccer import VerticalPitch
+    return (y_across, x_depth) if isinstance(p, VerticalPitch) else (x_depth, y_across)
+
+
+def _zone_backdrop(ctx, p, df=None):
+    """Draw the named corner zones as labelled colour blocks behind the arrows, with
+    the share of deliveries landing in each zone under its name."""
+    from matplotlib.patches import Rectangle
+    import matplotlib.patheffects as pe
+    ax = ctx.ax
+    counts = {z[0]: 0 for z in _CORNER_ZONES}
+    total = 0
+    if df is not None and not df.empty:
+        for _, r in df.iterrows():
+            z = _corner_zone_of(r.get("end_x"), r.get("end_y"))
+            if z:
+                counts[z] += 1; total += 1
+    for name, x0, y0, x1, y1, col, alpha in _CORNER_ZONES:
+        (ax0, ay0) = _axy(p, x0, y0)
+        (ax1, ay1) = _axy(p, x1, y1)
+        ax.add_patch(Rectangle((min(ax0, ax1), min(ay0, ay1)), abs(ax1 - ax0), abs(ay1 - ay0),
+                               facecolor=col, alpha=alpha, edgecolor="#FFFFFF", lw=0.8, zorder=0.8))
+        cx, cy = _axy(p, (x0 + x1) / 2, (y0 + y1) / 2)
+        pct = (100 * counts[name] / total) if total else 0
+        label = f"{name.replace(' ', chr(10), 1)}\n{pct:.0f}%"
+        ax.text(cx, cy, label, ha="center", va="center", color="#FFFFFF",
+                fontsize=max(6, ctx.style("label_size") - 2), fontweight="bold", zorder=3,
+                path_effects=[pe.withStroke(linewidth=1.6, foreground="#0A0A0A")])
 
 
 # ---------------------------------------------------------------- pitch charts
 def _delivery_zones(ctx):
     from matplotlib.colors import to_rgba
-    from matplotlib.patches import Rectangle
     df = _df(ctx)
     if df.empty or "end_x" not in df.columns:
         return _no_data(ctx)
-    _vbox(ctx)
+    p = _pitch(ctx)
     ax, c = ctx.ax, ctx.theme.colors
     accent = ctx.controls.get("primary_color") or c["accent"]
     counts = {z[0]: 0 for z in _ZONES}
@@ -122,21 +186,24 @@ def _delivery_zones(ctx):
     mx = max(counts.values()) or 1
     for name, x0, y0, x1, y1 in _ZONES:                 # (depth x0..x1, across y0..y1)
         n = counts[name]
-        ax.add_patch(Rectangle((y0, x0), y1 - y0, x1 - x0,
-                               facecolor=to_rgba(accent, 0.10 + 0.6 * n / mx),
-                               edgecolor=c["lines"], lw=0.8, zorder=2))
+        verts = [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]
+        p.polygon([verts], ax=ax, fc=to_rgba(accent, 0.10 + 0.6 * n / mx),
+                  ec=c["lines"], lw=0.8, zorder=0.9)
         pct = (100 * n / total) if total else 0
-        ax.text((y0 + y1) / 2, (x0 + x1) / 2, f"{n}\n{pct:.0f}%", ha="center", va="center",
-                fontsize=ctx.style("label_size"), color=c["text"], fontweight="bold", zorder=3)
+        p.annotate(f"{n}\n{pct:.0f}%", ((x0 + x1) / 2, (y0 + y1) / 2), ax=ax, ha="center",
+                   va="center", color=c["text"], fontsize=ctx.style("label_size"),
+                   fontweight="bold", zorder=3)
     ax.set_title(f"Delivery zones ({total})", color=c["text"], fontsize=ctx.style("label_size") + 1)
 
 
 def _delivery_trajectories(ctx):
+    from matplotlib.patches import FancyArrowPatch
     df = _df(ctx)
     if df.empty or "end_x" not in df.columns:
         return _no_data(ctx)
-    T = _vbox(ctx)
+    p = _pitch(ctx)
     ax, c = ctx.ax, ctx.theme.colors
+    _zone_backdrop(ctx, p, df)                          # named zone blocks + landing share
     seen = {}
     for _, r in df.iterrows():
         x, y = _fnum(r.get("x")), _fnum(r.get("y"))
@@ -145,24 +212,29 @@ def _delivery_trajectories(ctx):
             continue
         dt = str(r.get("delivery_type") or "").strip().lower()
         col = _dcolor(ctx, dt)
-        sx, sy = T(x, y); tx, ty = T(ex, ey)
-        ax.annotate("", xy=(tx, ty), xytext=(sx, sy),
-                    arrowprops=dict(arrowstyle="-|>", color=col, lw=1.8, alpha=0.75,
-                                    connectionstyle="arc3,rad=0.12"))
+        # curve the arc the way the ball swings: inswing bends toward goal, outswing away
+        base = 0.28 if dt != "outswing" else -0.22
+        rad = base if y < 50 else -base                # mirror for the opposite corner side
+        a, b = _axy(p, x, y), _axy(p, ex, ey)
+        ax.add_patch(FancyArrowPatch(a, b, connectionstyle=f"arc3,rad={rad}", arrowstyle="-|>",
+                                     mutation_scale=13, lw=2.4, color=col, alpha=0.9, zorder=5))
+        ax.scatter(*a, s=16, color=col, zorder=5)
         if dt and dt not in seen:
             seen[dt] = col
+    sides = {str(s).strip().lower() for s in df.get("side", []) if str(s).strip()}
+    tag = f" — {next(iter(sides)).title()} corner" if len(sides) == 1 else ""
     if seen and ctx.controls.get("legend", True):
         from matplotlib.lines import Line2D
         ax.legend(handles=[Line2D([0], [0], color=col, lw=3, label=dt.title())
                            for dt, col in seen.items()],
                   loc="lower center", ncol=min(4, len(seen)), facecolor=c["panel"],
-                  edgecolor=c["grid"], labelcolor=c["text"], fontsize=ctx.style("legend_size"))
-    ax.set_title("Delivery trajectories", color=c["text"], fontsize=ctx.style("label_size") + 1)
+                  edgecolor=c["grid"], labelcolor=c["text"], fontsize=ctx.style("legend_size"),
+                  framealpha=0.9)
+    ax.set_title(f"Delivery trajectories{tag}", color=c["text"],
+                 fontsize=ctx.style("label_size") + 1)
 
 
 def _heatmap(ctx, *, conceded=False):
-    import numpy as np
-    from scipy.ndimage import gaussian_filter
     df = _df(ctx)
     if df.empty or "end_x" not in df.columns:
         return _no_data(ctx)
@@ -173,17 +245,16 @@ def _heatmap(ctx, *, conceded=False):
     pts = _ends(df)
     if not pts:
         return _no_data(ctx)
-    T = _vbox(ctx)
+    p = _pitch(ctx)
     ax, c = ctx.ax, ctx.theme.colors
-    xs = np.array([p[0] for p in pts]); ys = np.array([p[1] for p in pts])
-    xe = np.linspace(14, 86, 44); ye = np.linspace(73, 101.5, 24)
-    H, _, _ = np.histogram2d(xs, ys, bins=[xe, ye])
-    H = gaussian_filter(H, sigma=1.4)
-    cmap = "Reds" if conceded else (ctx.theme.heatmap_cmaps[0] if getattr(ctx.theme, "heatmap_cmaps", None) else "Purples")
-    ax.imshow(H.T, extent=[14, 86, 73, 101.5], origin="lower", cmap=cmap, alpha=0.85,
-              aspect="auto", zorder=1)
-    _vbox(ctx)                                           # redraw lines on top
-    ax.scatter(xs, ys, s=14, color=c["text"], alpha=0.35, zorder=4)
+    xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+    cmap = "Reds" if conceded else (getattr(ctx.theme, "heatmap_cmaps", ["Purples"])[0])
+    try:
+        p.kdeplot(xs, ys, ax=ax, fill=True, levels=60, thresh=0.05, cmap=cmap, alpha=0.85, zorder=1)
+    except Exception:
+        stat = p.bin_statistic(xs, ys, bins=(18, 12))
+        p.heatmap(stat, ax=ax, cmap=cmap, alpha=0.85, zorder=1)
+    p.scatter(xs, ys, ax=ax, s=18, color=c["text"], alpha=0.35, zorder=4)
     title = "Conceded delivery heatmap" if conceded else "Delivery landing heatmap"
     ax.set_title(f"{title} ({len(pts)})", color=c["text"], fontsize=ctx.style("label_size") + 1)
 
@@ -195,8 +266,8 @@ def _trajectory_clusters(ctx):
             if None not in (_fnum(r.get("x")), _fnum(r.get("y")),
                             _fnum(r.get("end_x")), _fnum(r.get("end_y")))]
     if len(rows) < 3:
-        return _no_data(ctx, "Need ≥3 deliveries to cluster")
-    T = _vbox(ctx)
+        return _no_data(ctx, "Need at least 3 deliveries to cluster")
+    p = _pitch(ctx)
     ax, c = ctx.ax, ctx.theme.colors
     X = np.array([[_fnum(r.get("x")), _fnum(r.get("y")), _fnum(r.get("end_x")),
                    _fnum(r.get("end_y"))] for r in rows], dtype=float)
@@ -212,14 +283,11 @@ def _trajectory_clusters(ctx):
     palette = [c["accent"], c["accent_2"], c["success"], c["warning"], c["danger"]]
     for j in range(k):
         col = palette[j % len(palette)]
-        for r in (X[lab == j]):
-            sx, sy = T(r[0], r[1]); tx, ty = T(r[2], r[3])
-            ax.annotate("", xy=(tx, ty), xytext=(sx, sy),
-                        arrowprops=dict(arrowstyle="-", color=col, lw=1.0, alpha=0.4))
-        sx, sy = T(C[j][0], C[j][1]); tx, ty = T(C[j][2], C[j][3])
-        ax.annotate("", xy=(tx, ty), xytext=(sx, sy),
-                    arrowprops=dict(arrowstyle="-|>", color=col, lw=3.2,
-                                    connectionstyle="arc3,rad=0.12"))
+        for r in X[lab == j]:
+            p.lines(r[0], r[1], r[2], r[3], ax=ax, color=col, lw=1.0, alpha=0.35, zorder=2)
+        p.lines(C[j][0], C[j][1], C[j][2], C[j][3], ax=ax, color=col, lw=3.4, alpha=0.95,
+                comet=True, zorder=3)
+        p.scatter(C[j][2], C[j][3], ax=ax, s=90, color=col, edgecolors=c["bg"], lw=1.0, zorder=4)
     ax.set_title(f"Delivery route clusters ({k})", color=c["text"],
                  fontsize=ctx.style("label_size") + 1)
 
@@ -228,14 +296,14 @@ def _second_ball_map(ctx):
     df = _df(ctx)
     if df.empty or "end_x" not in df.columns:
         return _no_data(ctx)
-    _vbox(ctx)
+    p = _pitch(ctx)
     ax, c = ctx.ax, ctx.theme.colors
     nw = nl = 0
-    for sx, sy, r in _ends(df):
+    for x, y, r in _ends(df):
         if bool(r.get("second_ball_win")):
-            ax.scatter([sx], [sy], s=90, facecolor=c["success"], edgecolor=c["bg"], lw=1.0, zorder=5); nw += 1
+            p.scatter(x, y, ax=ax, s=95, facecolor=c["success"], edgecolors=c["bg"], lw=1.0, zorder=5); nw += 1
         else:
-            ax.scatter([sx], [sy], s=90, facecolor="none", edgecolor=c["danger"], lw=2.0, zorder=5); nl += 1
+            p.scatter(x, y, ax=ax, s=95, facecolor="none", edgecolors=c["danger"], lw=2.0, zorder=5); nl += 1
     ax.set_title(f"Second ball — won {nw} / lost {nl}", color=c["text"],
                  fontsize=ctx.style("label_size") + 1)
 
@@ -245,22 +313,21 @@ def _fc_win_zone(ctx):
     df = _df(ctx)
     if df.empty or "first_contact_win" not in df.columns:
         return _no_data(ctx, "No first-contact data")
-    agg: dict[str, list[int]] = {}
+    agg = defaultdict(lambda: [0, 0])
     for _, r in df.iterrows():
         z = _zone_of(r.get("end_x"), r.get("end_y"))
         w = r.get("first_contact_win")
         if not z or w is None:
             continue
-        a = agg.setdefault(z, [0, 0])
-        a[0] += 1 if bool(w) else 0
-        a[1] += 1
+        agg[z][0] += 1 if bool(w) else 0
+        agg[z][1] += 1
     if not agg:
         return _no_data(ctx, "No first-contact data")
     zones = sorted(agg, key=lambda z: agg[z][0] / agg[z][1], reverse=True)
     pct = [100 * agg[z][0] / agg[z][1] for z in zones]
     ax, c = ctx.ax, ctx.theme.colors
     _chart_axes(ctx)
-    ax.barh(zones, pct, color=[c["success"] if p >= 50 else c["danger"] for p in pct])
+    ax.barh(zones, pct, color=[c["success"] if v >= 50 else c["danger"] for v in pct])
     ax.set_xlim(0, 100); ax.invert_yaxis()
     ax.set_xlabel("First-contact win %", color=c["muted"])
     ax.set_title("First contact win by zone", color=c["text"], fontsize=ctx.style("label_size") + 1)
@@ -273,7 +340,7 @@ def _target_zone_breakdown(ctx):
     has_tz = "target_zone" in df.columns and df["target_zone"].astype(str).str.strip().ne("").any()
     labels = ([str(v).strip() for v in df["target_zone"].tolist()] if has_tz
               else [_zone_of(r.get("end_x"), r.get("end_y")) for _, r in df.iterrows()])
-    cnt = Counter(l for l in labels if l)
+    cnt = Counter(v for v in labels if v)
     if not cnt:
         return _no_data(ctx)
     items = cnt.most_common(10)
@@ -334,25 +401,74 @@ def _structure_avgs(ctx):
         ax.legend(facecolor=c["panel"], edgecolor=c["grid"], labelcolor=c["text"])
 
 
+def _taker_table(ctx):
+    """Per-taker table: deliveries, inswing, outswing, left, right, success %."""
+    df = _df(ctx)
+    if df.empty or "taker" not in df.columns:
+        return _no_data(ctx, "No taker data")
+    stats: dict[str, dict] = {}
+    for _, r in df.iterrows():
+        t = str(r.get("taker") or "").strip()
+        if not t:
+            continue
+        s = stats.setdefault(t, {"n": 0, "in": 0, "out": 0, "L": 0, "R": 0, "ok": 0})
+        s["n"] += 1
+        dt = str(r.get("delivery_type") or "").lower()
+        s["in"] += dt == "inswing"; s["out"] += dt == "outswing"
+        side = str(r.get("side") or "").lower()
+        s["L"] += side == "left"; s["R"] += side == "right"
+        s["ok"] += 1 if (str(r.get("outcome") or "").lower() == "successful"
+                         or bool(r.get("goal")) or bool(r.get("shot"))) else 0
+    if not stats:
+        return _no_data(ctx, "No taker data")
+    order = sorted(stats, key=lambda t: stats[t]["n"], reverse=True)[:12]
+    ax, c = ctx.ax, ctx.theme.colors
+    ax.set_facecolor(c.get("bg", c["panel"]))
+    ax.axis("off")
+    header = ["Taker", "Deliveries", "Inswing", "Outswing", "Left", "Right", "Success %"]
+    cells = [[t, stats[t]["n"], stats[t]["in"], stats[t]["out"], stats[t]["L"], stats[t]["R"],
+              f"{100 * stats[t]['ok'] / stats[t]['n']:.0f}%"] for t in order]
+    tbl = ax.table(cellText=cells, colLabels=header, loc="center", cellLoc="center")
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(ctx.style("label_size"))
+    tbl.scale(1, 1.5)
+    for (row, _col), cell in tbl.get_celld().items():
+        cell.set_edgecolor(c["grid"])
+        if row == 0:
+            cell.set_facecolor(c["accent"]); cell.set_text_props(color="#FFFFFF", fontweight="bold")
+        else:
+            cell.set_facecolor(c["panel"]); cell.set_text_props(color=c["text"])
+    ax.set_title("Taker statistics", color=c["text"], fontsize=ctx.style("label_size") + 1, pad=14)
+
+
 # ------------------------------------------------------------------ register
+_EC = (ORIENT,)
 _reg(sp_chart("sp_delivery_zones", "Delivery Zones", CAT_DELIVERY, "delivery_full",
-              _delivery_zones, description="Where deliveries land across the box zones."))
+              _delivery_zones, description="Where deliveries land across the box zones.",
+              extra_controls=_EC))
 _reg(sp_chart("sp_delivery_trajectories", "Delivery Trajectories", CAT_DELIVERY, "delivery_full",
-              _delivery_trajectories, description="Start→landing arcs coloured by delivery type."))
+              _delivery_trajectories, description="Start->landing arcs coloured by delivery type.",
+              extra_controls=_EC))
 _reg(sp_chart("sp_delivery_landing_heatmap", "Delivery Landing Heatmap", CAT_DELIVERY,
-              "delivery_full", lambda ctx: _heatmap(ctx), description="Density of delivery landings."))
+              "delivery_full", lambda ctx: _heatmap(ctx), description="Density of delivery landings.",
+              extra_controls=_EC))
 _reg(sp_chart("sp_trajectory_clusters", "Delivery Route Clusters", CAT_DELIVERY, "delivery_full",
-              _trajectory_clusters, description="k-means clusters of delivery routes."))
+              _trajectory_clusters, description="k-means clusters of delivery routes.",
+              extra_controls=_EC))
 _reg(sp_chart("sp_first_contact_win_zone", "First Contact Win by Zone", CAT_CONTACTS,
               "delivery_full", _fc_win_zone, description="Win % of the first contact per zone."))
 _reg(sp_chart("sp_second_ball_map", "Second Ball Map", CAT_CONTACTS, "delivery_full",
-              _second_ball_map, description="Where the second ball is won/lost."))
+              _second_ball_map, description="Where the second ball is won/lost.",
+              extra_controls=_EC))
 _reg(sp_chart("sp_target_zone_breakdown", "Target Zone Breakdown", CAT_DELIVERY,
               "delivery_full", _target_zone_breakdown, description="Delivery destination mix."))
 _reg(sp_chart("sp_taker_profile", "Taker Profile", CAT_DELIVERY, "delivery_full",
               _taker_profile, description="Set pieces taken per player."))
+_reg(sp_chart("sp_taker_table", "Taker Statistics Table", CAT_DELIVERY, "delivery_full",
+              _taker_table, description="Per-taker deliveries, swing, side and success %."))
 _reg(sp_chart("sp_defensive_structure", "Defensive Structure", CAT_DEFENSIVE, "delivery_full",
               _structure_avgs, description="Average attackers/defenders per box zone."))
 _reg(sp_chart("sp_conceded_heatmap", "Conceded Delivery Heatmap", CAT_DEFENSIVE, "delivery_full",
               lambda ctx: _heatmap(ctx, conceded=True),
-              description="Where dangerous deliveries repeatedly land (defensive)."))
+              description="Where dangerous deliveries repeatedly land (defensive).",
+              extra_controls=_EC))

@@ -234,14 +234,17 @@ def sp_zonegrid(id: str, name: str, category: str, dataset: str, *,
 
 
 def sp_chart(id: str, name: str, category: str, dataset: str,
-             artist: Callable[[LayerContext], None], *, description: str = "") -> type:
+             artist: Callable[[LayerContext], None], *, description: str = "",
+             extra_controls: tuple = ()) -> type:
     """Non-pitch chart (penalty goal grids, preference bars, timelines). Reuses
-    the custom_artist layer inside the same ChartVisualization framework."""
+    the custom_artist layer inside the same ChartVisualization framework.
+    ``extra_controls`` adds declarative controls (e.g. pitch orientation)."""
     class _V(ChartVisualization):
         info = PluginInfo(id=id, name=name, category=category, description=description)
         requires = ()
         sp_dataset = dataset
         sp_category = category
+        controls = tuple(extra_controls)
 
         def layers(self, ctx: LayerContext) -> Sequence[Layer]:
             return [layer_registry.create("custom_artist", artist=artist)]
