@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fap.datahub.classification import PLAYER_ROSTER, PLAYER_SCOUTING
+from fap.datahub.classification import (
+    PLAYER_ROSTER, PLAYER_SCOUTING, TEAM_MATCH_STATS,
+)
 
 # active-dataset kinds the Open Play engine cannot consume (no x/y/event columns)
 NON_EVENT_DATASET_TYPES = frozenset({PLAYER_SCOUTING, PLAYER_ROSTER})
@@ -34,4 +36,23 @@ def non_event_active_dataset(shell: Any):
     return ds if doc.get("dataset_type") in NON_EVENT_DATASET_TYPES else None
 
 
-__all__ = ["NON_EVENT_DATASET_TYPES", "non_event_active_dataset"]
+def team_stats_active_dataset(shell: Any):
+    """The active dataset if it is a team-match-stats comparison table, else
+    ``None``. Unlike player-scouting data, Open Play does NOT refuse this kind — it
+    renders a dedicated team-comparison view for it — so the Open Play page branches
+    on this helper before its event-only path."""
+    wm = getattr(shell, "wm", None)
+    if wm is None:
+        return None
+    try:
+        ds = wm.active_dataset(shell.user)
+    except Exception:
+        return None
+    if ds is None:
+        return None
+    doc = ds.document if isinstance(getattr(ds, "document", None), dict) else {}
+    return ds if doc.get("dataset_type") == TEAM_MATCH_STATS else None
+
+
+__all__ = ["NON_EVENT_DATASET_TYPES", "non_event_active_dataset",
+           "team_stats_active_dataset"]

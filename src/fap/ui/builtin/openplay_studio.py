@@ -2151,10 +2151,23 @@ class OpenPlayStudioPage(Page):
         except Exception:
             w.dataset = None
 
+        # Team-match-stats datasets have no events, but Open Play DOES support them
+        # with a dedicated comparison workspace (not the event engine). Branch here
+        # before the event-only path so the analyst gets team-comparison charts.
+        from fap.ui.dataset_compat import (
+            non_event_active_dataset, team_stats_active_dataset,
+        )
+        team_ds = team_stats_active_dataset(shell)
+        if team_ds is not None:
+            from fap.ui.components.team_compare_workspace import (
+                render_team_compare_workspace,
+            )
+            render_team_compare_workspace(shell, team_ds, key="_ops_team_cmp")
+            return
+
         # Compatibility gate: the Studio engine needs event data (add_derived_columns
         # reads x/y -> x2). A player-scouting dataset has no coordinates, so refuse it
         # here and point to Scouting instead of crashing on KeyError('x2').
-        from fap.ui.dataset_compat import non_event_active_dataset
         blocked = non_event_active_dataset(shell)
         if blocked is not None:
             C.render_empty_state(

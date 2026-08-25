@@ -94,12 +94,15 @@ class DataHubPage(Page):
         if result is None:
             C.render_alert("Upload a file and click Analyze. The Data Hub detects what the file "
                            "represents, then validates, cleans, maps and scores it - a match/event "
-                           "file and a player-scouting table each get the right analyzer, and you "
-                           "save either as a reusable dataset.", "info")
+                           "file, a player-scouting table, or a team match-stats comparison each get "
+                           "the right analyzer, and you save any of them as a reusable dataset.", "info")
             return
         # ``analyze`` returns a discriminated result: route to the matching report.
-        if getattr(result, "kind", "event") == "player_scouting":
+        kind = getattr(result, "kind", "event")
+        if kind == "player_scouting":
             self._scouting_report(shell, hub, result)
+        elif kind == "team_match_stats":
+            self._team_stats_report(shell, hub, result)
         else:
             self._wizard_report(shell, hub, result.import_result)
 
@@ -308,6 +311,92 @@ class DataHubPage(Page):
                         st.session_state.pop(key, None)
                     st.session_state[SEL] = ds.id
                     st.toast(f"Saved scouting dataset '{ds.name}' - available in Scouting")
+                    st.rerun()
+                except AuthError as exc:
+                    st.error(str(exc))
+                except Exception as exc:
+                    st.error(f"Could not save the dataset: {exc}")
+
+    # ============================================================ team-match-stats report
+    def _team_stats_report(self, shell, hub, result) -> None:
+        """The analysis view for a team-comparison stat table - the team-stats analog
+        of the event wizard report. Same design system; no technical errors."""
+        analysis = result.team_stats
+        s = analysis.summary()
+        cls = result.classification
+        C.render_alert(
+            f"{icon('check', 13)} Team match-stats dataset detected "
+            f"({cls.confidence:.0%} confidence).", "success")
+
+        C.render_section_title("Dataset intelligence", eyebrow="Team Match Stats",
+                               icon_name="analysis")
+        cards = [
+            C.metric_card_html("Dataset type", "Team Match Stats", accent="primary"),
+            C.metric_card_html("Entity", "Team statistic"),
+            C.metric_card_html("Teams", f"{s['team_count']:,}"),
+            C.metric_card_html("Statistics", f"{s['stat_count']:,}"),
+            C.metric_card_html("Categories", f"{s['category_count']:,}"),
+        ]
+        C.render_metric_row(cards)
+        if analysis.teams:
+            st.caption("Teams: " + _html.escape(" vs ".join(analysis.teams)))
+        if s.get("categories"):
+            st.caption("Categories: " + _html.escape(", ".join(s["categories"])))
+        C.render_alert("This dataset gets dedicated comparison charts in Open Play - "
+                       "activate it, then open Opponent Analysis or the Open Play Studio.", "info")
+
+        # data quality (honest)
+        C.render_section_title("Data quality", eyebrow="Checks", icon_name="shield")
+        st.markdown(f'Grade: {C.badge_html(analysis.quality.grade, _RATING_KIND.get(analysis.quality.grade, "neutral"))}',
+                    unsafe_allow_html=True)
+        for chk in analysis.quality.checks:
+            kind = {"pass": "success", "warn": "warning", "fail": "danger"}.get(chk.status, "info")
+            st.markdown(C.badge_html(chk.label, kind) + " " + _html.escape(chk.detail),
+                        unsafe_allow_html=True)
+
+        # schema: statistics x teams
+        C.render_section_title("Statistics", eyebrow="Columns", icon_name="layers")
+        stat_rows = [
+            {"category": st_.category, "statistic": st_.name, "unit": st_.unit,
+             **{t: st_.raw.get(t, "") for t in analysis.teams}}
+            for st_ in analysis.schema.stats[:60]
+        ]
+        if stat_rows:
+            st.dataframe(stat_rows, use_container_width=True, hide_index=True)
+
+        # preview
+        C.render_section_title("Preview", eyebrow="Rows", icon_name="grid")
+        if analysis.frame is not None:
+            st.dataframe(analysis.frame.head(20), use_container_width=True, hide_index=True)
+
+        # save
+        C.render_section_title("Save dataset", eyebrow="Register", icon_name="download")
+        self._team_stats_save_form(shell, hub, analysis, s)
+
+    def _team_stats_save_form(self, shell, hub, analysis, summary) -> None:
+        with st.form("_dh_save_team_stats"):
+            a, b = st.columns(2)
+            name = a.text_input("Dataset name", value=st.session_state.get(RAWNAME, "team stats"))
+            competition = b.text_input("Competition", value=summary.get("competition", ""))
+            c, d = st.columns(2)
+            season = c.text_input("Season")
+            match_date = d.text_input("Match date")
+            tags = st.text_input("Tags (comma separated)")
+            visibility = st.selectbox("Visibility", ["workspace", "private", "club"])
+            description = st.text_area("Description", height=68)
+            if st.form_submit_button("Save dataset", type="primary"):
+                try:
+                    ds = hub.save_team_stats_dataset(
+                        shell.user, analysis, name=name or "team stats",
+                        workspace_id=shell.workspace_id,
+                        metadata={"competition": competition, "season": season,
+                                  "match_date": match_date,
+                                  "tags": [t.strip() for t in tags.split(",") if t.strip()],
+                                  "visibility": visibility, "description": description})
+                    for key in (RESULT, RAW, RAWNAME):
+                        st.session_state.pop(key, None)
+                    st.session_state[SEL] = ds.id
+                    st.toast(f"Saved team-stats dataset '{ds.name}' - dedicated charts in Open Play")
                     st.rerun()
                 except AuthError as exc:
                     st.error(str(exc))

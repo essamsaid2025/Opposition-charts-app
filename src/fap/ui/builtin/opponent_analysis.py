@@ -17,7 +17,9 @@ import streamlit as st
 from fap.core.plugin import PluginInfo
 from fap.identity.roles import Role
 from fap.theme import components as C
-from fap.ui.dataset_compat import non_event_active_dataset
+from fap.ui.dataset_compat import (
+    non_event_active_dataset, team_stats_active_dataset,
+)
 from fap.ui.page import Page, get_renderer, page_registry
 
 
@@ -35,6 +37,19 @@ class OpponentAnalysisPage(Page):
         # coordinates, so route the user to Scouting instead of letting run_app raise
         # KeyError('x2'). This checks the persisted dataset_type - it never fabricates
         # columns, suppresses the error, or relaxes the engine's requirements.
+        # Team-match-stats datasets have no events but ARE supported in Open Play via
+        # a dedicated comparison workspace — render it here instead of run_app.
+        team_ds = team_stats_active_dataset(shell)
+        if team_ds is not None:
+            C.render_section_title(
+                "Opponent Analysis", eyebrow="Analysis", icon_name="analysis",
+                subtitle="Team match stats — comparison charts.")
+            from fap.ui.components.team_compare_workspace import (
+                render_team_compare_workspace,
+            )
+            render_team_compare_workspace(shell, team_ds, key="_oa_team_cmp")
+            return
+
         blocked = non_event_active_dataset(shell)
         if blocked is not None:
             self._render_incompatible(shell, blocked)

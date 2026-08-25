@@ -19,7 +19,7 @@ import pandas as pd
 from fap.datahub import quality as dq
 from fap.datahub import validation as dv
 from fap.datahub.classification import (
-    DatasetClassification, PLAYER_SCOUTING, classify_frame,
+    DatasetClassification, PLAYER_SCOUTING, TEAM_MATCH_STATS, classify_frame,
 )
 from fap.datahub.dataset_profiles import ProfileStore
 from fap.datahub.models import (
@@ -29,6 +29,7 @@ from fap.datahub.models import (
 from fap.datahub.preview import PreviewRequest, PreviewResult, build_preview
 from fap.datahub.repository import DataHubRepository
 from fap.datahub.scouting_schema import ScoutingAnalysis, analyze_player_scouting
+from fap.datahub.team_stats_schema import TeamStatsAnalysis, analyze_team_stats
 from fap.identity.models import User
 from fap.pipeline.importer import FilePreview, ImportResult, ImportService
 from fap.pipeline.validation import KNOWN_EVENTS
@@ -46,11 +47,12 @@ class AnalyzeResult:
     """Discriminated result of ``analyze`` — the Data Hub's single entry point
     that classifies a file *first*, then routes it to the right analyzer. ``kind``
     tells the UI which report to render; exactly one payload is populated."""
-    kind: str                                   # "event" | "player_scouting"
+    kind: str                                   # "event" | "player_scouting" | "team_match_stats"
     classification: DatasetClassification
     filename: str = ""
     import_result: ImportResult | None = None   # kind == "event"
     scouting: ScoutingAnalysis | None = None    # kind == "player_scouting"
+    team_stats: TeamStatsAnalysis | None = None  # kind == "team_match_stats"
 
 
 def _now() -> str:
@@ -125,6 +127,10 @@ class DataHubService:
             analysis = analyze_player_scouting(preview.frame, cls)
             return AnalyzeResult(kind=PLAYER_SCOUTING, classification=cls,
                                  filename=filename, scouting=analysis)
+        if cls.dataset_type == TEAM_MATCH_STATS:
+            ts = analyze_team_stats(preview.frame, cls)
+            return AnalyzeResult(kind=TEAM_MATCH_STATS, classification=cls,
+                                 filename=filename, team_stats=ts)
         result = self.run_import(data, filename, provider_id=provider_id,
                                  use_cache=use_cache)
         return AnalyzeResult(kind="event", classification=cls, filename=filename,
@@ -216,6 +222,49 @@ class DataHubService:
         self._snapshot(ds.id, user, note="initial import")
         return self.repo.get(ds.id)
 
+    def save_team_stats_dataset(self, user: User, analysis: TeamStatsAnalysis, *, name: str,
+                                workspace_id: str | None = None,
+                                metadata: dict[str, Any] | None = None):
+        """Persist a team-comparison stat table as a first-class dataset through the
+        SAME WorkspaceManager register/store paths every dataset uses. The semantic
+        schema (teams/categories/statistics/units) and a ``dataset_type`` flag live
+        in the dataset's existing ``document`` JSON, so Open Play can discover it and
+        draw dedicated comparison charts without re-inferring anything."""
+        meta = dict(metadata or {})
+        summary = analysis.summary()
+        frame = analysis.frame if analysis.frame is not None else pd.DataFrame()
+        grade = analysis.quality.grade
+        document = {
+            DATASET_TYPE_KEY: analysis.dataset_type,
+            ENTITY_TYPE_KEY: analysis.schema.entity_type,
+            "team_stats_schema": analysis.schema.to_dict(),
+            "team_stats_summary": summary,
+            "classification": analysis.classification.to_dict(),
+            "quality": _GRADE_SCORE.get(grade, 60.0),
+            "quality_rating": grade,
+            "provider": "team_match_stats",
+            "coord_system": "",
+            "pitch": meta.get("pitch", ""),
+            "units": meta.get("units", ""),
+            "tags": list(meta.get("tags", [])),
+            "visibility": meta.get("visibility", "workspace"),
+            "description": meta.get("description", ""),
+        }
+        ds = self.repo.register(
+            user, name=name, provider_id="team_match_stats", coord_system="",
+            rows=int(len(frame)), content_hash="", workspace_id=workspace_id,
+            season=meta.get("season", ""),
+            competition=meta.get("competition") or analysis.competition,
+            opponent=meta.get("opponent", ""), match_date=meta.get("match_date", ""),
+            document=document)
+        self.repo.store_frame(ds.id, frame)
+        lineage = [LineageEvent(s, _now(), user.email,
+                                "team-stats analyzer").to_dict() for s in LINEAGE_STAGES[:5]]
+        lineage.append(LineageEvent("saved", _now(), user.email, name).to_dict())
+        self.repo.save_hub_doc(ds.id, {"lineage": lineage, "versions": []})
+        self._snapshot(ds.id, user, note="initial import")
+        return self.repo.get(ds.id)
+
     # ------------------------------------------------------------ scouting discovery
     def list_scouting_datasets(self, *, workspace_id: str | None = None,
                                include_archived: bool = False) -> list[Any]:
@@ -226,6 +275,18 @@ class DataHubService:
                                  include_archived=include_archived):
             doc = ds.document if isinstance(ds.document, dict) else {}
             if doc.get(DATASET_TYPE_KEY) == PLAYER_SCOUTING:
+                out.append(ds)
+        return out
+
+    def list_team_stats_datasets(self, *, workspace_id: str | None = None,
+                                 include_archived: bool = False) -> list[Any]:
+        """Every registered team-match-stats dataset — the query Open Play uses to
+        find comparison tables by kind, without knowing any filename."""
+        out = []
+        for ds in self.repo.list(workspace_id=workspace_id,
+                                 include_archived=include_archived):
+            doc = ds.document if isinstance(ds.document, dict) else {}
+            if doc.get(DATASET_TYPE_KEY) == TEAM_MATCH_STATS:
                 out.append(ds)
         return out
 
@@ -327,7 +388,38 @@ class DataHubService:
         doc = (self.repo.get(dataset_id).document if self.repo.get(dataset_id) else {}) or {}
         if doc.get(DATASET_TYPE_KEY) == PLAYER_SCOUTING:
             return self._scouting_health(frame, doc)
+        if doc.get(DATASET_TYPE_KEY) == TEAM_MATCH_STATS:
+            return self._team_stats_health(doc)
         return self._health(frame, doc)
+
+    def _team_stats_health(self, doc: dict[str, Any]) -> DatasetHealth:
+        """Team-comparison tables are graded on team/statistic/category coverage
+        and value completeness — not on event coordinates/event-types, which they
+        legitimately lack. Reads the persisted semantic schema; never re-infers."""
+        schema = doc.get("team_stats_schema", {}) if isinstance(doc, dict) else {}
+        teams = schema.get("teams", []) or []
+        stats = schema.get("stats", []) or []
+        cats = schema.get("categories", []) or []
+        n_teams = len(teams)
+        incomplete = sum(1 for s in stats
+                         if len({k for k, v in (s.get("values") or {}).items()
+                                 if v is not None}) < n_teams)
+        axes = [
+            HealthAxis("teams", "Teams", "green" if n_teams >= 2 else "red",
+                       1.0 if n_teams >= 2 else 0.0, f"{n_teams} team(s) compared"),
+            HealthAxis("statistics", "Statistics",
+                       "green" if len(stats) >= 5 else "yellow" if stats else "red",
+                       1.0 if stats else 0.0, f"{len(stats)} statistic(s)"),
+            HealthAxis("categories", "Categories",
+                       "green" if cats else "yellow", 1.0 if cats else 0.0,
+                       f"{len(cats)} category group(s)" if cats else "no category grouping"),
+            HealthAxis("completeness", "Completeness",
+                       "yellow" if incomplete else "green",
+                       1.0 - (incomplete / len(stats) if stats else 0.0),
+                       f"{incomplete} statistic(s) missing a team value" if incomplete
+                       else "every statistic has a value for each team"),
+        ]
+        return DatasetHealth(axes=axes)
 
     def _scouting_health(self, frame: pd.DataFrame | None,
                          doc: dict[str, Any]) -> DatasetHealth:
@@ -427,6 +519,21 @@ class DataHubService:
                 CompatibilityResult("Open Play", False, "player-level data, not events"),
                 CompatibilityResult("Set Pieces", False, "player-level data, not events"),
                 CompatibilityResult("Tracking", False, "player-level data, not tracking"),
+            ]
+        if doc.get(DATASET_TYPE_KEY) == TEAM_MATCH_STATS:
+            schema = doc.get("team_stats_schema", {}) if isinstance(doc, dict) else {}
+            has_teams = len(schema.get("teams", []) or []) >= 2
+            has_stats = bool(schema.get("stats"))
+            ready = has_teams and has_stats
+            return [
+                CompatibilityResult("Open Play", ready,
+                                    "" if ready else "no team columns / statistics to compare"),
+                CompatibilityResult("Reports", has_stats,
+                                    "" if has_stats else "no statistics to report on"),
+                CompatibilityResult("Set Pieces", False, "team-level stats, not events"),
+                CompatibilityResult("Players", False, "team-level stats, no player identities"),
+                CompatibilityResult("Scouting", False, "team-level stats, no player identities"),
+                CompatibilityResult("Tracking", False, "team-level stats, not tracking"),
             ]
         frame = self.repo.frame(dataset_id)
         health = self.health(dataset_id)

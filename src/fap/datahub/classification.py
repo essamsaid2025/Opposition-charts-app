@@ -10,6 +10,8 @@ content — never from its filename — distinguishing:
     player_scouting  one row per player, carrying player-level metrics
     player_roster    a player identity table with no meaningful metrics
     set_piece        set-piece deliveries (corner/free-kick/throw-in tagging)
+    team_match_stats a team-comparison stat table: rows are statistics, columns
+                     are the teams being compared (no x/y, no player identity)
     unknown          nothing recognizable
 
 The guiding principle is *classify what the rows represent, not how many rows
@@ -30,10 +32,12 @@ TRACKING = "tracking"
 PLAYER_SCOUTING = "player_scouting"
 PLAYER_ROSTER = "player_roster"
 SET_PIECE = "set_piece"
+TEAM_MATCH_STATS = "team_match_stats"
 UNKNOWN = "unknown"
 
 DATASET_TYPES: tuple[str, ...] = (
-    EVENT, TRACKING, PLAYER_SCOUTING, PLAYER_ROSTER, SET_PIECE, UNKNOWN,
+    EVENT, TRACKING, PLAYER_SCOUTING, PLAYER_ROSTER, SET_PIECE,
+    TEAM_MATCH_STATS, UNKNOWN,
 )
 
 # entity a row represents
@@ -41,6 +45,7 @@ ENTITY_EVENT = "event"
 ENTITY_FRAME = "frame"
 ENTITY_PLAYER = "player"
 ENTITY_SET_PIECE = "set_piece"
+ENTITY_TEAM_STAT = "team_stat"
 
 
 # ---------------------------------------------------------------- identity aliases
@@ -104,6 +109,16 @@ _SET_PIECE_KEYS: frozenset[str] = frozenset({
 _SET_PIECE_VALUES: frozenset[str] = frozenset({
     "corner", "free kick", "freekick", "free_kick", "throw in", "throw_in",
     "throwin", "penalty",
+})
+
+# team-comparison stat tables: one column names the statistic (its rows are stat
+# labels, not entities), the remaining columns are the teams being compared.
+_STAT_LABEL_KEYS: frozenset[str] = frozenset({
+    "statistic", "statistics", "stat", "stats", "metric", "metrics", "kpi",
+    "measure", "parameter", "indicator",
+})
+_STAT_CATEGORY_KEYS: frozenset[str] = frozenset({
+    "category", "categories", "group", "grouping", "section", "phase",
 })
 
 
@@ -175,6 +190,22 @@ def _numeric_fraction(series: pd.Series) -> float:
         return 0.0
     coerced = pd.to_numeric(series, errors="coerce")
     return float(coerced.notna().mean())
+
+
+def to_number(series: pd.Series) -> pd.Series:
+    """Coerce a column to numbers, tolerating the display formatting common in
+    team-stat tables — a trailing ``%`` and thousands separators (``"56%"`` -> 56,
+    ``"1,024"`` -> 1024). Non-numeric cells become NaN. Never rescales (a percent
+    is kept as its face value, not divided by 100)."""
+    s = series.astype(str).str.strip()
+    s = s.str.replace("%", "", regex=False).str.replace(",", "", regex=False)
+    return pd.to_numeric(s, errors="coerce")
+
+
+def _numeric_or_percent_fraction(series: pd.Series) -> float:
+    if series.empty:
+        return 0.0
+    return float(to_number(series).notna().mean())
 
 
 def _has_coordinates(keys: set[str]) -> bool:
@@ -282,9 +313,39 @@ def classify_frame(frame: pd.DataFrame) -> DatasetClassification:
             PLAYER_ROSTER, ENTITY_PLAYER, 0.55, row_count,
             ["player identity column but no meaningful metrics"], signals)
 
+    # --- team-comparison stat table -----------------------------------------
+    # A stat-label column (its rows are statistic names, not entities) plus two or
+    # more numeric/percent value columns (the teams being compared). Reached only
+    # when there is no player identity, so it never collides with scouting.
+    stat_col = next((key_to_col[k] for k in _STAT_LABEL_KEYS if k in key_set), None)
+    if stat_col is not None:
+        cat_col = next((key_to_col[k] for k in _STAT_CATEGORY_KEYS if k in key_set), None)
+        skip = {stat_col, cat_col}
+        team_cols = [
+            c for c in frame.columns
+            if c not in skip and not is_index_artifact(c)
+            and _numeric_or_percent_fraction(
+                non_empty[c] if c in non_empty.columns else frame[c]) >= 0.6
+        ]
+        if len(team_cols) >= 2:
+            signals["stat_label_column"] = str(stat_col)
+            signals["team_columns"] = [str(c) for c in team_cols]
+            signals["category_column"] = str(cat_col) if cat_col is not None else ""
+            conf = 0.86 if cat_col is not None else 0.76
+            reasons = [
+                f"statistic-label column ({stat_col!r})",
+                f"{len(team_cols)} team value column(s): "
+                + ", ".join(str(c) for c in team_cols),
+            ]
+            if cat_col is not None:
+                reasons.append(f"category grouping column ({cat_col!r})")
+            return DatasetClassification(
+                TEAM_MATCH_STATS, ENTITY_TEAM_STAT, conf, row_count, reasons, signals)
+
     return DatasetClassification(
         UNKNOWN, "", 0.2, row_count,
-        ["no coordinate, event, set-piece or player-identity signals"], signals)
+        ["no coordinate, event, set-piece, player-identity or team-stat signals"],
+        signals)
 
 
 def _scouting_confidence(metric_count: int, metric_named: int,
@@ -302,7 +363,7 @@ def _scouting_confidence(metric_count: int, metric_named: int,
 
 __all__ = [
     "DATASET_TYPES", "EVENT", "TRACKING", "PLAYER_SCOUTING", "PLAYER_ROSTER",
-    "SET_PIECE", "UNKNOWN", "ENTITY_PLAYER", "ENTITY_EVENT", "ENTITY_FRAME",
-    "IDENTITY_ALIASES", "DatasetClassification", "classify_frame",
-    "normalize_key", "is_index_artifact",
+    "SET_PIECE", "TEAM_MATCH_STATS", "UNKNOWN", "ENTITY_PLAYER", "ENTITY_EVENT",
+    "ENTITY_FRAME", "ENTITY_TEAM_STAT", "IDENTITY_ALIASES", "DatasetClassification",
+    "classify_frame", "normalize_key", "is_index_artifact", "to_number",
 ]
