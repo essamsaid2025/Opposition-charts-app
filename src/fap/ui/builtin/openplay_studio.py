@@ -64,6 +64,9 @@ REP_META = K + "report_meta"     # report metadata inputs
 RPT_KIND = K + "report_kind"     # "Open Play Report" | "Set Piece Report"
 SPR_META = K + "setpiece_report_meta"  # set-piece report metadata inputs
 
+DASH_ITEMS = K + "dashboard_items"   # ordered viz names in the custom dashboard
+DASH_OUT = K + "dashboard_out"       # {"png","pdf","title","n"} the built dashboard
+
 VIEW_KIND = "openplay_view"      # WorkspaceManager preset kind (metadata only)
 FAV_SCOPE = "openplay_favorites"  # WorkspaceManager autosave scope
 RECENT_SCOPE = "openplay_recent_views"
@@ -1878,6 +1881,83 @@ def _restore_workspace(shell) -> None:
 # ``phase``: "input" panels write selections/options and run BEFORE the frame+ctx are
 # prepared; "view" panels consume the prepared state and run after — so the stage always
 # reflects the current selections in the SAME run (no one-rerun lag).
+def _panel_dashboard(w: Studio) -> None:
+    """Build a CUSTOM dashboard: pick any charts/maps, render them with the current
+    filters/theme via the engine, compose them on one grid, and download PNG/PDF.
+    Reuses the engine's per-chart rendering — any visualization, any number of panels."""
+    st.markdown('<div class="ops-h">Custom Dashboard</div>', unsafe_allow_html=True)
+    if w.render_frame is None or getattr(w.render_frame, "empty", True):
+        C.render_alert("Activate a dataset and set filters, then pick charts to build a "
+                       "dashboard.", "info")
+        return
+    names = w.engine.viz_names("All")
+    picked = st.multiselect(
+        "Charts & maps in this dashboard (order = selection order)", names,
+        default=[v for v in st.session_state.get(DASH_ITEMS, []) if v in names],
+        key="ops_db_ms", help="Search to add. They render with the CURRENT filters and theme.")
+    st.session_state[DASH_ITEMS] = picked
+    c1, c2, c3 = st.columns([2, 1, 1])
+    title = c1.text_input("Dashboard title", value=st.session_state.get("ops_db_title", "Custom Dashboard"),
+                          key="ops_db_title")
+    columns = c2.selectbox("Columns", [2, 3], key="ops_db_cols")
+    quality = c3.selectbox("Quality", ["standard", "print"], key="ops_db_quality")
+    build = st.button("Build dashboard", type="primary", key="ops_db_build",
+                      use_container_width=True, disabled=not picked)
+    if build:
+        with st.spinner(f"Rendering {len(picked)} panel(s)…"):
+            _build_dashboard(w, picked, title, int(columns), quality)
+    _show_dashboard(w)
+
+
+def _build_dashboard(w: Studio, names: list[str], title: str, columns: int,
+                     quality: str) -> None:
+    import matplotlib.pyplot as plt
+    from fap.ui.components.dashboard_compose import compose_grid
+    base = w.ctx or w.engine.default_ctx(w.vt, w.spec, aux={"df_all": w.df_all})
+    cctx = dict(base); cctx["show_title"] = False; cctx["title"] = ""
+    items: list[tuple[str, bytes]] = []
+    for nm in names:
+        try:
+            fig = w.engine.render(nm, w.render_frame, cctx)
+            items.append((nm, w.engine.export(fig, "png", 150, False)))
+            plt.close(fig)
+        except Exception as exc:
+            _log(f"Dashboard panel '{nm}' failed: {exc}")
+    if not items:
+        st.session_state[DASH_OUT] = None
+        st.error("None of the selected panels could be rendered from the current data.")
+        return
+    bg, text = w.vt.get("bg", "#0E1117"), w.vt.get("text", "#FFFFFF")
+    dpi = 180 if quality == "standard" else 260
+    subtitle = f"{len(items)} panels · {st.session_state.get(K + 'ds_name', '')}".strip(" ·")
+    png = compose_grid(items, title=title, subtitle=subtitle, columns=columns,
+                       bg=bg, text=text, fmt="png", dpi=dpi)
+    try:
+        pdf = compose_grid(items, title=title, subtitle=subtitle, columns=columns,
+                           bg=bg, text=text, fmt="pdf", dpi=dpi)
+    except Exception:
+        pdf = None
+    st.session_state[DASH_OUT] = {"png": png, "pdf": pdf, "title": title, "n": len(items)}
+    _log(f"Built custom dashboard: {len(items)} panels.")
+
+
+def _show_dashboard(w: Studio) -> None:
+    data = st.session_state.get(DASH_OUT)
+    if not data or not data.get("png"):
+        st.caption("Pick panels above and click Build dashboard.")
+        return
+    from fap.utils.text import slugify
+    st.image(data["png"], use_container_width=True)
+    slug = slugify(data.get("title") or "dashboard") or "dashboard"
+    cols = st.columns(2)
+    cols[0].download_button("Download PNG", data["png"], file_name=f"{slug}.png",
+                            mime="image/png", key="ops_db_png_dl", use_container_width=True)
+    if data.get("pdf"):
+        cols[1].download_button("Download PDF", data["pdf"], file_name=f"{slug}.pdf",
+                                mime="application/pdf", key="ops_db_pdf_dl",
+                                use_container_width=True)
+
+
 def _panel_match_stats(w: Studio) -> None:
     """Aggregate the active EVENT match into a two-team match-stats comparison
     (possession, shots, passes, tackles, …) PLUS computed PPDA + Field Tilt, drawn
@@ -1898,7 +1978,8 @@ PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
     "center": [("stage", "Stage", _panel_stage, "view")],
     "right": [("inspector", "Inspector", _panel_inspector, "input"),
               ("export", "Export", _panel_export, "view")],
-    "bottom": [("match_stats", "Match Stats", _panel_match_stats, "view"),
+    "bottom": [("dashboard", "Custom Dashboard", _panel_dashboard, "view"),
+               ("match_stats", "Match Stats", _panel_match_stats, "view"),
                ("report", "Scouting Report", _panel_report, "view"),
                ("profile", "Opponent Profile", _panel_profile, "view"),
                ("tactical", "Tactical Insights", _panel_tactical, "view"),
