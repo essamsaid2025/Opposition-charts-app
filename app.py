@@ -92,6 +92,10 @@ from fap.openplay.engine import (                              # noqa: E402
     register_engine as _register_engine, OpenPlayEngine as _OpenPlayEngine,
     OPEN_PLAY_FILTERS as _OPEN_PLAY_FILTERS,
 )
+# Phase-2 xG integration: canonical shot-level xG lives in the 'internal_xg'
+# column (added centrally by add_derived_columns). These pure aggregations
+# (Team xG / NPxG) only SUM that column - no model call, no recomputation.
+from fap.xg.enrichment import sum_xg as _xg_sum, sum_npxg as _npxg_sum  # noqa: E402
 
 # -----------------------------
 # Page config
@@ -1299,21 +1303,40 @@ def panel_shots(ax, df, ctx) -> str:
     d = df[df["event_type"].str.lower() == "shot"].dropna(subset=["x_plot", "y_plot"]).copy()
     if len(d):
         goal_mask = d["shot_result"].str.lower().eq("goal")
-        sizes = (105 - d["shot_distance"].fillna(60).clip(0, 100)) / 35
+        gm = goal_mask.to_numpy()
+        # Encode marker size by the canonical shot-level xG (internal_xg). Marker
+        # AREA scales ~linearly with xG as base*(0.6 .. 2.6): the 0.6x floor keeps
+        # low-xG shots visible and the 2.6x cap stops a high-xG shot dominating.
+        # Coordinates and goal/miss colours are untouched. Falls back to the old
+        # distance proxy when internal_xg is absent, so xG-less data is unchanged.
+        xg_num = pd.to_numeric(d.get("internal_xg", pd.Series(dtype=float)), errors="coerce")
+        has_xg = bool(xg_num.notna().any())
+        if has_xg:
+            size_arr = np.clip(0.6 + 2.2 * xg_num.fillna(0.0).to_numpy(), 0.6, 2.6)
+            ng_size = size_arr[~gm] if (~gm).any() else 1.0
+            g_size = size_arr[gm] if gm.any() else 1.4
+        else:
+            sizes = (105 - d["shot_distance"].fillna(60).clip(0, 100)) / 35
+            ng_size = float(np.clip(sizes[~goal_mask].mean() if (~goal_mask).any() else 1, 0.5, 3))
+            g_size = 1.4
         x, y = coords(d, spec)
         ms = ctx["marker"]
         ng = scatter_points(ax, x[~goal_mask], y[~goal_mask], ctx["colors"]["shot"], ms, vt,
-                            size_mult=float(np.clip(sizes[~goal_mask].mean() if (~goal_mask).any() else 1, 0.5, 3)))
+                            size_mult=ng_size)
         g = scatter_points(ax, x[goal_mask], y[goal_mask], ctx["colors"]["goal"],
-                           dict(ms, alpha=0.95), vt, size_mult=1.4, zorder=float(ms.get("zorder", 6)) + 1)
+                           dict(ms, alpha=0.95), vt, size_mult=g_size, zorder=float(ms.get("zorder", 6)) + 1)
         eng = LabelEngine(ax, vt, ctx["labels"])
         if ctx["labels"].get("show_players"):
             for _, r in d[goal_mask].iterrows():
                 rx, ry = pc(r["x_plot"], r["y_plot"], spec.is_vertical())
-                eng.add(rx, ry, str(r.get("player", ""))[:14])
+                name = str(r.get("player", ""))[:14]
+                xv = r.get("internal_xg")
+                eng.add(rx, ry, f"{name} (xG {float(xv):.2f})" if has_xg and pd.notna(xv) else name)
         handles = [Line2D([0], [0], marker="o", ls="", mfc=ctx["colors"]["shot"], mec=vt["line"]),
                    Line2D([0], [0], marker="o", ls="", mfc=ctx["colors"]["goal"], mec=ctx["colors"]["goal"])]
         build_legend(ax, handles, ["No Goal", "Goal"], vt, ctx["legend"], ctx)
+        if has_xg:
+            return f"Shots: {len(d)} | xG: {_xg_sum(d):.2f} | Marker size = xG"
     return f"Shots: {len(d)} | Size = closer to goal, not xG"
 
 
@@ -1701,6 +1724,8 @@ def compute_metrics(d: pd.DataFrame) -> Dict[str, float]:
         "Shots": len(shots),
         "Shots on Target": int(on_target),
         "Goals": safe_count(shots, "shot_result", "Goal"),
+        "xG": round(_xg_sum(shots), 2),
+        "NPxG": round(_npxg_sum(shots), 2),
         "Avg Shot Distance": round(shots["shot_distance"].mean(), 1) if len(shots) else 0.0,
         "Defensive Actions": len(defensive),
         "High Regains %": round((defensive["x"] >= 66.67).mean() * 100, 1) if len(defensive) else 0.0,
@@ -1710,7 +1735,8 @@ def compute_metrics(d: pd.DataFrame) -> Dict[str, float]:
 HIGHER_BETTER = {m: True for m in ["Events", "Passes", "Pass Accuracy %", "Forward Pass %",
                                    "Progressive Passes", "Progressive Carries", "Final 3rd Entries",
                                    "Box Entries", "Touches in Box", "Crosses", "Shots",
-                                   "Shots on Target", "Goals", "Defensive Actions", "High Regains %"]}
+                                   "Shots on Target", "Goals", "xG", "NPxG",
+                                   "Defensive Actions", "High Regains %"]}
 HIGHER_BETTER["Avg Shot Distance"] = False
 
 
@@ -2408,13 +2434,14 @@ def run_app():
     shots = f[f["event_type"].str.lower() == "shot"]
     defensive = f[f["event_type"].str.lower().isin(DEF_EVENTS)]
 
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
     with k1: kpi("Events", len(f))
     with k2: kpi("Passes", len(passes))
     with k3: kpi("Carries", len(carries))
     with k4: kpi("Shots", len(shots))
     with k5: kpi("Goals", safe_count(shots, "shot_result", "Goal"))
-    with k6: kpi("Def Actions", len(defensive))
+    with k6: kpi("xG", f"{_xg_sum(shots):.2f}")   # canonical Internal xG, shown as "xG"
+    with k7: kpi("Def Actions", len(defensive))
 
     # Phase 16.0: build the render context from the single shared source (default_ctx).
     # run_app passes its widget values as overrides; every unset key keeps the shared

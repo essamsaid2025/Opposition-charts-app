@@ -1,0 +1,95 @@
+{
+  "model_type": "XGBClassifier {'max_depth': 5, 'learning_rate': 0.05, 'min_child_weight': 5, 'reg_lambda': 5.0} n_estimators=141",
+  "model_version": "xgb-candidate-0.1.0",
+  "checkpoint": 4,
+  "training_data_source": "StatsBomb Open Data",
+  "feature_set": "A",
+  "features": [
+    "distance",
+    "angle",
+    "distance_x",
+    "abs_y_offset",
+    "body_part",
+    "shot_type",
+    "assist_type",
+    "assisted",
+    "set_piece",
+    "free_kick"
+  ],
+  "target": "goal (non-penalty shots only)",
+  "split": "identical to Checkpoint 3 (match-level, seed=42)",
+  "hyperparameters": {
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "min_child_weight": 5,
+    "reg_lambda": 5.0,
+    "n_estimators": 141,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "reg_alpha": 0.0,
+    "early_stopping_rounds": 50
+  },
+  "calibration_status": "raw",
+  "penalty_xg": 0.7255216693418941,
+  "test_metrics_saved_model": {
+    "log_loss": 0.26369606486964353,
+    "brier": 0.07500462341373962,
+    "roc_auc": 0.7899228967121017,
+    "n": 6306.0,
+    "mean_pred": 0.09670243847973721,
+    "base_rate": 0.09673326990168093
+  },
+  "test_metrics_raw": {
+    "log_loss": 0.26369606486964353,
+    "brier": 0.07500462341373962,
+    "roc_auc": 0.7899228967121017,
+    "n": 6306.0,
+    "mean_pred": 0.09670243847973721,
+    "base_rate": 0.09673326990168093,
+    "ece": 0.009506243055472504
+  },
+  "test_metrics_isotonic": {
+    "log_loss": 0.2636477531922965,
+    "brier": 0.07499540821330722,
+    "roc_auc": 0.7897994278412231,
+    "n": 6306.0,
+    "mean_pred": 0.09713687777457641,
+    "base_rate": 0.09673326990168093,
+    "ece": 0.009065349972092056
+  },
+  "overfitting": {
+    "train": {
+      "log_loss": 0.2516543171574703,
+      "brier": 0.07189093834458572,
+      "roc_auc": 0.8134722746183367,
+      "n": 30139.0,
+      "mean_pred": 0.09480686396715572,
+      "base_rate": 0.09482730017585189
+    },
+    "val": {
+      "log_loss": 0.24540988378122905,
+      "brier": 0.06898421176903073,
+      "roc_auc": 0.8088541349027261,
+      "n": 6649.0,
+      "mean_pred": 0.0956918253055032,
+      "base_rate": 0.09144232215370733
+    },
+    "test": {
+      "log_loss": 0.26369606486964353,
+      "brier": 0.07500462341373962,
+      "roc_auc": 0.7899228967121017,
+      "n": 6306.0,
+      "mean_pred": 0.09670243847973721,
+      "base_rate": 0.09673326990168093,
+      "ece": 0.009506243055472504
+    }
+  },
+  "vs_logreg_baseline": {
+    "log_loss": 0.2649494053280581,
+    "brier": 0.07511533448513688,
+    "roc_auc": 0.7877501036102412,
+    "n": 6306.0,
+    "mean_pred": 0.09641326165848906,
+    "base_rate": 0.09673326990168093
+  }
+}

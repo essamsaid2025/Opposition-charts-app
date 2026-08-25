@@ -13,6 +13,7 @@ import pandas as pd
 
 from fap.visuals import analysis as A
 from fap.visuals.maps._builders import chart
+from fap.xg import enrichment as _xg_enrich
 
 # shot-result vocab shared with the attacking maps
 _ON_TARGET = ("goal", "saved", "on target", "on_target", "saved to post")
@@ -119,8 +120,11 @@ def _team_metrics(d: pd.DataFrame) -> dict[str, float]:
     passes = A.passes(d)
     shots = A.shots(d)
     on_target = int(shots["shot_result"].astype(str).str.lower().isin(_ON_TARGET).sum())
-    xg = float(pd.to_numeric(shots.get("shot_xg", pd.Series(dtype=float)),
-                             errors="coerce").fillna(0).sum())
+    # Canonical xG comes from the frozen Internal xG model's shot-level column
+    # (labelled "xG" for the user). NPxG excludes penalties. Both are pure sums
+    # of internal_xg - never derived from goals/shot counts/averages.
+    xg = _xg_enrich.sum_xg(shots)
+    npxg = _xg_enrich.sum_npxg(shots)
     return {
         "Passes": float(len(passes)),
         "Pass Acc %": round(len(A.successful(passes)) / max(len(passes), 1) * 100),
@@ -130,6 +134,7 @@ def _team_metrics(d: pd.DataFrame) -> dict[str, float]:
         "Shots": float(len(shots)),
         "On Target": float(on_target),
         "xG": round(xg, 2),
+        "NPxG": round(npxg, 2),
         "Tackles": float(len(A.defensive(d, ("tackle",)))),
         "Interceptions": float(len(A.defensive(d, ("interception",)))),
     }

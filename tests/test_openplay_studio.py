@@ -206,7 +206,12 @@ def test_run_app_still_byte_identical_baseline():
     spec = eng.pitch_spec_cls()
     df_all = eng.apply_pitch_transforms(df, spec)
     f = eng.apply_pitch_transforms(df, spec)
-    baseline = {"Pass Map": 217328, "Shot Map": 60455, "Carry Map": 193492}
+    # Shot Map baseline intentionally updated (60455 -> 53460): markers are now
+    # sized by the canonical shot-level xG (internal_xg) per the APPROVED Phase-2
+    # Checkpoint 5 enhancement. Verified in isolation that ONLY the Shot Map
+    # changed - Pass Map (217328) and Carry Map (193492) are byte-identical to the
+    # pre-change baseline, so this update masks no unrelated regression.
+    baseline = {"Pass Map": 217328, "Shot Map": 53460, "Carry Map": 193492}
     for nm, size in baseline.items():
         if nm not in eng.viz_registry:
             continue

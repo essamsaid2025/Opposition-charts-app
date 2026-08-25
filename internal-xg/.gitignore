@@ -1,0 +1,18 @@
+# Raw external data must never be committed (large; regenerable from source).
+data/raw/
+# Local cache of StatsBomb JSON (default lives outside the repo, but ignore
+# any copy that lands here too).
+*.json.tmp
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# Keep processed dataset and trained models tracked deliberately (they are
+# small and are the point of the project). If you prefer not to commit them,
+# uncomment:
+# data/processed/
+# models/

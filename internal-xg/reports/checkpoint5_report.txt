@@ -1,0 +1,124 @@
+========================================================================
+CHECKPOINT 5 — DEEP EVALUATION / CALIBRATION / ROBUSTNESS
+========================================================================
+Primary test: 6306 shots, 610 goals, base rate 0.0967
+
+############################################################
+[1] CALIBRATION DEEP DIVE — Logistic Regression (test holdout)
+  Log Loss=0.26495  Brier=0.07512  ROC-AUC=0.7878
+  ECE=0.0081  MCE=0.0245
+  Calibration slope=0.988 (ideal 1.0)  intercept=-0.019  calibration-in-the-large=0.004 (ideal 0.0)
+  Reliability table (predicted bin | n | mean pred | actual rate | obs goals | exp goals):
+      bin  n_shots  obs_goals  actual_rate  pred_prob  expected_goals
+0.00-0.05     2760         70       0.0254     0.0280            77.4
+0.05-0.10     1743        136       0.0780     0.0720           125.5
+0.10-0.20     1072        152       0.1418     0.1387           148.7
+0.20-0.30      362         88       0.2431     0.2430            88.0
+0.30-0.50      261         98       0.3755     0.3811            99.5
+0.50-0.70       80         43       0.5375     0.5803            46.4
+0.70-1.00       28         23       0.8214     0.8063            22.6
+
+############################################################
+[2] CALIBRATION BY SHOT TYPE (LR, test)
+    group  n_shots  mean_pred  actual_rate  expected_goals  observed_goals  diff(pred-obs)  brier  reliable
+   Corner        2     0.0032       0.5000             0.0               1         -0.4968    NaN     False
+Free Kick      295     0.0597       0.0610            17.6              18         -0.0013 0.0565      True
+Open Play     6009     0.0982       0.0984           590.4             591         -0.0001 0.0759      True
+
+[5] BODY PART ANALYSIS (LR, test)
+group  n_shots  mean_pred  actual_rate  expected_goals  observed_goals  diff(pred-obs)  brier  reliable
+ foot     5232     0.0924       0.0946           483.5             495         -0.0022 0.0722      True
+ head     1050     0.1138       0.1057           119.5             111          0.0081 0.0892      True
+other       24     0.2073       0.1667             5.0               4          0.0407    NaN     False
+    (full body_part breakdown)
+     group  n_shots  mean_pred  actual_rate  expected_goals  observed_goals  diff(pred-obs)  brier  reliable
+      Head     1050     0.1138       0.1057           119.5             111          0.0081 0.0892      True
+ Left Foot     2002     0.0896       0.0939           179.5             188         -0.0043 0.0754      True
+     Other       24     0.2073       0.1667             5.0               4          0.0407    NaN     False
+Right Foot     3230     0.0941       0.0950           304.0             307         -0.0009 0.0703      True
+
+############################################################
+[3] CALIBRATION BY DISTANCE (LR, test) — bands in metres
+group  n_shots  mean_pred  actual_rate  expected_goals  observed_goals  diff(pred-obs)  brier  reliable
+  0-6      285     0.4117       0.4000           117.3             114          0.0117 0.2021      True
+ 6-10      961     0.1737       0.1655           166.9             159          0.0083 0.1290      True
+10-15     1307     0.1233       0.1301           161.2             170         -0.0068 0.1056      True
+15-20     1238     0.0715       0.0800            88.5              99         -0.0085 0.0717      True
+20-25     1273     0.0382       0.0353            48.6              45          0.0028 0.0336      True
+25-30      885     0.0240       0.0215            21.2              19          0.0025 0.0210      True
+  30+      357     0.0120       0.0112             4.3               4          0.0008 0.0112      True
+
+############################################################
+[4] CALIBRATION BY ANGLE (LR, test) — bands in degrees
+group  n_shots  mean_pred  actual_rate  expected_goals  observed_goals  diff(pred-obs)  brier  reliable
+ 0-10      180     0.0264       0.0500             4.8               9         -0.0236 0.0479      True
+10-20     3160     0.0408       0.0364           129.0             115          0.0044 0.0342      True
+20-30     1336     0.0974       0.1063           130.1             142         -0.0089 0.0925      True
+30-45      928     0.1502       0.1670           139.4             155         -0.0168 0.1261      True
+  45+      702     0.2917       0.2692           204.8             189          0.0225 0.1657      True
+
+############################################################
+[6] ASSIST TYPE ANALYSIS (LR, test)
+       group  n_shots  mean_pred  actual_rate  expected_goals  observed_goals  diff(pred-obs)  brier  reliable
+       cross      951     0.1467       0.1472           139.5             140         -0.0005 0.1103      True
+     cutback       29     0.0946       0.1724             2.7               5         -0.0778    NaN     False
+        none     1755     0.0938       0.0912           164.5             160          0.0026 0.0669      True
+        pass     3387     0.0723       0.0735           244.9             249         -0.0012 0.0622      True
+through_ball      184     0.3060       0.3043            56.3              56          0.0016 0.1961      True
+    NOTE: small assist categories (cutback / through_ball) — interpret with caution.
+
+############################################################
+[7] ROBUSTNESS — repeated match-level CV (train+val ONLY; test untouched)
+  2x5-fold grouped CV (10 folds):
+    log_loss   LR = 0.26134 ± 0.00680    XGB = 0.26057 ± 0.00665    Δ(XGB-LR) = -0.00077
+    brier      LR = 0.07380 ± 0.00224    XGB = 0.07371 ± 0.00218    Δ(XGB-LR) = -0.00008
+    roc_auc    LR = 0.78635 ± 0.00915    XGB = 0.78712 ± 0.00940    Δ(XGB-LR) = +0.00076
+    ece        LR = 0.00926 ± 0.00204    XGB = 0.00935 ± 0.00158    Δ(XGB-LR) = +0.00009
+  Paired log_loss diff (XGB-LR): mean=-0.00077  std=0.00109  folds where XGB better: 7/10
+
+############################################################
+[8] TEMPORAL ROBUSTNESS (chronological split; same config, refit — no tuning)
+  chrono train+val: 1485 matches / 36667 shots; chrono test: 262 matches / 6427 shots (later in time)
+    LR  chrono-test: log_loss=0.26581 brier=0.07428 auc=0.7655 ece=0.0095
+    XGB chrono-test: log_loss=0.26445 brier=0.07387 auc=0.7682 ece=0.0121
+    (compare vs primary match-level test: LR log_loss=0.26495 brier=0.07512)
+
+############################################################
+[9] EXTREME-SHOT BEHAVIOR — LR vs XGB (central sweep)
+  Central shot, xG vs distance (selected):
+    dist= 2.3m   LR=0.8762   XGB=0.7465
+    dist= 6.0m   LR=0.5195   XGB=0.4496
+    dist= 9.7m   LR=0.2799   XGB=0.2512
+    dist=16.1m   LR=0.1046   XGB=0.0942
+    dist=24.4m   LR=0.0333   XGB=0.0251
+    dist=31.8m   LR=0.0127   XGB=0.0083
+    dist=44.7m   LR=0.0025   XGB=0.0081
+    dist=54.9m   LR=0.0007   XGB=0.0083
+  Monotonic non-increasing with distance?  LR=True   XGB=False
+
+############################################################
+[10] AGGREGATE xG VALIDATION (LR, test)
+  ALL test shots: sum xG=608.0  actual goals=610  ratio=0.997
+  by match_id: groups(n>= thr)=262  corr(xG,goals)=0.410  MAE=1.15  total_xG=608.0 vs goals=610
+  by team: groups(n>= thr)=85  corr(xG,goals)=0.741  MAE=1.95  total_xG=564.0 vs goals=571
+  by competition: groups(n>= thr)=6  corr(xG,goals)=0.996  MAE=3.78  total_xG=608.0 vs goals=610
+
+############################################################
+[11] PROVIDER COMPARISON (StatsBomb — reference only)
+  overall: internal_mean=0.0964 provider_mean=0.0939 actual=0.0967
+           corr=0.8116 MAD=0.0375 internal_brier=0.0751 provider_brier=0.0701
+  By distance band (mean internal LR / mean provider / actual rate / n):
+    0-6     LR=0.4117  SB=0.3915  actual=0.4000  n=285
+    6-10    LR=0.1737  SB=0.1609  actual=0.1655  n=961
+    10-15   LR=0.1233  SB=0.1241  actual=0.1301  n=1307
+    15-20   LR=0.0715  SB=0.0761  actual=0.0800  n=1238
+    20-25   LR=0.0382  SB=0.0356  actual=0.0353  n=1273
+    25-30   LR=0.0240  SB=0.0229  actual=0.0215  n=885
+    30+     LR=0.0120  SB=0.0109  actual=0.0112  n=357
+
+############################################################
+[12] MODEL COMPLEXITY DECISION
+  Primary test:   LR  log_loss=0.26495 brier=0.07512 auc=0.7878 ece=0.0081
+                  XGB log_loss=0.26370 brier=0.07500 auc=0.7899 ece=0.0095
+  CV log_loss:    LR 0.26134±0.00680   XGB 0.26057±0.00665   (Δ -0.00077, within ±1σ=True)
+  Extreme monotonicity: LR=True  XGB=False

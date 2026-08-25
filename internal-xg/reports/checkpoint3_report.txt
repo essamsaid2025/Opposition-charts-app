@@ -1,0 +1,129 @@
+======================================================================
+CHECKPOINT 3 — LOGISTIC REGRESSION BASELINE
+======================================================================
+
+[1] MATCH-LEVEL SPLIT (primary, seeded, representative)
+split  matches  shots  goals  goal_rate
+train     1223  30139   2858     0.0948
+  val      262   6649    608     0.0914
+ test      262   6306    610     0.0967
+
+    CHRONOLOGICAL SPLIT (robustness, time-ordered)
+split  matches  shots  goals  goal_rate
+train     1223  30203   2832     0.0938
+  val      262   6464    648     0.1002
+ test      262   6427    596     0.0927
+
+[2] FEATURES (FEATURES_A, no Group B, no provider xG):
+    distance, angle, distance_x, abs_y_offset, body_part, shot_type, assist_type, assisted, set_piece, free_kick
+
+[3] HYPERPARAMETER TUNING (LogReg L2; selected by validation log loss)
+    C  log_loss   brier  roc_auc
+ 0.01   0.24871 0.06951  0.80280
+ 0.03   0.24792 0.06933  0.80325
+ 0.10   0.24772 0.06930  0.80365
+ 0.30   0.24751 0.06928  0.80427
+ 1.00   0.24747 0.06928  0.80457
+ 3.00   0.24749 0.06928  0.80469
+10.00   0.24745 0.06927  0.80473
+    -> selected C = 10.0
+
+[7] CALIBRATION INVESTIGATION (decided on VALIDATION only)
+    raw        log_loss=0.24745  brier=0.06927  roc_auc=0.8047  ece=0.0089
+    sigmoid    log_loss=0.24754  brier=0.06929  roc_auc=0.8047  ece=0.0091
+    isotonic   log_loss=0.25181  brier=0.06927  roc_auc=0.8046  ece=0.0078
+    -> chosen: RAW
+
+[4-6] FINAL TEST-SET METRICS (untouched until now)
+    RAW  LR:        log_loss=0.26495  brier=0.07512  roc_auc=0.7878
+    sigmoid calibrated: log_loss=0.26491  brier=0.07510  roc_auc=0.7878
+    test mean pred (raw) = 0.0964   test base rate = 0.0967
+    SAVED model (raw): log_loss=0.26495  brier=0.07512  roc_auc=0.7878  ece=0.0081
+
+[6] RELIABILITY TABLE (saved model, TEST set)
+      bin  n_shots  actual_goals  observed_rate  mean_pred
+0.00-0.05     2760            70         0.0254     0.0280
+0.05-0.10     1743           136         0.0780     0.0720
+0.10-0.20     1072           152         0.1418     0.1387
+0.20-0.30      362            88         0.2431     0.2430
+0.30-0.50      261            98         0.3755     0.3811
+0.50-0.70       80            43         0.5375     0.5803
+0.70-1.00       28            23         0.8214     0.8063
+
+[8] COEFFICIENTS & ODDS RATIOS (raw LR, fit train+val)
+    Numeric coefs are per +1 SD (features standardised). Absolute per-level
+    categorical coefs are non-identifiable vs the intercept; see the
+    reference-relative table below for interpretable categorical effects.
+                      feature    coef  odds_ratio  abs_coef
+                num__distance -1.3943      0.2480    1.3943
+     cat__shot_type_Open Play -1.1493      0.3169    1.1493
+cat__assist_type_through_ball  0.9687      2.6345    0.9687
+          cat__body_part_Head -0.8763      0.4163    0.8763
+     cat__assist_type_cutback -0.6319      0.5316    0.6319
+        cat__assist_type_none -0.5567      0.5731    0.5567
+              num__distance_x  0.4488      1.5664    0.4488
+       cat__assist_type_cross -0.4393      0.6445    0.4393
+         cat__body_part_Other -0.4341      0.6478    0.4341
+                   num__angle  0.4190      1.5204    0.4190
+               bin__set_piece -0.3793      0.6843    0.3793
+                bin__assisted -0.3617      0.6965    0.3617
+        cat__assist_type_pass -0.2591      0.7717    0.2591
+    cat__body_part_Right Foot  0.2184      1.2441    0.2184
+        cat__shot_type_Corner  0.1787      1.1956    0.1787
+     cat__body_part_Left Foot  0.1736      1.1896    0.1736
+            num__abs_y_offset  0.0722      1.0749    0.0722
+               bin__free_kick  0.0522      1.0536    0.0522
+     cat__shot_type_Free Kick  0.0522      1.0536    0.0522
+
+    Categorical effects vs reference level (log-odds & odds ratio):
+      body_part  (reference = 'Right Foot')
+        Head           coef_vs_ref=-1.0948  OR=0.335
+        Left Foot      coef_vs_ref=-0.0448  OR=0.956
+        Other          coef_vs_ref=-0.6525  OR=0.521
+        Right Foot     coef_vs_ref=+0.0000  OR=1.000  <- reference
+      shot_type  (reference = 'Open Play')
+        Corner         coef_vs_ref=+1.3280  OR=3.773
+        Free Kick      coef_vs_ref=+1.2015  OR=3.325
+        Open Play      coef_vs_ref=+0.0000  OR=1.000  <- reference
+      assist_type  (reference = 'pass')
+        cross          coef_vs_ref=-0.1802  OR=0.835
+        cutback        coef_vs_ref=-0.3728  OR=0.689
+        none           coef_vs_ref=-0.2976  OR=0.743
+        pass           coef_vs_ref=+0.0000  OR=1.000  <- reference
+        through_ball   coef_vs_ref=+1.2278  OR=3.414
+
+[9] MULTICOLLINEARITY (numeric features)
+    Correlation matrix:
+              distance  angle  distance_x  abs_y_offset
+distance         1.000 -0.753       0.939         0.433
+angle           -0.753  1.000      -0.595        -0.582
+distance_x       0.939 -0.595       1.000         0.125
+abs_y_offset     0.433 -0.582       0.125         1.000
+    VIF:
+     feature  R2_on_others   VIF
+    distance        0.9863 72.79
+       angle        0.6775  3.10
+  distance_x        0.9818 55.00
+abs_y_offset        0.8639  7.35
+
+[10] FOOTBALL SANITY CHECKS (saved model)
+    A close central foot       dist=  5.5m angle= 67.4deg  xG=0.5653
+    B long central foot        dist= 32.0m angle= 13.0deg  xG=0.0124
+    C close tight-angle        dist= 21.7m angle=  5.0deg  xG=0.0182
+    D medium central header    dist=  9.1m angle= 43.6deg  xG=0.1283
+    E long-distance            dist= 45.7m angle=  9.1deg  xG=0.0022
+    F free kick (25m central)  dist= 22.9m angle= 18.2deg  xG=0.0931
+    SYMMETRY: left xG=0.050301  right xG=0.050301  |diff|=0.00e+00  (PASS)
+
+[11] PROVIDER BENCHMARK (StatsBomb xG — REFERENCE ONLY, not a target)
+    n: 6306
+    mean_internal_xg: 0.0964
+    mean_provider_xg: 0.0939
+    correlation: 0.8116
+    mean_abs_diff: 0.0375
+    actual_goal_rate: 0.0967
+    provider_brier: 0.0701
+    internal_brier: 0.0751
+
+[12] SAVED: C:\Users\Essam\OneDrive\Desktop\Github\Opposition-charts-app\internal-xg\models\logistic_baseline.joblib
+     META:  C:\Users\Essam\OneDrive\Desktop\Github\Opposition-charts-app\internal-xg\models\logistic_baseline_meta.json

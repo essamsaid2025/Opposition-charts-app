@@ -85,6 +85,19 @@ def add_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
     df["time_min"] = pd.to_numeric(df["minute"], errors="coerce").fillna(0) + \
         pd.to_numeric(df["second"], errors="coerce").fillna(0) / 60
     df["shot_distance"] = np.sqrt((100 - df["x"]) ** 2 + (50 - df["y"]) ** 2)
+
+    # Internal xG (Phase-2 integration): attach the frozen Internal xG Model v1.0
+    # score to shot rows at this single centralized point, so every downstream
+    # consumer of the derived frame reuses one shot-level calculation. Lazy,
+    # batched, idempotent and failure-safe: unavailability/malformed rows -> NaN,
+    # never a crash and never a fabricated value. All scoring flows through
+    # fap.xg -> the frozen model; no xG formula lives here.
+    if "internal_xg" not in df.columns:
+        try:
+            from fap.xg.enrichment import compute_internal_xg_series
+            df["internal_xg"] = compute_internal_xg_series(df)
+        except Exception:  # noqa: BLE001 - never let xG break the derived frame
+            df["internal_xg"] = np.nan
     return df
 
 

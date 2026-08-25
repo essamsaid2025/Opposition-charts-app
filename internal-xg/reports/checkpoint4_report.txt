@@ -1,0 +1,100 @@
+======================================================================
+CHECKPOINT 4 — XGBOOST ADVANCED MODEL
+======================================================================
+
+[SPLIT] identical to Checkpoint 3 (match-level, seed=42):
+split  matches  shots  goals  goal_rate
+train     1223  30139   2858     0.0948
+  val      262   6649    608     0.0914
+ test      262   6306    610     0.0967
+[FEATURES] FEATURES_A: distance, angle, distance_x, abs_y_offset, body_part, shot_type, assist_type, assisted, set_piece, free_kick
+
+[4] XGB GRID SEARCH (24 configs, early stopping). Top 5 by val log loss:
+ max_depth  learning_rate  min_child_weight  reg_lambda  best_iter  val_logloss  val_brier  val_auc
+         5           0.05                 5         5.0        141      0.24541    0.06898  0.80885
+         5           0.03                 5         1.0        259      0.24541    0.06902  0.80900
+         4           0.05                 5         5.0        141      0.24550    0.06908  0.80952
+         5           0.03                 5         5.0        194      0.24555    0.06908  0.80904
+         5           0.05                 5         1.0        126      0.24556    0.06901  0.80867
+    -> selected: {'max_depth': 5, 'learning_rate': 0.05, 'min_child_weight': 5, 'reg_lambda': 5.0}, n_estimators=141
+
+[7] CALIBRATION INVESTIGATION (decided on VALIDATION only)
+    raw       log_loss=0.24541 brier=0.06898 auc=0.8089 ece=0.0071
+    sigmoid   log_loss=0.25033 brier=0.06930 auc=0.8089 ece=0.0192
+    isotonic  log_loss=0.24551 brier=0.06901 auc=0.8080 ece=0.0074
+    -> chosen: RAW
+
+[8] OVERFITTING DIAGNOSTICS (raw model fit on TRAIN only)
+    train: log_loss=0.25165 brier=0.07189 auc=0.8135
+    val:   log_loss=0.24541 brier=0.06898 auc=0.8089
+    test:  log_loss=0.26370 brier=0.07500 auc=0.7899
+    train->test gaps: dLogLoss=+0.01204 dBrier=+0.00311 dAUC=-0.0235
+
+[6] FINAL TEST METRICS
+    RAW XGB:        log_loss=0.26370 brier=0.07500 auc=0.7899 ece=0.0095
+    isotonic XGB: log_loss=0.26365 brier=0.07500 auc=0.7898 ece=0.0091
+
+    RELIABILITY TABLE (saved XGB [raw], TEST):
+      bin  n_shots  actual_goals  observed_rate  mean_pred
+0.00-0.05     3011            81         0.0269     0.0276
+0.05-0.10     1350           111         0.0822     0.0697
+0.10-0.20     1165           158         0.1356     0.1420
+0.20-0.30      396            92         0.2323     0.2429
+0.30-0.50      280           109         0.3893     0.3806
+0.50-0.70       83            39         0.4699     0.5694
+0.70-1.00       21            20         0.9524     0.8105
+
+[2] REDUCED-FEATURE EXPERIMENTS (val log loss; best_params reused)
+                                                           experiment  n_feat  n_est  val_logloss  val_brier  val_auc
+                                                      full FEATURES_A      10    141      0.24541    0.06898   0.8089
+                              drop free_kick (redundant w/ shot_type)       9    134      0.24560    0.06906   0.8083
+                                   location: keep distance+angle only       8    114      0.24597    0.06915   0.8085
+         location: keep distance_x+abs_y_offset+angle (drop distance)       9    141      0.24562    0.06907   0.8086
+location: keep distance+angle, drop distance_x/abs_y_offset/free_kick       7    114      0.24592    0.06915   0.8087
+
+[11] FEATURE IMPORTANCE
+    Gain importance aggregated by original feature:
+      body_part      0.3245
+      assist_type    0.2267
+      angle          0.1401
+      distance       0.1351
+      shot_type      0.0581
+      free_kick      0.0470
+      set_piece      0.0414
+      abs_y_offset   0.0178
+      assisted       0.0092
+    Permutation importance (val, drop in neg-log-loss; higher = more important):
+         feature  perm_importance     std
+           angle          0.03203 0.00115
+        distance          0.02147 0.00080
+       body_part          0.01338 0.00142
+     assist_type          0.00681 0.00061
+       set_piece          0.00362 0.00058
+      distance_x          0.00310 0.00035
+    abs_y_offset          0.00135 0.00048
+       shot_type          0.00089 0.00028
+        assisted          0.00001 0.00001
+       free_kick         -0.00006 0.00003
+
+[9] FOOTBALL SANITY CHECKS (LR vs XGB)
+    A close central foot       dist=  5.5m angle= 67.4  LR=0.5653  XGB=0.4028
+    B long central foot        dist= 32.0m angle= 13.0  LR=0.0124  XGB=0.0085
+    C close tight-angle        dist= 21.7m angle=  5.0  LR=0.0182  XGB=0.0283
+    D medium central header    dist=  9.1m angle= 43.6  LR=0.1283  XGB=0.1118
+    E long-distance            dist= 45.7m angle=  9.1  LR=0.0022  XGB=0.0081
+    F free kick (25m central)  dist= 22.9m angle= 18.2  LR=0.0931  XGB=0.0625
+    SYMMETRY (XGB): left=0.037720 right=0.037720 |diff|=0.00e+00 (PASS)
+    PENALTY routed to constant: xG=0.7255 (=pen_xg 0.7255)
+
+[10] PROVIDER BENCHMARK (StatsBomb xG — reference only)
+    LR: mean_xg=0.0964 corr=0.8116 MAD=0.0375 brier=0.0751
+    XGB: mean_xg=0.0967 corr=0.8097 MAD=0.0386 brier=0.0750
+    provider mean_xg=0.0939 provider_brier=0.0701
+
+[12] MODEL COMPARISON (test set)
+            model features  log_loss   brier  roc_auc    ece    calib train_test_gap
+LogReg (baseline)   A (10)   0.26495 0.07512   0.7878 0.0081      raw            n/a
+          XGB raw   A (10)   0.26370 0.07500   0.7899 0.0095      raw    dLL=+0.0120
+     XGB isotonic   A (10)   0.26365 0.07500   0.7898 0.0091 isotonic              -
+
+[14] SAVED CANDIDATE: C:\Users\Essam\OneDrive\Desktop\Github\Opposition-charts-app\internal-xg\models\xgboost_candidate.joblib

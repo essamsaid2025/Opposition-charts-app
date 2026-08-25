@@ -1,0 +1,44 @@
+========================================================================
+CHECKPOINT 8 — PRODUCTION INFERENCE API
+========================================================================
+
+[METADATA] api.model_info():
+  model_name: Internal xG Model
+  model_version: v1.0
+  model_type: LogisticRegression (L2, C=10) — raw (no post-hoc calibration)
+  frozen: True
+  training_data_source: StatsBomb Open Data
+  training_matches: 1747
+  training_shots: 43717
+  n_shots_nonpenalty: 43094
+  calibration_method: none (raw LR chosen; beat Platt/isotonic on validation)
+  penalty_xg: 0.7255216693418941
+  training_date: 2026-08-24T13:45:40
+  features: ['distance', 'angle', 'distance_x', 'abs_y_offset', 'body_part', 'shot_type', 'assist_type', 'assisted', 'set_piece', 'free_kick']
+  hyperparameters: {'C': 10.0, 'penalty': 'l2', 'solver': 'lbfgs', 'max_iter': 5000}
+  package_versions: {'python': '3.14.3', 'numpy': '2.4.2', 'pandas': '2.3.3', 'scipy': '1.17.0', 'scikit_learn': '1.9.0', 'xgboost': '3.4.1', 'joblib': '1.5.3'}
+  final_metrics: {'log_loss': 0.2649494053280581, 'brier': 0.07511533448513688, 'roc_auc': 0.7877501036102412, 'ece': 0.008063808569779996, 'mce': 0.024533541933788913, 'calibration_slope': 0.9877933670852189, 'calibration_in_the_large': 0.004301299283162903, 'n_test_shots': 6306}
+
+[INPUT SCHEMA] api.input_schema():
+  required: ['shot_x', 'shot_y']   penalty_column: penalty
+  optional: ['body_part', 'shot_type', 'assist_type', 'assisted', 'set_piece', 'free_kick']
+  coordinate_system: StatsBomb 120x80, attacking toward x=120 (goal centre 120,40)
+
+[EXAMPLES] example predictions
+  close central foot     xG=0.5494
+  header from cross      xG=0.0678
+  25m free kick          xG=0.0931
+  penalty                xG=0.7255
+  team xG (all)  = 1.4359
+  npxG (no pens) = 0.7104
+
+[PERFORMANCE] vectorized inference (best of 3 after warmup)
+       1 shots:     7.49 ms total   7488.20 us/shot
+      20 shots:     7.62 ms total    380.76 us/shot
+     100 shots:     8.65 ms total     86.46 us/shot
+    1000 shots:     7.98 ms total      7.98 us/shot
+   10000 shots:    19.63 ms total      1.96 us/shot
+
+[DETERMINISM] same input -> same xG (repeat, and separate process)
+  in-process repeat: True  (hash 0112f50a972e)
+  separate process matches in-process: True  (hash 0112f50a972e)

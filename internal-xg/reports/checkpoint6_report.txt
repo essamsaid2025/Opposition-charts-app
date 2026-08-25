@@ -1,0 +1,54 @@
+========================================================================
+CHECKPOINT 6 — FINAL FOOTBALL SANITY & PRODUCTION SAFETY
+========================================================================
+
+[1] FROZEN MODEL INTEGRITY
+  loaded: internal_xg_v1.joblib   version=v1.0   frozen=True
+  features match meta: True
+  model_type: LogisticRegression (L2, C=10) — raw (no post-hoc calibration)
+  determinism: two runs identical = True
+  v1 == reviewed baseline (max abs diff): 0.00e+00
+  predictions in [0,1]: True
+
+[2] COORDINATE SANITY
+  (x,y) vs (x,80-y) identical across grid: True
+  invalid-coordinate handling (on_invalid='nan' -> NaN; 'error' -> raise):
+    x<0      flagged=True  xg=NaN
+    x>120    flagged=True  xg=NaN
+    y<0      flagged=True  xg=NaN
+    y>80     flagged=True  xg=NaN
+    x NaN    flagged=True  xg=NaN
+    y inf    flagged=True  xg=NaN
+  near-boundary 120.2 (rounding) allowed & scored raw: xg=0.9778
+
+[3/7] DISTANCE/ANGLE + EXTREME-SHOT SAFETY (central sweep)
+    point-blank central      dist=  0.9m angle=151.9  xG=0.9573
+    point-blank tight-angle  dist= 20.1m angle=  1.0  xG=0.0165
+    ~6m central              dist=  5.5m angle= 67.4  xG=0.5653
+    ~10m central             dist=  9.1m angle= 43.6  xG=0.3055
+    ~15m central             dist= 13.7m angle= 29.9  xG=0.1492
+    ~20m central             dist= 20.1m angle= 20.6  xG=0.0597
+    ~30m central             dist= 32.0m angle= 13.0  xG=0.0124
+    ~45m central             dist= 45.7m angle=  9.1  xG=0.0022
+    ~55m central             dist= 54.9m angle=  7.6  xG=0.0007
+    byline                   dist= 16.5m angle=  0.0  xG=0.0274
+    all finite & in [0,1]: True
+    central sweep monotonic non-increasing: True
+
+[6] PENALTY SAFETY
+  penalty xG = 0.7255 (frozen constant 0.7255)
+  team xG (incl pen) = 1.1404   npxG (excl pen) = 0.4149
+
+[8] REALISTIC SAMPLE (frozen model on the test holdout; no retraining)
+  n_shots=6306  goals=610
+  xG  min=0.0002  max=0.9481  mean=0.0964  median=0.0588
+  percentiles [1,5,25,50,75,95,99] = [0.0055, 0.0127, 0.0306, 0.0588, 0.1111, 0.3253, 0.5731]
+  sum xG=608.0  actual goals=610  goals/sumxG=1.003
+  (matches Checkpoint 5: sum xG 608.0 vs 610 goals)
+
+[9] FAILURE MODES
+  empty df -> rows=0, has xg col=True, team_xg=0 ok
+  single shot -> 1 row
+  20000 shots -> 20000 rows, all in [0,1]=True
+  unseen categories -> xg=0.6606 (no crash)
+  valid+malformed mix -> valid=0.4149, malformed=NaN

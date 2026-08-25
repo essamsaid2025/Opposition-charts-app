@@ -1,0 +1,93 @@
+{
+  "model_name": "Internal xG Model",
+  "model_version": "v1.0",
+  "model_type": "LogisticRegression (L2, C=10) \u2014 raw (no post-hoc calibration)",
+  "description": "Independent internal Expected Goals model trained on actual shot outcomes (goal/no-goal) from public historical event data. NOT Opta / StatsBomb / Wyscout xG.",
+  "frozen": true,
+  "frozen_at": "2026-08-24T13:45:40",
+  "training_data_source": "StatsBomb Open Data",
+  "competition_selection": [
+    "La Liga 2015/2016",
+    "Premier League 2015/2016",
+    "Serie A 2015/2016",
+    "Ligue 1 2015/2016",
+    "FIFA World Cup 2018",
+    "FIFA World Cup 2022",
+    "UEFA Euro 2020",
+    "UEFA Euro 2024"
+  ],
+  "n_matches_total": 1747,
+  "n_shots_total": 43717,
+  "n_shots_nonpenalty": 43094,
+  "n_penalties": 623,
+  "goal_base_rate_nonpenalty": 0.09458393279806934,
+  "feature_set": "A",
+  "features": [
+    "distance",
+    "angle",
+    "distance_x",
+    "abs_y_offset",
+    "body_part",
+    "shot_type",
+    "assist_type",
+    "assisted",
+    "set_piece",
+    "free_kick"
+  ],
+  "target": "goal (non-penalty shots only)",
+  "excluded_from_features": [
+    "statsbomb_xg",
+    "outcome",
+    "penalties",
+    "Group B features (technique, play_pattern, one_on_one, first_time, open_goal, aerial_won, follows_dribble)",
+    "freeze_frame / any post-shot information"
+  ],
+  "preprocessing": "ColumnTransformer: numeric(median impute+standardise), categorical(constant 'missing' impute + one-hot, unknown-safe), binary(to-float + constant-0 impute). Saved inside the pipeline.",
+  "hyperparameters": {
+    "C": 10.0,
+    "penalty": "l2",
+    "solver": "lbfgs",
+    "max_iter": 5000
+  },
+  "calibration_method": "none (raw LR chosen; beat Platt/isotonic on validation)",
+  "penalty_handling": {
+    "policy": "separate process; main model trained on non-penalty shots only",
+    "penalty_xg": 0.7255216693418941,
+    "penalty_xg_wilson95": [
+      0.6891775803698862,
+      0.7591015383101759
+    ],
+    "n_penalties": 623
+  },
+  "split_methodology": {
+    "primary": "match-level, seeded (42), 70/15/15, no shot leakage",
+    "robustness": "2x5-fold match-level grouped CV on train+val only",
+    "temporal": "chronological match-level split (same config refit, no tuning)"
+  },
+  "final_metrics_primary_test": {
+    "log_loss": 0.2649494053280581,
+    "brier": 0.07511533448513688,
+    "roc_auc": 0.7877501036102412,
+    "ece": 0.008063808569779996,
+    "mce": 0.024533541933788913,
+    "calibration_slope": 0.9877933670852189,
+    "calibration_in_the_large": 0.004301299283162903,
+    "n_test_shots": 6306
+  },
+  "software_versions": {
+    "python": "3.14.3",
+    "numpy": "2.4.2",
+    "pandas": "2.3.3",
+    "scipy": "1.17.0",
+    "scikit_learn": "1.9.0",
+    "xgboost": "3.4.1",
+    "joblib": "1.5.3"
+  },
+  "limitations": [
+    "Internal model; not equivalent to commercial provider xG.",
+    "No defender/goalkeeper context (freeze-frame deliberately excluded for reproducibility on future internal data).",
+    "Trained on men's football (4 leagues 2015/16 + World Cup 2018/2022 + Euro 2020/2024).",
+    "Penalties handled as a separate constant, not modelled.",
+    "Per-match xG has high variance (corr with goals ~0.41 at match level); reliable in aggregate."
+  ]
+}

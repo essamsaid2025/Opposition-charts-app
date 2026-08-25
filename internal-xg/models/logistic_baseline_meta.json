@@ -1,0 +1,141 @@
+{
+  "model_type": "LogisticRegression (L2, C=10.0)",
+  "model_version": "baseline-0.1.0",
+  "checkpoint": 3,
+  "trained_at": "2026-08-24T13:27:39",
+  "training_data_source": "StatsBomb Open Data",
+  "competition_selection": [
+    "La Liga 2015/2016",
+    "Premier League 2015/2016",
+    "Serie A 2015/2016",
+    "Ligue 1 2015/2016",
+    "FIFA World Cup 2018",
+    "FIFA World Cup 2022",
+    "UEFA Euro 2020",
+    "UEFA Euro 2024"
+  ],
+  "feature_set": "A",
+  "features": [
+    "distance",
+    "angle",
+    "distance_x",
+    "abs_y_offset",
+    "body_part",
+    "shot_type",
+    "assist_type",
+    "assisted",
+    "set_piece",
+    "free_kick"
+  ],
+  "target": "goal (non-penalty shots only)",
+  "excluded_from_features": [
+    "statsbomb_xg",
+    "outcome",
+    "penalties",
+    "Group B features"
+  ],
+  "split": {
+    "type": "match-level (primary) + chronological (robustness)",
+    "fracs": [
+      0.7,
+      0.15,
+      0.15
+    ],
+    "seed": 42,
+    "primary": [
+      {
+        "split": "train",
+        "matches": 1223,
+        "shots": 30139,
+        "goals": 2858,
+        "goal_rate": 0.0948
+      },
+      {
+        "split": "val",
+        "matches": 262,
+        "shots": 6649,
+        "goals": 608,
+        "goal_rate": 0.0914
+      },
+      {
+        "split": "test",
+        "matches": 262,
+        "shots": 6306,
+        "goals": 610,
+        "goal_rate": 0.0967
+      }
+    ],
+    "chronological": [
+      {
+        "split": "train",
+        "matches": 1223,
+        "shots": 30203,
+        "goals": 2832,
+        "goal_rate": 0.0938
+      },
+      {
+        "split": "val",
+        "matches": 262,
+        "shots": 6464,
+        "goals": 648,
+        "goal_rate": 0.1002
+      },
+      {
+        "split": "test",
+        "matches": 262,
+        "shots": 6427,
+        "goals": 596,
+        "goal_rate": 0.0927
+      }
+    ]
+  },
+  "hyperparameters": {
+    "C": 10.0,
+    "penalty": "l2",
+    "solver": "lbfgs",
+    "max_iter": 5000
+  },
+  "calibration_status": "raw",
+  "penalty_xg": 0.7255216693418941,
+  "penalty_estimate": {
+    "penalty_xg": 0.7255216693418941,
+    "n_penalties": 623.0,
+    "goals": 452.0,
+    "wilson95_lo": 0.6891775803698862,
+    "wilson95_hi": 0.7591015383101759
+  },
+  "test_metrics_saved_model": {
+    "log_loss": 0.2649494053280581,
+    "brier": 0.07511533448513688,
+    "roc_auc": 0.7877501036102412,
+    "n": 6306.0,
+    "mean_pred": 0.09641326165848906,
+    "base_rate": 0.09673326990168093
+  },
+  "test_metrics_raw": {
+    "log_loss": 0.2649494053280581,
+    "brier": 0.07511533448513688,
+    "roc_auc": 0.7877501036102412,
+    "n": 6306.0,
+    "mean_pred": 0.09641326165848906,
+    "base_rate": 0.09673326990168093
+  },
+  "test_metrics_sigmoid": {
+    "log_loss": 0.2649124351131967,
+    "brier": 0.07510118281139759,
+    "roc_auc": 0.7878068014367288,
+    "n": 6306.0,
+    "mean_pred": 0.09664241026864344,
+    "base_rate": 0.09673326990168093
+  },
+  "provider_benchmark": {
+    "n": 6306,
+    "mean_internal_xg": 0.09641326165848906,
+    "mean_provider_xg": 0.09387783219673326,
+    "correlation": 0.8115778480771063,
+    "mean_abs_diff": 0.037450733978883356,
+    "actual_goal_rate": 0.09673326990168093,
+    "provider_brier": 0.07007801089048142,
+    "internal_brier": 0.07511533448513688
+  }
+}
