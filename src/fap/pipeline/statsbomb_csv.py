@@ -40,6 +40,30 @@ def _xy(val: Any) -> tuple[float | None, float | None]:
         return (None, None)
 
 
+def _jersey_map(out: pd.DataFrame) -> dict[str, Any]:
+    """player name -> shirt number, read from the ``Starting XI`` events' lineup
+    (StatsBomb carries jersey numbers only there, never per event), so player-marker
+    maps can label each node."""
+    if "tactics.lineup" not in out.columns:
+        return {}
+    xi = out[out["type.name"].astype(str).eq("Starting XI")]
+    mapping: dict[str, Any] = {}
+    for val in xi["tactics.lineup"]:
+        try:
+            lineup = val if isinstance(val, (list, tuple)) else ast.literal_eval(str(val))
+        except Exception:
+            continue
+        for p in lineup or []:
+            try:
+                name = (p.get("player") or {}).get("name")
+                num = p.get("jersey_number")
+                if name and num is not None:
+                    mapping[str(name)] = num
+            except Exception:
+                continue
+    return mapping
+
+
 def reshape(df: pd.DataFrame) -> pd.DataFrame:
     """Return a COPY reshaped to canonical event columns, or the frame unchanged when it is not a
     flattened-StatsBomb CSV. Original columns are preserved alongside the added canonical ones."""
@@ -66,6 +90,16 @@ def reshape(df: pd.DataFrame) -> pd.DataFrame:
         out["player"] = out["player.name"]
     if "team.name" in out.columns and "team" not in out.columns:
         out["team"] = out["team.name"]
+    # backfill jersey numbers from the Starting XI lineup onto every event, so
+    # pass-network / average-position nodes carry a readable shirt number.
+    if "player" in out.columns:
+        mapping = _jersey_map(out)
+        if mapping:
+            mapped = out["player"].astype(str).map(mapping)
+            existing = pd.to_numeric(out.get("jersey_number"), errors="coerce") \
+                if "jersey_number" in out.columns else None
+            out["jersey_number"] = mapped if existing is None else \
+                existing.where(existing.notna(), mapped)
     # Canonical outcome — ONLY for passes, where StatsBomb's convention is reliable (a completed
     # pass has a blank pass.outcome.name; a failed one names the failure). Other event types are
     # left as NA rather than fabricating a success/fail they do not cleanly encode.

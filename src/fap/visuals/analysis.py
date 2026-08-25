@@ -167,10 +167,28 @@ def infer_receivers(df: pd.DataFrame) -> pd.Series:
     return nxt_player.where(ok, "").reindex(df.index).fillna("")
 
 
-def pass_network(df: pd.DataFrame, *, min_links: int = 2
+def _first_number(s: pd.Series):
+    """First shirt number that is actually present (StatsBomb backfills only starters,
+    and 'first' could otherwise pick a leading NaN)."""
+    for v in s:
+        if pd.notna(v) and str(v).strip() not in ("", "nan"):
+            return v
+    return pd.NA
+
+
+def top_players(nodes: pd.DataFrame, n: int = 11, *, by: str = "count") -> pd.DataFrame:
+    """Keep the ``n`` most-involved players (by ``by``), so a network / average-position
+    map shows the on-pitch XI rather than every squad member including substitutes."""
+    if n and len(nodes) > n and by in nodes.columns:
+        return nodes.sort_values(by, ascending=False).head(n).reset_index(drop=True)
+    return nodes
+
+
+def pass_network(df: pd.DataFrame, *, min_links: int = 2, max_players: int = 11
                  ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Nodes (player avg position + volume) and edges (pair counts) from successful
-    passes with a known receiver. When the feed carries no recipient column the
+    passes with a known receiver. Limited to the ``max_players`` most-involved players
+    (the on-pitch XI, not substitutes). When the feed carries no recipient column the
     receiver is inferred from the next touch, so a bare events export still yields a
     network instead of crashing."""
     d = successful(passes(df))
@@ -182,7 +200,9 @@ def pass_network(df: pd.DataFrame, *, min_links: int = 2
     d = d[d["receiver"].str.strip().ne("")]
     nodes = d.groupby("player").agg(
         x=("x", "mean"), y=("y", "mean"), count=("x", "size"),
-        jersey_number=("jersey_number", "first")).reset_index()
+        jersey_number=("jersey_number", _first_number)).reset_index()
+    nodes = top_players(nodes, max_players)
+    keep = set(nodes["player"])
     pair = d.assign(pair=[tuple(sorted(t)) for t in zip(d["player"], d["receiver"])])
     edges = pair.groupby("pair").size().reset_index(name="count")
     edges = edges[edges["count"] >= min_links]
@@ -190,6 +210,7 @@ def pass_network(df: pd.DataFrame, *, min_links: int = 2
     # same length as key" (the 0-column DataFrame-assignment trap).
     edges["p1"] = edges["pair"].map(lambda t: t[0])
     edges["p2"] = edges["pair"].map(lambda t: t[1])
+    edges = edges[edges["p1"].isin(keep) & edges["p2"].isin(keep)]   # only kept players
     return nodes, edges.drop(columns=["pair"])
 
 # ------------------------------------------------------------------ sequences & transitions

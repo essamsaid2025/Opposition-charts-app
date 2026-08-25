@@ -22,9 +22,10 @@ OUT_POSSESSION = ("duel", "recovery", "interception", "clearance",
 def _avg_positions(df: pd.DataFrame, kinds: tuple[str, ...] = ()) -> pd.DataFrame:
     d = df if not kinds else df[df["event_type"].str.lower().isin(kinds)]
     d = d[d["player"].str.strip().ne("")]
-    return d.groupby("player").agg(
+    nodes = d.groupby("player").agg(
         x=("x", "mean"), y=("y", "mean"), count=("x", "size"),
-        jersey_number=("jersey_number", "first")).reset_index()
+        jersey_number=("jersey_number", A._first_number)).reset_index()
+    return A.top_players(nodes, 11)                    # on-pitch XI, not substitutes
 
 
 class _ShapeBase(PitchVisualization):
@@ -39,7 +40,8 @@ class _ShapeBase(PitchVisualization):
         c = ctx.theme.colors
         base = float(ctx.style("marker_size"))
         cnt = sub["count"].astype(float)
-        sizes = (base * 1.5 + cnt / max(cnt.max(), 1.0) * base * 1.0).to_numpy()
+        # large floor so each dot comfortably holds its shirt number
+        sizes = (base * 2.4 + cnt / max(cnt.max(), 1.0) * base * 1.6).to_numpy()
         return layer_registry.create(
             "player_markers", df=sub, sizes=sizes, color=color,
             edge_color=c["text"], edge_width=1.4, number_color=c["bg"],
@@ -128,9 +130,14 @@ def _avg_positions_by_team(df: pd.DataFrame, kinds: tuple[str, ...] = ()) -> pd.
         d = d.assign(team="")
     nodes = d.groupby("player").agg(
         x=("x", "mean"), y=("y", "mean"), count=("x", "size"),
-        jersey_number=("jersey_number", "first"),
+        jersey_number=("jersey_number", A._first_number),
         team=("team", "first")).reset_index()
-    return nodes.dropna(subset=["x", "y"])
+    nodes = nodes.dropna(subset=["x", "y"])
+    if nodes.empty:
+        return nodes
+    # keep only the on-pitch XI PER TEAM (drop substitutes), by involvement
+    return pd.concat([A.top_players(g, 11) for _, g in nodes.groupby("team")],
+                     ignore_index=True)
 
 
 def _short_name(name: str) -> str:

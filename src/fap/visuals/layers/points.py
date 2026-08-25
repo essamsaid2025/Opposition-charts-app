@@ -71,11 +71,13 @@ class PlayerMarkerLayer(Layer):
         numbers = df.get(self.params.get("number_column", "jersey_number"))
         if numbers is not None:
             for px, py, num in zip(x, y, numbers):
-                text = str(num).replace(".0", "")
-                if text and text.lower() != "nan":
-                    ctx.ax.text(px, py, text, ha="center", va="center",
-                                fontsize=max(6, ctx.style("label_size") - 1),
-                                fontweight="bold", color=num_color, zorder=self.zorder + 1)
+                n = pd.to_numeric(num, errors="coerce")     # only draw a REAL shirt number
+                if pd.isna(n):                              # (skip NaN/<NA>/blank for subs)
+                    continue
+                text = str(int(n)) if float(n).is_integer() else str(n)
+                ctx.ax.text(px, py, text, ha="center", va="center",
+                            fontsize=max(6, ctx.style("label_size") - 1),
+                            fontweight="bold", color=num_color, zorder=self.zorder + 1)
         if self.params.get("show_names"):
             names = df.get(self.params.get("name_column", "player"), pd.Series(dtype=str))
             for px, py, name in zip(x, y, names):

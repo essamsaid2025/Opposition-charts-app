@@ -160,8 +160,9 @@ class _NetworkBase(PitchVisualization):
             d = d[d["player"].astype(str).str.strip().ne("")]
             nodes = d.groupby("player").agg(x=("x", "mean"), y=("y", "mean"),
                                             count=("x", "size"),
-                                            jersey_number=("jersey_number", "first")
+                                            jersey_number=("jersey_number", A._first_number)
                                             ).reset_index()
+            nodes = A.top_players(nodes, 11)          # on-pitch XI, not substitutes
             edges = pd.DataFrame(columns=["p1", "p2", "count"])
         if nodes.empty:
             return []
@@ -184,7 +185,8 @@ class _NetworkBase(PitchVisualization):
 
         base = float(ctx.style("marker_size"))            # node area ~ pass volume
         cnt = nodes["count"].astype(float)
-        node_sizes = (base * 0.7 + cnt / max(cnt.max(), 1.0) * base * 4.0).to_numpy()
+        # keep a large floor so even a low-volume node is big enough to hold its number
+        node_sizes = (base * 2.2 + cnt / max(cnt.max(), 1.0) * base * 3.5).to_numpy()
         out.append(layer_registry.create(
             "player_markers", df=nodes, sizes=node_sizes,
             color=c["panel"], edge_color=ctx.controls.get("primary_color") or c["accent"],
