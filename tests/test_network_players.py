@@ -49,6 +49,31 @@ def test_statsbomb_backfills_jersey_from_lineup():
     assert out.loc[out["player"] == "Beta", "jersey_number"].iloc[0] == 4
 
 
+def test_statsbomb_receiver_is_name_not_id():
+    # the receiver must be the recipient NAME (matches player), so network edges join
+    from fap.pipeline.statsbomb_csv import reshape
+    df = pd.DataFrame({
+        "type.name": ["Pass"], "location": ["[60, 40]"], "player.name": ["Alpha"],
+        "team.name": ["T"], "pass.recipient.name": ["Beta"], "pass.recipient.id": [999]})
+    out = reshape(df)
+    assert out["receiver"].iloc[0] == "Beta"
+
+
+def test_pass_network_draws_edges_when_receiver_is_name():
+    # names on both sides -> the ring produces real edges (regression for the
+    # 'no network lines' bug caused by receiver holding ids)
+    starters = [f"p{i}" for i in range(11)]
+    rows = []
+    for i, pl in enumerate(starters):
+        rec = starters[(i + 1) % 11]
+        for _ in range(3):
+            rows.append({"event_type": "pass", "player": pl, "receiver": rec,
+                         "outcome": "successful", "x": 50, "y": 50, "end_x": 55,
+                         "end_y": 50, "jersey_number": i + 1})
+    _, edges = A.pass_network(pd.DataFrame(rows), min_links=2, max_players=11)
+    assert len(edges) == 11 and (edges["count"] >= 2).all()
+
+
 # ================================================================ network trims to XI
 def test_pass_network_caps_to_eleven_with_numbers():
     starters = [f"p{i}" for i in range(11)]

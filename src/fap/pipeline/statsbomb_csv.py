@@ -90,6 +90,10 @@ def reshape(df: pd.DataFrame) -> pd.DataFrame:
         out["player"] = out["player.name"]
     if "team.name" in out.columns and "team" not in out.columns:
         out["team"] = out["team.name"]
+    # the pass receiver must be the recipient's NAME (matches `player`), not the id —
+    # otherwise pass-network edges never join to their player nodes (no links drawn).
+    if "pass.recipient.name" in out.columns:
+        out["receiver"] = out["pass.recipient.name"]
     # backfill jersey numbers from the Starting XI lineup onto every event, so
     # pass-network / average-position nodes carry a readable shirt number.
     if "player" in out.columns:
