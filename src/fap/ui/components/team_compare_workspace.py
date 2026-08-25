@@ -99,6 +99,39 @@ def render_team_compare_workspace(shell, dataset, *, key: str = "team_cmp") -> N
         f"statistics  ·  {summary.get('category_count', 0)} categories  ·  "
         "team-level match stats (not event data)")
 
+    _render_comparison(
+        shell, all_teams=all_teams, dataset_name=dataset.name, key=key,
+        make_cmp=lambda teams: tc.TeamComparison.from_document(
+            doc, dataset_name=dataset.name, teams=teams),
+        note_dataset="team_match_stats")
+
+
+def render_event_match_stats(shell, frame, *, name: str, key: str = "ev_match") -> None:
+    """Aggregate a two-team EVENT frame into a match-stats comparison and render the
+    same team_compare charts — so a StatsBomb-style match gets a Team Stats sheet
+    (possession, shots, passes, tackles, …) PLUS the computed PPDA and Field Tilt."""
+    from fap.openplay.match_stats import build_match_stats
+    schema = build_match_stats(frame)
+    if schema is None or not schema.stats:
+        C.render_alert("A match-stats comparison needs a single match with exactly two "
+                       "teams in the active event dataset.", "info")
+        return
+    C.render_section_title(
+        name or "Match Stats", eyebrow="Match Stats Comparison", icon_name="analysis",
+        subtitle=" vs ".join(schema.teams))
+    st.caption(f"{len(schema.stats)} statistics computed from the match events  ·  "
+               "PPDA & Field Tilt derived (standard definitions)")
+    _render_comparison(
+        shell, all_teams=list(schema.teams), dataset_name=name or "Match Stats", key=key,
+        make_cmp=lambda teams: tc.TeamComparison.from_schema(
+            schema, dataset_name=name or "Match Stats", teams=teams),
+        note_dataset="events")
+
+
+def _render_comparison(shell, *, all_teams, dataset_name, key, make_cmp,
+                       note_dataset) -> None:
+    """Shared team-comparison UI (theme/teams/chart/statistics + display panel + note),
+    used by both a saved team-stats dataset and an on-the-fly event aggregation."""
     tm, theme_ids = _themes(shell)
     if tm is None or not theme_ids:
         C.render_alert("Chart themes are unavailable in this session.", "warning")
@@ -117,9 +150,9 @@ def render_team_compare_workspace(shell, dataset, *, key: str = "team_cmp") -> N
                            key=f"{key}_teams") or all_teams[:2]
     theme = tm.get(theme_id)
 
-    cmp = tc.TeamComparison.from_document(doc, dataset_name=dataset.name, teams=teams)
+    cmp = make_cmp(teams)
     if not cmp.stats:
-        C.render_alert("This dataset has no statistics to visualize.", "warning")
+        C.render_alert("No statistics to visualize.", "warning")
         return
 
     chart_meta = {c["id"]: c for c in tc.CHART_TYPES}
@@ -166,16 +199,17 @@ def render_team_compare_workspace(shell, dataset, *, key: str = "team_cmp") -> N
         try:
             ex = _export_engine()
             fig = tc.render(chart_id, cmp, theme, options)
-            title = f"{dataset.name} · {meta['label']}"
+            title = f"{dataset_name} · {meta['label']}"
             _stash_render(fig, title, ex, stash_key=stash_key)
         except Exception as exc:
             C.render_alert(f"Could not render the chart: {exc}", "warning")
 
     _show_stash(stash_key, key=key)
-    _team_compare_note(cmp, chart_id, options, dataset, key=f"{key}_method")
+    _team_compare_note(cmp, chart_id, options, key=f"{key}_method", note_dataset=note_dataset)
 
 
-def _team_compare_note(cmp, chart_id: str, options: dict, dataset, *, key: str) -> None:
+def _team_compare_note(cmp, chart_id: str, options: dict, *, key: str,
+                       note_dataset: str = "team_match_stats") -> None:
     """Data & Methodology note for a team-comparison chart: the statistics actually
     plotted, the calculation (raw values vs share/percentage), the teams and scope —
     from the live comparison. No coordinates (team stats are not spatial)."""
@@ -188,11 +222,13 @@ def _team_compare_note(cmp, chart_id: str, options: dict, dataset, *, key: str) 
         fields = list(options.get("stats") or [])
     share = chart_id in ("share", "donut", "radar")
     metric = f"{meta['label']} · " + ("team share of the row total" if share else "raw statistic values")
+    src = ("aggregated from match events (PPDA/Field Tilt derived, standard definitions)"
+           if note_dataset == "events" else "team match stats")
     note = build_note(
-        dataset="team_match_stats", fields=[str(f) for f in fields if f], filters=None,
+        dataset=f"{note_dataset} · {src}", fields=[str(f) for f in fields if f], filters=None,
         metric=metric, pitch_based=False, scope="Team comparison · " + " vs ".join(cmp.teams),
         population=f"{len(cmp.teams)} teams · {len(cmp.stats)} statistics")
     render_methodology_note(note, key=key)
 
 
-__all__ = ["render_team_compare_workspace"]
+__all__ = ["render_team_compare_workspace", "render_event_match_stats"]

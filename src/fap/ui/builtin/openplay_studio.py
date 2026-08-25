@@ -1878,6 +1878,18 @@ def _restore_workspace(shell) -> None:
 # ``phase``: "input" panels write selections/options and run BEFORE the frame+ctx are
 # prepared; "view" panels consume the prepared state and run after — so the stage always
 # reflects the current selections in the SAME run (no one-rerun lag).
+def _panel_match_stats(w: Studio) -> None:
+    """Aggregate the active EVENT match into a two-team match-stats comparison
+    (possession, shots, passes, tackles, …) PLUS computed PPDA + Field Tilt, drawn
+    with the team-comparison charts. Reuses the shared team_compare workspace."""
+    if w.frame is None or getattr(w.frame, "empty", True):
+        C.render_alert("Activate an event dataset to build a match-stats comparison.", "info")
+        return
+    from fap.ui.components.team_compare_workspace import render_event_match_stats
+    name = st.session_state.get(K + "ds_name", "") or getattr(w.dataset, "name", "Match")
+    render_event_match_stats(w.shell, w.frame, name=name, key="ops_match_stats")
+
+
 PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
     "left": [("datasets", "Datasets", _panel_datasets, "view"),
              ("filters", "Filters", _panel_filters, "input"),
@@ -1886,7 +1898,8 @@ PANELS: dict[str, list[tuple[str, str, Callable[[Studio], None], str]]] = {
     "center": [("stage", "Stage", _panel_stage, "view")],
     "right": [("inspector", "Inspector", _panel_inspector, "input"),
               ("export", "Export", _panel_export, "view")],
-    "bottom": [("report", "Scouting Report", _panel_report, "view"),
+    "bottom": [("match_stats", "Match Stats", _panel_match_stats, "view"),
+               ("report", "Scouting Report", _panel_report, "view"),
                ("profile", "Opponent Profile", _panel_profile, "view"),
                ("tactical", "Tactical Insights", _panel_tactical, "view"),
                ("evolution", "Tactical Evolution", _panel_evolution, "view"),

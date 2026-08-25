@@ -276,6 +276,15 @@ def analyze_team_stats(frame: pd.DataFrame,
         teams = _team_columns(df, {stat_col, cat_col})
         if teams:
             stats, categories = _build_stats(df, stat_col, cat_col, teams)
+            # derive advanced metrics (Field Tilt / PPDA) the file doesn't already
+            # carry, from the aggregated columns it does — standard formulas, two-team
+            # comparisons only (see team_stats_derive for the exact definitions).
+            from fap.datahub.team_stats_derive import DERIVED_CATEGORY, derive_team_stats
+            derived = derive_team_stats(stats, teams)
+            if derived:
+                stats = stats + derived
+                if DERIVED_CATEGORY not in categories:
+                    categories.append(DERIVED_CATEGORY)
 
     schema = TeamStatsSchema(
         entity_type="team_stat", stat_field=str(stat_col or ""),
