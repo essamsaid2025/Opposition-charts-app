@@ -9,6 +9,7 @@ from fap.core.plugin import PluginInfo
 from fap.visuals import analysis as A
 from fap.visuals.base import ChartVisualization, visual_registry
 from fap.visuals.context import LayerContext
+from fap.visuals.display import VisualizationCapabilities
 from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.maps._builders import _frame_axes, density_map, scatter_map
 
@@ -38,6 +39,9 @@ class _GoalMouthBase(ChartVisualization):
     control_groups = ("titles", "markers", "colors", "legend", "text",
                       "export", "layout")
     show_difficulty_legend = True         # markers are sized by the existing xG metric
+    # markers sized by xG -> show_xg gates the encoding; show_xg_values prints numbers.
+    capabilities = VisualizationCapabilities(
+        legend=True, xg=True, xg_values=True, annotations=False)
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
         def draw(lctx: LayerContext) -> None:
@@ -58,15 +62,22 @@ class _GoalMouthBase(ChartVisualization):
             xs = [min(hi, max(lo, G.map_across_goal(v, 44.0, 56.0))) for v in end_y]
             ys = [G.GOAL_HEIGHT * 0.5] * len(d)      # arrival is a horizontal distribution
             is_goal = list(d["shot_result"].astype(str).str.lower().eq("goal"))
-            sizes = None                              # size by the existing xG column when present
+            xg_vals = None                            # the existing xG column, when present
             for col in ("post_shot_xg", "shot_xg", "xg"):
                 if col in d.columns and pd.to_numeric(d[col], errors="coerce").notna().any():
-                    sizes = pd.to_numeric(d[col], errors="coerce").fillna(0.0).tolist()
+                    xg_vals = pd.to_numeric(d[col], errors="coerce").fillna(0.0).tolist()
                     break
+            # show_xg gates ONLY the size encoding; the xG values stay available for labels.
+            sizes = xg_vals if lctx.controls.get("show_xg", True) else None
             G.draw_shots(ax, lctx.theme, xs=xs, ys=ys, is_goal=is_goal, sizes=sizes,
                          save_color=lctx.controls.get("primary_color"),
                          goal_color=lctx.controls.get("fail_color"),
                          legend=(lctx.legend if lctx.controls.get("legend", True) else None))
+            if xg_vals is not None and lctx.controls.get("show_xg_values", False):
+                for xi, yi, xv in zip(xs, ys, xg_vals):
+                    ax.text(xi, yi + G.GOAL_HEIGHT * 0.14, f"{xv:.2f}", ha="center",
+                            va="bottom", fontsize=7.5, color=lctx.theme.colors["text"],
+                            zorder=9)
             if sizes is not None and self.show_difficulty_legend:
                 lx = G.GOAL_WIDTH + G.POST + G.GROUND_EXTEND + 10.0
                 G.draw_difficulty_legend(ax, lctx.theme, x=lx, y=G.GOAL_HEIGHT * 0.62)

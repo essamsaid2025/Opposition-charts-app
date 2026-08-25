@@ -11,8 +11,9 @@ from fap.core.types import Control
 from fap.visuals import analysis as A
 from fap.visuals.base import PitchVisualization, visual_registry
 from fap.visuals.context import LayerContext
+from fap.visuals.display import VisualizationCapabilities
 from fap.visuals.layers.base import Layer, layer_registry
-from fap.visuals.maps._builders import (_fail, _primary, _secondary,
+from fap.visuals.maps._builders import (_fail, _labels_on, _primary, _secondary,
                                         arrow_map, density_map, scatter_map)
 
 _C = "Attacking"
@@ -34,6 +35,10 @@ class _ShotMapBase(PitchVisualization):
     selector = staticmethod(lambda df: A.shots(df))
     control_groups = ("titles", "pitch", "markers", "colors", "legend",
                       "text", "images", "export", "layout")
+    # xG is genuinely rendered here (marker size), so both the encoding (show_xg)
+    # and the numeric value (show_xg_values) are honoured, independently.
+    capabilities = VisualizationCapabilities(
+        legend=True, player_names=True, xg=True, xg_values=True, annotations=True)
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
         d = self.selector(ctx.df).dropna(subset=["x", "y"])
@@ -41,23 +46,32 @@ class _ShotMapBase(PitchVisualization):
             return []
         base = float(ctx.style("marker_size"))
         xg = _xg_col(d).fillna(0.06)
-        sizes = base * 0.5 + xg / max(xg.max(), 0.05) * base * 2.4
+        # show_xg (default on) gates ONLY the size encoding; the xG data is untouched.
+        sizes = None
+        if ctx.controls.get("show_xg", True):
+            sizes = base * 0.5 + xg / max(xg.max(), 0.05) * base * 2.4
         result = d["shot_result"].str.lower()
         goals = d[result.eq("goal")]
         others = d[~result.eq("goal")]
         out: list[Layer] = []
         if len(others):
             out.append(layer_registry.create(
-                "scatter", df=others, sizes=sizes.loc[others.index].values,
+                "scatter", df=others,
+                sizes=sizes.loc[others.index].values if sizes is not None else None,
                 color=ctx.controls.get("primary_color") or ctx.theme.colors["panel"],
                 label="Shot"))
         if len(goals):
             out.append(layer_registry.create("glow", df=goals, color=_fail(ctx)))
             out.append(layer_registry.create(
-                "scatter", df=goals, sizes=sizes.loc[goals.index].values,
+                "scatter", df=goals,
+                sizes=sizes.loc[goals.index].values if sizes is not None else None,
                 color=_fail(ctx), label="Goal"))
-        if ctx.controls.get("show_labels"):
+        if _labels_on(ctx):
             out.append(layer_registry.create("labels", df=d, column="player"))
+        # show_xg_values (default off): print the numeric xG next to each shot.
+        if ctx.controls.get("show_xg_values", False):
+            out.append(layer_registry.create(
+                "value_labels", df=d.assign(_xg_val=xg.to_numpy()), column="_xg_val"))
         return out
 
 
@@ -153,6 +167,10 @@ class GoalProbabilityMap(PitchVisualization):
                       description="Shots colored on an xG color scale.")
     control_groups = ("titles", "pitch", "markers", "heatmap", "legend",
                       "text", "images", "export", "layout")
+    # xG is the colour encoding here; show_xg toggles it, the colour scale is the
+    # legend, and show_xg_values prints the numeric xG.
+    capabilities = VisualizationCapabilities(
+        legend=True, xg=True, xg_values=True, player_names=True, annotations=True)
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
         import matplotlib
@@ -161,10 +179,22 @@ class GoalProbabilityMap(PitchVisualization):
         if d.empty:
             return []
         xg = _xg_col(d).fillna(0.05).clip(0, 1)
-        cmap = matplotlib.colormaps.get_cmap(ctx.controls.get("cmap") or "YlOrRd")
-        colors = [to_hex(cmap(Normalize(0, max(xg.max(), 0.3))(v))) for v in xg]
-        return [
-            layer_registry.create("scatter", df=d, colors=colors),
-            layer_registry.create("color_scale", cmap=cmap.name, vmin=0,
-                                  vmax=float(max(xg.max(), 0.3)), label="xG"),
-        ]
+        show_xg = ctx.controls.get("show_xg", True)
+        out: list[Layer] = []
+        if show_xg:
+            cmap = matplotlib.colormaps.get_cmap(ctx.controls.get("cmap") or "YlOrRd")
+            colors = [to_hex(cmap(Normalize(0, max(xg.max(), 0.3))(v))) for v in xg]
+            out.append(layer_registry.create("scatter", df=d, colors=colors))
+            if ctx.controls.get("legend", True):        # the colour scale IS the legend
+                out.append(layer_registry.create("color_scale", cmap=cmap.name, vmin=0,
+                                                 vmax=float(max(xg.max(), 0.3)), label="xG"))
+        else:                                            # encoding off -> plain markers
+            out.append(layer_registry.create(
+                "scatter", df=d,
+                color=ctx.controls.get("primary_color") or ctx.theme.colors["accent"]))
+        if _labels_on(ctx):
+            out.append(layer_registry.create("labels", df=d, column="player"))
+        if ctx.controls.get("show_xg_values", False):
+            out.append(layer_registry.create(
+                "value_labels", df=d.assign(_xg_val=xg.to_numpy()), column="_xg_val"))
+        return out

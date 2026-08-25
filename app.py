@@ -1353,6 +1353,15 @@ def panel_shots(ax, df, ctx) -> str:
                             size_mult=ng_size)
         g = scatter_points(ax, x[goal_mask], y[goal_mask], ctx["colors"]["goal"],
                            dict(ms, alpha=0.95), vt, size_mult=g_size, zorder=float(ms.get("zorder", 6)) + 1)
+        # show_xg_values (default off, so byte-identical baselines are unchanged):
+        # print the canonical xG next to EVERY shot. Presentation only — the xG value
+        # is read from internal_xg, never recomputed.
+        if ctx.get("show_xg_values") and has_xg:
+            for xi, yi, xv in zip(x, y, xg_num):
+                if pd.notna(xv):
+                    ax.text(xi, yi + 2.0, f"{float(xv):.2f}", ha="center", va="bottom",
+                            fontsize=max(6, ctx["label_size"] - 3), color=vt["text"],
+                            fontfamily=vt["font"], zorder=8)
         eng = LabelEngine(ax, vt, ctx["labels"])
         if ctx["labels"].get("show_players"):
             for _, r in d[goal_mask].iterrows():
@@ -2232,6 +2241,7 @@ def run_app():
         with st.expander("Label Engine", expanded=False):
             l_show = st.checkbox("Enable labels", value=True)
             l_players = st.checkbox("Show player/shirt labels on maps", value=False)
+            l_xg_values = st.checkbox("Show xG values (Shot Map / xG charts)", value=False)
             l_smart = st.checkbox("Smart positioning (collision detection)", value=True)
             l_hide = st.checkbox("Hide overlapping labels", value=True)
             l_halo = st.checkbox("Halo", value=True)
@@ -2482,6 +2492,7 @@ def run_app():
         title_size=title_size, label_size=label_size, legend_size=legend_size,
         respect_filter=bool(event_sel),
         attack_arrow=True,          # show the attack-direction arrow in Opponent Analysis
+        show_xg_values=l_xg_values,  # numeric xG next to each shot when enabled
         marker={"shape": m_shape, "size": m_size, "edge_width": m_edge_w, "edge_color": m_edge_c,
                 "alpha": m_alpha, "rotation": m_rot, "jitter": m_jitter, "zorder": m_zorder,
                 "shadow": m_shadow, "glow": m_glow, "glow_color": m_glow_c},

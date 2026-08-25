@@ -180,7 +180,7 @@ def _build_ctx(w: Studio) -> dict:
     viz = st.session_state.get(VIZ) or ""
     overrides: dict[str, Any] = {"aux": {**dict(ctl.get("aux") or {}), "df_all": w.df_all}}
     for k in ("title", "show_title", "title_size", "label_size", "legend_size",
-              "respect_filter", "attack_arrow"):
+              "respect_filter", "attack_arrow", "show_xg_values"):
         if k in ctl:
             overrides[k] = ctl[k]
     overrides["title"] = ctl.get("title") or viz          # default title = viz name (as run_app)
@@ -680,6 +680,9 @@ def _panel_inspector(w: Studio) -> None:
         c1, c2 = st.columns(2)
         lb["show"] = c1.checkbox("Enable labels", value=lb.get("show", d["labels"]["show"]), key="ops_lbshow")
         lb["show_players"] = c2.checkbox("Player labels", value=lb.get("show_players", d["labels"]["show_players"]), key="ops_lbpl")
+        ctl["show_xg_values"] = st.checkbox(
+            "Show xG values", value=ctl.get("show_xg_values", False), key="ops_xgvals",
+            help="Print the numeric xG next to each shot (Shot Map / xG charts only).")
         lb["smart"] = c1.checkbox("Smart positioning", value=lb.get("smart", d["labels"]["smart"]), key="ops_lbsmart")
         lb["hide_overlapping"] = c2.checkbox("Hide overlapping", value=lb.get("hide_overlapping", d["labels"]["hide_overlapping"]), key="ops_lbhide")
         lb["halo"] = c1.checkbox("Halo", value=lb.get("halo", d["labels"]["halo"]), key="ops_lbhalo")
