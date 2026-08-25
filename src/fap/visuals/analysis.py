@@ -13,6 +13,25 @@ import pandas as pd
 
 _SUCCESS = ("successful", "success", "complete", "won")
 
+
+def largest_remainder_pct(counts) -> list[int]:
+    """Integer percentages of a PARTITION that sum to EXACTLY 100 (Hamilton's
+    largest-remainder method), so thirds/lanes never total 99 or 101 from
+    independent rounding. Ties break toward the earlier bucket for determinism."""
+    counts = [float(c) for c in counts]
+    total = sum(counts)
+    if total <= 0 or not counts:
+        return [0] * len(counts)
+    raw = [c / total * 100 for c in counts]
+    floors = [int(x) for x in raw]                      # floor of each share
+    remaining = 100 - sum(floors)                       # 0..len-1 points left to give
+    order = sorted(range(len(counts)),
+                   key=lambda i: (raw[i] - floors[i], -i), reverse=True)
+    for k in range(int(remaining)):
+        floors[order[k]] += 1
+    return floors
+
+
 # ------------------------------------------------------------------ selectors
 def passes(df: pd.DataFrame) -> pd.DataFrame:
     return df[df["event_type"].str.lower().eq("pass")]

@@ -87,12 +87,12 @@ class PassingLanes(PitchVisualization):
         # canonical y: 0 = RIGHT touchline, 100 = LEFT touchline (attacking view)
         lanes = ((0.0, 0.0, 100.0, 33.33, "Right"), (0.0, 33.33, 100.0, 66.67, "Central"),
                  (0.0, 66.67, 100.0, 100.0, "Left"))
-        total = max(len(d), 1)
+        subs = [d[d["y"].between(y0, y1)] for _x0, y0, _x1, y1, _l in lanes]
+        # lanes partition the passes, so their shares total exactly 100 (not 99/101)
+        pcts = A.largest_remainder_pct([len(s) for s in subs])
         spec, agg_rows = [], []
-        for x0, y0, x1, y1, label in lanes:
-            sub = d[A.in_zone(d["y"], d["y"], (y0, y0, y1, y1))] if False else \
-                d[d["y"].between(y0, y1)]
-            spec.append((x0, y0, x1, y1, label, f"{len(sub)/total*100:.0f}%"))
+        for (x0, y0, x1, y1, label), sub, p in zip(lanes, subs, pcts):
+            spec.append((x0, y0, x1, y1, label, f"{p}%"))
             if len(sub):
                 agg_rows.append({"x": sub["x"].mean(), "y": (y0 + y1) / 2,
                                  "end_x": sub["end_x"].mean(), "end_y": (y0 + y1) / 2})
@@ -315,13 +315,13 @@ class ProgressivePassesByLane(PitchVisualization):
         prog = A.progressive(A.passes(ctx.df)).dropna(subset=["x", "y"])
         if prog.empty:
             return []
-        total = max(len(prog), 1)
         # canonical y: 0 = RIGHT touchline, 100 = LEFT touchline (attacking view)
         lanes = (("Right", 0.0, 33.34), ("Central", 33.34, 66.67), ("Left", 66.67, 100.0))
+        counts = [int(prog["y"].between(y0, y1).sum()) for _n, y0, y1 in lanes]
+        pcts = A.largest_remainder_pct(counts)          # lane shares total exactly 100
         zones = []
-        for name, y0, y1 in lanes:
-            n = int(prog["y"].between(y0, y1).sum())
-            zones.append((0.0, y0, 100.0, y1, f"{name}: {n} ({n / total * 100:.0f}%)", None))
+        for (name, y0, y1), n, p in zip(lanes, counts, pcts):
+            zones.append((0.0, y0, 100.0, y1, f"{name}: {n} ({p}%)", None))
         return [
             layer_registry.create("zones", zones=zones, zone_alpha=0.10,
                                   color=ctx.controls.get("primary_color") or ctx.theme.colors["accent"]),

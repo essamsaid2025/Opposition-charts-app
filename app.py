@@ -1441,13 +1441,17 @@ def panel_zone_pct(ax, df, ctx, mode: str) -> str:
                  (0, 2 * W / 3, 100, W / 3, "Left", (d["y"] >= 66.67).sum())]
     counts = [z[5] for z in zones]
     mx = max(counts) if counts else 1
-    for (x0, y0, wdt, hgt, name, cnt) in zones:
+    # thirds/lanes partition every event, so their shares must total exactly 100 —
+    # round with the largest-remainder method instead of rounding each independently.
+    from fap.visuals.analysis import largest_remainder_pct
+    pcts = largest_remainder_pct(counts)
+    for (x0, y0, wdt, hgt, name, cnt), zp in zip(zones, pcts):
         alpha = 0.14 + 0.24 * (cnt / mx if mx else 0)
         px, py = pc(x0, y0, vertical)
         rw, rh = (hgt, wdt) if vertical else (wdt, hgt)
         ax.add_patch(Rectangle((px, py), rw, rh, color=ctx["colors"]["zone"], alpha=alpha, zorder=2.2, lw=0))
         cx, cy = pc(x0 + wdt / 2, y0 + hgt / 2, vertical)
-        ax.text(cx, cy, pct(cnt, total), ha="center", va="center", fontsize=ctx["title_size"],
+        ax.text(cx, cy, f"{zp}%", ha="center", va="center", fontsize=ctx["title_size"],
                 color=vt["text"], fontweight="bold", fontfamily=vt["font"], zorder=7,
                 bbox=dict(boxstyle="round,pad=0.35", fc=vt["panel"], ec="none", alpha=0.92))
         ox, oy = pc(x0 + wdt / 2, y0 + hgt / 2 - (6 if not vertical else 0), vertical)
