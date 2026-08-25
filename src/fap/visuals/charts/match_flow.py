@@ -122,7 +122,13 @@ def _team_metrics(d: pd.DataFrame) -> dict[str, float]:
     on_target = int(shots["shot_result"].astype(str).str.lower().isin(_ON_TARGET).sum())
     # Canonical xG comes from the frozen Internal xG model's shot-level column
     # (labelled "xG" for the user). NPxG excludes penalties. Both are pure sums
-    # of internal_xg - never derived from goals/shot counts/averages.
+    # of internal_xg - never derived from goals/shot counts/averages/provider xG.
+    #
+    # Fallback: if the frame reaching this chart has no internal_xg column (e.g.
+    # a match-stats file with no precomputed xG), derive it from the shot rows via
+    # the canonical xg_service. attach_internal_xg is idempotent - when the column
+    # already exists it is reused, not recomputed. An empty shot set stays 0.
+    shots = _xg_enrich.attach_internal_xg(shots)
     xg = _xg_enrich.sum_xg(shots)
     npxg = _xg_enrich.sum_npxg(shots)
     return {
