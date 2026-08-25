@@ -22,6 +22,79 @@ from matplotlib.patches import Polygon
 
 from fap.scouting import viz
 from fap.scouting.viz import ScoutingView
+from fap.visuals.display import VisualizationCapabilities
+
+# ---------------------------------------------------------------- display adapter
+# Phase 3: the SAME shared display model (fap.visuals.display) drives these
+# standalone matplotlib charts through a thin adapter — no second framework. Each
+# chart declares only the capabilities it genuinely renders (strict gating), and a
+# per-chart default set that reproduces the CURRENT output (values/grid/names that
+# a chart draws today default ON here even though the global baseline is OFF). No
+# Scouting chart encodes xG (xg is only ever a generic metric value), so none
+# declares show_xg / show_xg_values.
+CHART_CAPS: dict[str, VisualizationCapabilities] = {
+    "bar": VisualizationCapabilities(values=True, axes=True, grid=True,
+                                     legend=False, annotations=False),
+    "percentile_bar": VisualizationCapabilities(values=True, axes=True, grid=True,
+                                                legend=False, annotations=False),
+    "ranking_bar": VisualizationCapabilities(values=True, legend=False, annotations=False),
+    "radar": VisualizationCapabilities(legend=True, annotations=False),
+    "pizza": VisualizationCapabilities(values=True, legend=False, annotations=False),
+    "scatter": VisualizationCapabilities(player_names=True, axes=True, grid=True,
+                                         legend=False, annotations=False),
+    "histogram": VisualizationCapabilities(player_names=True, axes=True, grid=True,
+                                           legend=False, annotations=False),
+    "box": VisualizationCapabilities(axes=True, grid=True, legend=False, annotations=False),
+    "lollipop": VisualizationCapabilities(values=True, axes=True, grid=True,
+                                          legend=False, annotations=False),
+    "comparison": VisualizationCapabilities(legend=True, axes=True, grid=True, annotations=False),
+    "small_multiples": VisualizationCapabilities(values=True, legend=False, annotations=False),
+    "heatmap": VisualizationCapabilities(values=True, legend=True, axes=True, annotations=False),
+}
+
+# per-chart default overrides so DEFAULT display reproduces today's output exactly
+CHART_DEFAULTS: dict[str, dict[str, bool]] = {
+    "bar": {"show_values": True, "show_grid": True},
+    "percentile_bar": {"show_values": True, "show_grid": True},
+    "ranking_bar": {"show_values": True},
+    "pizza": {"show_values": True},
+    "scatter": {"show_player_names": True, "show_grid": True},
+    "histogram": {"show_player_names": True, "show_grid": True},
+    "box": {"show_grid": True},
+    "lollipop": {"show_values": True, "show_grid": True},
+    "comparison": {"show_grid": True},
+    "small_multiples": {"show_values": True},
+    "heatmap": {"show_values": True},
+}
+
+_DEFAULT_CAPS = VisualizationCapabilities(annotations=False)
+
+
+def capabilities_for(chart_type: str) -> VisualizationCapabilities:
+    return CHART_CAPS.get(chart_type, _DEFAULT_CAPS)
+
+
+def display_defaults_for(chart_type: str) -> dict[str, bool]:
+    """The chart's default display state (reproduces current output)."""
+    from fap.visuals.display import display_defaults
+    return display_defaults(capabilities_for(chart_type), CHART_DEFAULTS.get(chart_type))
+
+
+def _show(display: dict | None, key: str, default: bool = True) -> bool:
+    """Read a display toggle, defaulting to the CURRENT behaviour when unset (so a
+    headless / no-UI render is byte-identical to before)."""
+    if not display:
+        return default
+    v = display.get(key)
+    return default if v is None else bool(v)
+
+
+def _hide_axes(ax) -> None:
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+
 
 # the order categories are coloured in (stable, so a metric keeps its colour)
 _CATEGORY_ORDER = ("Shooting", "Chance Creation", "Passing", "Progression",
@@ -124,7 +197,8 @@ def _footer(view: ScoutingView) -> str:
 
 
 # ---------------------------------------------------------------- charts
-def bar_chart(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def bar_chart(view: ScoutingView, sources: list[str], theme: Any,
+              display: dict | None = None) -> Figure:
     """Raw metric values for the player (source values preserved)."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:16]
@@ -135,16 +209,21 @@ def bar_chart(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
     cols = pal.category_colors([m.category for m in metrics])
     y = np.arange(len(metrics))[::-1]
     ax.barh(y, vals, color=cols, edgecolor=pal.bg, height=0.68)
-    for yi, v in zip(y, vals):
-        ax.text(v, yi, f"  {v:.2f}", va="center", ha="left", color=pal.text, fontsize=8)
+    if _show(display, "show_values"):
+        for yi, v in zip(y, vals):
+            ax.text(v, yi, f"  {v:.2f}", va="center", ha="left", color=pal.text, fontsize=8)
     ax.set_yticks(y); ax.set_yticklabels(names, color=pal.text, fontsize=8)
-    ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if _show(display, "show_grid"):
+        ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax); ax.set_yticks(y); ax.set_yticklabels(names, color=pal.text, fontsize=8)
     ax.set_axisbelow(True)
     _titles(fig, pal, "Metric values", _player_line(view), _footer(view))
     return fig
 
 
-def percentile_bar(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def percentile_bar(view: ScoutingView, sources: list[str], theme: Any,
+                   display: dict | None = None) -> Figure:
     """Horizontal 0-100 bars (normalized value or percentile)."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:16]
@@ -156,17 +235,23 @@ def percentile_bar(view: ScoutingView, sources: list[str], theme: Any) -> Figure
     y = np.arange(len(metrics))[::-1]
     ax.barh(y, scores, color=cols, edgecolor=pal.bg, height=0.68)
     ax.axvline(50, color=pal.muted, lw=0.8, ls="--", alpha=0.6)
-    for yi, s in zip(y, scores):
-        ax.text(s, yi, f"  {s:.0f}", va="center", ha="left", color=pal.text, fontsize=8)
+    if _show(display, "show_values"):
+        for yi, s in zip(y, scores):
+            ax.text(s, yi, f"  {s:.0f}", va="center", ha="left", color=pal.text, fontsize=8)
     ax.set_xlim(0, 100)
     ax.set_yticks(y); ax.set_yticklabels(names, color=pal.text, fontsize=8)
-    ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
+    if _show(display, "show_grid"):
+        ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax); ax.set_yticks(y); ax.set_yticklabels(names, color=pal.text, fontsize=8)
+    ax.set_axisbelow(True)
     _titles(fig, pal, "Percentile profile", f"{_player_line(view)}  ·  {_score_label(view)}",
             _footer(view))
     return fig
 
 
-def ranking_bar(view: ScoutingView, source: str, theme: Any, *, top: int = 12) -> Figure:
+def ranking_bar(view: ScoutingView, source: str, theme: Any, *, top: int = 12,
+                display: dict | None = None) -> Figure:
     """Where the player ranks within one metric across the dataset."""
     pal = palette(theme)
     m = view.metric(source) or (view.metrics[0] if view.metrics else None)
@@ -182,14 +267,16 @@ def ranking_bar(view: ScoutingView, source: str, theme: Any, *, top: int = 12) -
             color=pal.accent, fontsize=64, fontweight="bold", transform=ax.transAxes)
     ax.text(0.5, 0.40, f"of {m.count} players", ha="center", va="center",
             color=pal.muted, fontsize=13, transform=ax.transAxes)
-    ax.text(0.5, 0.26, f"{m.name}: {('-' if v is None else f'{v:.2f}')}"
-            f"   (median {('-' if m.median is None else f'{m.median:.2f}')})",
-            ha="center", va="center", color=pal.text, fontsize=11, transform=ax.transAxes)
+    if _show(display, "show_values"):
+        ax.text(0.5, 0.26, f"{m.name}: {('-' if v is None else f'{v:.2f}')}"
+                f"   (median {('-' if m.median is None else f'{m.median:.2f}')})",
+                ha="center", va="center", color=pal.text, fontsize=11, transform=ax.transAxes)
     _titles(fig, pal, "Ranking", _player_line(view), _footer(view))
     return fig
 
 
-def radar_chart(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def radar_chart(view: ScoutingView, sources: list[str], theme: Any,
+                display: dict | None = None) -> Figure:
     """Multi-metric radar (0-1 normalized/percentile), one polygon per player."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:12]
@@ -223,7 +310,7 @@ def radar_chart(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
         ax.scatter([p[0] for p in pts], [p[1] for p in pts], color=col, s=22,
                    zorder=4, edgecolors=pal.panel)
     ax.set_xlim(-1.45, 1.45); ax.set_ylim(-1.4, 1.5); ax.set_aspect("equal"); ax.axis("off")
-    if view.is_comparison:
+    if view.is_comparison and _show(display, "legend"):
         ax.legend(loc="upper right", facecolor=pal.panel, edgecolor=pal.grid,
                   labelcolor=pal.text, fontsize=8)
     _titles(fig, pal, "Radar", f"{_player_line(view)}  ·  {_score_label(view)}", _footer(view))
@@ -231,7 +318,7 @@ def radar_chart(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
 
 
 def pizza_chart(view: ScoutingView, sources: list[str], theme: Any, *,
-                player: str | None = None) -> Figure:
+                player: str | None = None, display: dict | None = None) -> Figure:
     """mplsoccer PyPizza - the project's football pizza. Slice values honour
     value_scale (normalized value or percentile); colours come from the theme."""
     from mplsoccer import PyPizza
@@ -249,13 +336,17 @@ def pizza_chart(view: ScoutingView, sources: list[str], theme: Any, *,
         params=params, background_color=pal.bg, straight_line_color=pal.grid,
         last_circle_color=pal.grid, other_circle_color=pal.grid,
         straight_line_lw=1, last_circle_lw=1.4, other_circle_lw=1)
+    # show_values hides ONLY the numeric slice labels (the encoding/slices remain);
+    # alpha 0 keeps PyPizza's layout identical, so nothing else shifts.
+    _val_alpha = 1.0 if _show(display, "show_values") else 0.0
     fig, ax = baker.make_pizza(
         values, figsize=(8.2, 8.6), color_blank_space="same", slice_colors=slice_colors,
         value_bck_colors=slice_colors, blank_alpha=0.35,
         kwargs_slices=dict(edgecolor=pal.bg, zorder=2, linewidth=1),
         kwargs_params=dict(color=pal.text, fontsize=9, va="center"),
-        kwargs_values=dict(color=pal.bg, fontsize=9, zorder=3,
-                           bbox=dict(edgecolor=pal.bg, boxstyle="round,pad=0.2", lw=1)))
+        kwargs_values=dict(color=pal.bg, fontsize=9, zorder=3, alpha=_val_alpha,
+                           bbox=dict(edgecolor=pal.bg, boxstyle="round,pad=0.2", lw=1,
+                                     alpha=_val_alpha)))
     fig.set_facecolor(pal.bg)
     fam = {"fontfamily": pal.font} if pal.font else {}
     dims = view.dimensions.get(player, {})
@@ -269,7 +360,7 @@ def pizza_chart(view: ScoutingView, sources: list[str], theme: Any, *,
 
 
 def scatter(view: ScoutingView, x_source: str, y_source: str, theme: Any,
-            frame=None) -> Figure:
+            frame=None, display: dict | None = None) -> Figure:
     """Metric-vs-metric scatter: population in the background, selected player(s)
     highlighted. Optional trendline when there are enough players."""
     pal = palette(theme)
@@ -297,16 +388,22 @@ def scatter(view: ScoutingView, x_source: str, y_source: str, theme: Any,
             continue
         col = colors[i % len(colors)]
         ax.scatter([vx], [vy], s=170, color=col, edgecolors=pal.bg, lw=1.5, zorder=4)
-        ax.annotate(player, (vx, vy), textcoords="offset points", xytext=(8, 6),
-                    color=pal.text, fontsize=9, fontweight="bold")
+        if _show(display, "show_player_names"):
+            ax.annotate(player, (vx, vy), textcoords="offset points", xytext=(8, 6),
+                        color=pal.text, fontsize=9, fontweight="bold")
     ax.set_xlabel(mx.name, color=pal.text, fontsize=9)
     ax.set_ylabel(my.name, color=pal.text, fontsize=9)
-    ax.grid(color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
+    if _show(display, "show_grid"):
+        ax.grid(color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax)
+    ax.set_axisbelow(True)
     _titles(fig, pal, "Metric scatter", f"{mx.name}  vs  {my.name}", _footer(view))
     return fig
 
 
-def histogram(view: ScoutingView, source: str, theme: Any, frame=None) -> Figure:
+def histogram(view: ScoutingView, source: str, theme: Any, frame=None,
+              display: dict | None = None) -> Figure:
     """Population distribution of a metric with the player's position marked."""
     pal = palette(theme)
     fig, ax = _new_fig(pal, (8.2, 5.6))
@@ -321,16 +418,22 @@ def histogram(view: ScoutingView, source: str, theme: Any, frame=None) -> Figure
     pv = m.value(view.primary)
     if pv is not None:
         ax.axvline(pv, color=pal.warning, lw=2.2, zorder=5)
-        ax.text(pv, ax.get_ylim()[1] * 0.96, f" {view.primary}", color=pal.warning,
-                fontsize=9, ha="left", va="top", fontweight="bold")
+        if _show(display, "show_player_names"):
+            ax.text(pv, ax.get_ylim()[1] * 0.96, f" {view.primary}", color=pal.warning,
+                    fontsize=9, ha="left", va="top", fontweight="bold")
     ax.set_xlabel(m.name, color=pal.text, fontsize=9)
     ax.set_ylabel("players", color=pal.muted, fontsize=9)
-    ax.grid(axis="y", color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
+    if _show(display, "show_grid"):
+        ax.grid(axis="y", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax)
+    ax.set_axisbelow(True)
     _titles(fig, pal, "Distribution", _player_line(view), _footer(view))
     return fig
 
 
-def box_plot(view: ScoutingView, sources: list[str], theme: Any, frame=None) -> Figure:
+def box_plot(view: ScoutingView, sources: list[str], theme: Any, frame=None,
+             display: dict | None = None) -> Figure:
     """Population spread of the selected metrics with the player's markers."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:10]
@@ -352,13 +455,19 @@ def box_plot(view: ScoutingView, sources: list[str], theme: Any, frame=None) -> 
         if pv is not None:
             ax.scatter([pv], [yi], color=pal.warning, s=70, zorder=5, edgecolors=pal.bg)
     ax.set_yticks(pos); ax.set_yticklabels([m.name for m in metrics], color=pal.text, fontsize=8)
-    ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
+    if _show(display, "show_grid"):
+        ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax); ax.set_yticks(pos)
+        ax.set_yticklabels([m.name for m in metrics], color=pal.text, fontsize=8)
+    ax.set_axisbelow(True)
     _titles(fig, pal, "Population spread", f"{_player_line(view)}  ·  marker = player",
             _footer(view))
     return fig
 
 
-def lollipop(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def lollipop(view: ScoutingView, sources: list[str], theme: Any,
+             display: dict | None = None) -> Figure:
     """Clean lollipop of the player's selected metrics (0-100 score)."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:16]
@@ -370,16 +479,22 @@ def lollipop(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
     y = np.arange(len(metrics))[::-1]
     ax.hlines(y, 0, scores, color=pal.grid, lw=1.6, zorder=1)
     ax.scatter(scores, y, color=cols, s=90, zorder=3, edgecolors=pal.bg)
-    for yi, s in zip(y, scores):
-        ax.text(s + 1.5, yi, f"{s:.0f}", va="center", ha="left", color=pal.text, fontsize=8)
+    if _show(display, "show_values"):
+        for yi, s in zip(y, scores):
+            ax.text(s + 1.5, yi, f"{s:.0f}", va="center", ha="left", color=pal.text, fontsize=8)
     ax.set_xlim(0, 104)
     ax.set_yticks(y); ax.set_yticklabels(names, color=pal.text, fontsize=8)
-    ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
+    if _show(display, "show_grid"):
+        ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax); ax.set_yticks(y); ax.set_yticklabels(names, color=pal.text, fontsize=8)
+    ax.set_axisbelow(True)
     _titles(fig, pal, "Lollipop", f"{_player_line(view)}  ·  {_score_label(view)}", _footer(view))
     return fig
 
 
-def comparison_bars(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def comparison_bars(view: ScoutingView, sources: list[str], theme: Any,
+                    display: dict | None = None) -> Figure:
     """Grouped horizontal bars comparing 2+ players across the selected metrics."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:12]
@@ -395,14 +510,21 @@ def comparison_bars(view: ScoutingView, sources: list[str], theme: Any) -> Figur
                 color=colors[i % len(colors)], edgecolor=pal.bg, label=player)
     ax.set_xlim(0, 100)
     ax.set_yticks(base); ax.set_yticklabels([m.name for m in metrics], color=pal.text, fontsize=8)
-    ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
-    ax.legend(loc="lower right", facecolor=pal.panel, edgecolor=pal.grid,
-              labelcolor=pal.text, fontsize=8)
+    if _show(display, "show_grid"):
+        ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        _hide_axes(ax); ax.set_yticks(base)
+        ax.set_yticklabels([m.name for m in metrics], color=pal.text, fontsize=8)
+    ax.set_axisbelow(True)
+    if _show(display, "legend"):
+        ax.legend(loc="lower right", facecolor=pal.panel, edgecolor=pal.grid,
+                  labelcolor=pal.text, fontsize=8)
     _titles(fig, pal, "Player comparison", _score_label(view), _footer(view))
     return fig
 
 
-def small_multiples(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def small_multiples(view: ScoutingView, sources: list[str], theme: Any,
+                    display: dict | None = None) -> Figure:
     """Compact mini-bars per metric - clean for scouting reports (section 16)."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:12]
@@ -419,13 +541,15 @@ def small_multiples(view: ScoutingView, sources: list[str], theme: Any) -> Figur
         ax.barh([0], [score], color=col, height=0.5, edgecolor=pal.bg)
         ax.set_xlim(0, 100); ax.set_ylim(-0.6, 0.6); ax.axis("off")
         ax.text(0, 0.7, m.name, color=pal.text, fontsize=8, va="bottom", ha="left")
-        ax.text(100, 0.7, f"{score:.0f}", color=pal.muted, fontsize=8, va="bottom", ha="right")
+        if _show(display, "show_values"):
+            ax.text(100, 0.7, f"{score:.0f}", color=pal.muted, fontsize=8, va="bottom", ha="right")
     _titles(fig, pal, "Metric snapshot", f"{_player_line(view)}  ·  {_score_label(view)}",
             _footer(view))
     return fig
 
 
-def heatmap(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
+def heatmap(view: ScoutingView, sources: list[str], theme: Any,
+            display: dict | None = None) -> Figure:
     """Players x metrics matrix of 0-100 scores."""
     pal = palette(theme)
     metrics = _sources_or_all(view, sources)[:16]
@@ -440,12 +564,14 @@ def heatmap(view: ScoutingView, sources: list[str], theme: Any) -> Figure:
     im = ax.imshow(mat, aspect="auto", cmap=cmap, vmin=0, vmax=100)
     ax.set_xticks(range(len(players))); ax.set_xticklabels(players, color=pal.text, fontsize=8, rotation=20, ha="right")
     ax.set_yticks(range(len(metrics))); ax.set_yticklabels([m.name for m in metrics], color=pal.text, fontsize=8)
-    for i in range(len(metrics)):
-        for j in range(len(players)):
-            ax.text(j, i, f"{mat[i, j]:.0f}", ha="center", va="center",
-                    color=pal.bg, fontsize=7)
-    cb = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
-    cb.ax.tick_params(colors=pal.muted, labelsize=7)
+    if _show(display, "show_values"):
+        for i in range(len(metrics)):
+            for j in range(len(players)):
+                ax.text(j, i, f"{mat[i, j]:.0f}", ha="center", va="center",
+                        color=pal.bg, fontsize=7)
+    if _show(display, "legend"):                        # the colour scale is the legend
+        cb = fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+        cb.ax.tick_params(colors=pal.muted, labelsize=7)
     _titles(fig, pal, "Metric matrix", _score_label(view), _footer(view))
     return fig
 
@@ -456,20 +582,21 @@ def pd_to_numeric(series):
     return pd.to_numeric(series, errors="coerce")
 
 
-# dispatch used by the UI / tests
+# dispatch used by the UI / tests. `opts["display"]` (optional) carries the shared
+# display configuration; absent = current output (backward compatible).
 RENDERERS = {
-    "bar": lambda view, theme, opts: bar_chart(view, opts.get("metrics"), theme),
-    "percentile_bar": lambda view, theme, opts: percentile_bar(view, opts.get("metrics"), theme),
-    "ranking_bar": lambda view, theme, opts: ranking_bar(view, opts.get("metric"), theme),
-    "radar": lambda view, theme, opts: radar_chart(view, opts.get("metrics"), theme),
-    "pizza": lambda view, theme, opts: pizza_chart(view, opts.get("metrics"), theme),
-    "scatter": lambda view, theme, opts: scatter(view, opts.get("x"), opts.get("y"), theme, opts.get("frame")),
-    "histogram": lambda view, theme, opts: histogram(view, opts.get("metric"), theme, opts.get("frame")),
-    "box": lambda view, theme, opts: box_plot(view, opts.get("metrics"), theme, opts.get("frame")),
-    "lollipop": lambda view, theme, opts: lollipop(view, opts.get("metrics"), theme),
-    "comparison": lambda view, theme, opts: comparison_bars(view, opts.get("metrics"), theme),
-    "small_multiples": lambda view, theme, opts: small_multiples(view, opts.get("metrics"), theme),
-    "heatmap": lambda view, theme, opts: heatmap(view, opts.get("metrics"), theme),
+    "bar": lambda view, theme, opts: bar_chart(view, opts.get("metrics"), theme, opts.get("display")),
+    "percentile_bar": lambda view, theme, opts: percentile_bar(view, opts.get("metrics"), theme, opts.get("display")),
+    "ranking_bar": lambda view, theme, opts: ranking_bar(view, opts.get("metric"), theme, display=opts.get("display")),
+    "radar": lambda view, theme, opts: radar_chart(view, opts.get("metrics"), theme, opts.get("display")),
+    "pizza": lambda view, theme, opts: pizza_chart(view, opts.get("metrics"), theme, display=opts.get("display")),
+    "scatter": lambda view, theme, opts: scatter(view, opts.get("x"), opts.get("y"), theme, opts.get("frame"), opts.get("display")),
+    "histogram": lambda view, theme, opts: histogram(view, opts.get("metric"), theme, opts.get("frame"), opts.get("display")),
+    "box": lambda view, theme, opts: box_plot(view, opts.get("metrics"), theme, opts.get("frame"), opts.get("display")),
+    "lollipop": lambda view, theme, opts: lollipop(view, opts.get("metrics"), theme, opts.get("display")),
+    "comparison": lambda view, theme, opts: comparison_bars(view, opts.get("metrics"), theme, opts.get("display")),
+    "small_multiples": lambda view, theme, opts: small_multiples(view, opts.get("metrics"), theme, opts.get("display")),
+    "heatmap": lambda view, theme, opts: heatmap(view, opts.get("metrics"), theme, opts.get("display")),
 }
 
 
@@ -485,4 +612,5 @@ def render(chart_type: str, view: ScoutingView, theme: Any, options: dict | None
 __all__ = ["Palette", "palette", "render", "RENDERERS",
            "bar_chart", "percentile_bar", "ranking_bar", "radar_chart", "pizza_chart",
            "scatter", "histogram", "box_plot", "lollipop", "comparison_bars",
-           "small_multiples", "heatmap"]
+           "small_multiples", "heatmap",
+           "CHART_CAPS", "CHART_DEFAULTS", "capabilities_for", "display_defaults_for"]

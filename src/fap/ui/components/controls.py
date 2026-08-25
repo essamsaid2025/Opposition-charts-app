@@ -11,10 +11,18 @@ from fap.core.types import Control
 
 
 def render_controls(controls: Sequence[Control], saved: dict[str, Any] | None = None,
-                    key_prefix: str = "ctl") -> dict[str, Any]:
+                    key_prefix: str = "ctl",
+                    exclude: "Sequence[str] | None" = None) -> dict[str, Any]:
+    """Render declarative controls as widgets. ``exclude`` skips control keys that
+    are owned by another surface (e.g. the capability-gated Display panel owns the
+    presentation toggles), so a key is never rendered twice into two widgets that
+    would fight over the same value."""
     saved = saved or {}
+    skip = set(exclude or ())
     values: dict[str, Any] = {}
     for control in controls:
+        if control.key in skip:
+            continue
         default = saved.get(control.key, control.default)
         widget_key = f"{key_prefix}::{control.key}"
         if control.kind == "checkbox":

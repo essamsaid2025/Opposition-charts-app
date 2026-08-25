@@ -58,6 +58,40 @@ class LabelLayer(Layer):
 
 
 @layer_registry.register
+class ValueLabelLayer(Layer):
+    """Per-row NUMERIC value labels from a dataframe column (xG values, metric
+    values). The reusable value-label mechanism, distinct from ``LabelLayer`` (which
+    renders text/identity columns like player/event): this coerces the column to a
+    number and formats it, so ``show_xg_values``/``show_values`` share one renderer.
+    Params: df, column, fmt (default '{:.2f}'), color, dy, at_end (use end_x/end_y)."""
+    info = PluginInfo(id="value_labels", name="Value labels", category="text")
+    zorder = 21
+
+    def draw(self, ctx: LayerContext) -> None:
+        import pandas as pd
+        df = self.params.get("df")
+        df = ctx.df if df is None else df
+        column = self.params.get("column")
+        if not column or column not in df.columns:
+            return
+        xcol, ycol = ("end_x", "end_y") if self.params.get("at_end") else ("x", "y")
+        d = df.dropna(subset=[xcol, ycol])
+        if d.empty:
+            return
+        values = pd.to_numeric(d[column], errors="coerce")
+        x, y = ctx.to_display(d[xcol], d[ycol])
+        fmt = self.params.get("fmt", "{:.2f}")
+        dy = float(self.params.get("dy", 2.6))
+        color = self.params.get("color") or ctx.theme.colors["text"]
+        for px, py, val in zip(x, y, values):
+            if pd.isna(val):
+                continue
+            ctx.ax.text(px, py + dy, fmt.format(val), ha="center", va="bottom",
+                        fontsize=max(6, ctx.style("label_size") - 2), color=color,
+                        zorder=self.zorder)
+
+
+@layer_registry.register
 class AnnotationLayer(Layer):
     """Renders an AnnotationSet (coach notes, callouts, boxes, circles,
     numbers, highlighted players/areas). Params: annotations (AnnotationSet

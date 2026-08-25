@@ -119,7 +119,7 @@ class Renderer:
             layers.append(PitchLayer())
         layers.extend(viz.layers(lctx) or ())
         annotations = ctx.meta.get("annotations")
-        if annotations:
+        if annotations and controls.get("show_annotations", True):
             ann = annotations if isinstance(annotations, AnnotationSet) else \
                 AnnotationSet.from_dict(annotations)
             layers.append(AnnotationLayer(annotations=ann))

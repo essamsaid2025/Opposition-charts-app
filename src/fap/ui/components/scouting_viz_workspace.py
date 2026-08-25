@@ -251,6 +251,49 @@ def _metric_explorer(view: viz.ScoutingView, key: str) -> None:
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
+# ------------------------------------------------------------ methodology note
+def _chart_fields(view: viz.ScoutingView, ct: str, opts: dict) -> list[str]:
+    """The metric columns THIS chart actually consumes — resolved to their display
+    names — never 'all columns'. Honest per the requirement."""
+    if ct == "scatter":
+        srcs = [opts.get("x"), opts.get("y")]
+    elif ct in ("ranking_bar", "histogram"):
+        srcs = [opts.get("metric")]
+    else:
+        srcs = opts.get("metrics") or []
+    names: list[str] = []
+    for s in srcs:
+        if not s:
+            continue
+        m = view.metric(s)
+        names.append(m.name if m else str(s))
+    return names
+
+
+_PCT_CHARTS = frozenset({"percentile_bar", "radar", "lollipop", "comparison",
+                         "small_multiples", "heatmap", "pizza"})
+
+
+def _scouting_note(view: viz.ScoutingView, ct: str, opts: dict, *, key: str) -> None:
+    """Data & Methodology note for a Scouting chart: the exact metrics consumed, the
+    calculation (raw vs percentile/normalized), the scope and the reference
+    population the percentile is computed against — derived from the live view."""
+    from fap.ui.components.display_panel import render_methodology_note
+    from fap.visuals.methodology import build_note
+    fields = _chart_fields(view, ct, opts)
+    scale = ("normalized value" if view.value_scale == viz.SCALE_NORMALIZED
+             else "percentile vs dataset")
+    is_pct = ct in _PCT_CHARTS
+    label = viz.CHART_LABELS.get(ct, ct.replace("_", " ").title())
+    metric = f"{label} · {scale}" if is_pct else f"{label} · raw values"
+    scope = (f"Comparison · {len(view.players)} players" if view.is_comparison
+             else f"Player · {view.primary}")
+    population = f"{view.population} players" + (f" · {scale}" if is_pct else "")
+    note = build_note(dataset="player_scouting", fields=fields, filters=None,
+                      metric=metric, pitch_based=False, scope=scope, population=population)
+    render_methodology_note(note, key=key)
+
+
 # ------------------------------------------------------------ visualization workspace
 def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
                    save) -> None:
@@ -288,6 +331,13 @@ def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
                           format_func=lambda s: view.metric(s).name, key=f"{key}_single_{ct}")
         opts["metric"] = mk
 
+    # capability-gated Display panel (shared model) — presentation only, threaded
+    # into the standalone chart renderer via opts["display"].
+    from fap.ui.components.display_panel import render_display_controls
+    opts["display"] = render_display_controls(
+        charts.capabilities_for(ct), {}, key=f"{key}_disp_{ct}",
+        defaults=charts.display_defaults_for(ct))
+
     stash_key = f"{key}_vizstash_{ct}"
     if st.button("Render", type="primary", key=f"{key}_render_{ct}"):
         try:
@@ -302,6 +352,7 @@ def _viz_workspace(view: viz.ScoutingView, theme, frame, ex, key: str,
     # rendered image + download + 'Save to player' are drawn UNCONDITIONALLY from the
     # stash, so the Save button exists on the run where it is clicked (bugfix).
     _show_stash(stash_key, key=f"{key}_{ct}", save=save)
+    _scouting_note(view, ct, opts, key=f"{key}_method_{ct}")
 
 
 # ------------------------------------------------------------ pizza builder
@@ -361,10 +412,14 @@ def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
         C.render_alert(f"Pizza unavailable: {data['reason']}", "info")
         return
     st.caption(f"{data['note']}  ·  {len(selected)} metrics")
+    from fap.ui.components.display_panel import render_display_controls
+    pz_display = render_display_controls(
+        charts.capabilities_for("pizza"), {}, key=f"{key}_pz_disp",
+        defaults=charts.display_defaults_for("pizza"))
     stash_key = f"{key}_pzstash"
     if st.button("Render pizza", type="primary", key=f"{key}_pz_render"):
         try:
-            fig = charts.pizza_chart(view, selected, theme)
+            fig = charts.pizza_chart(view, selected, theme, display=pz_display)
         except Exception as exc:
             C.render_alert(f"Could not render the pizza: {exc}", "warning")
             return
@@ -373,6 +428,7 @@ def _pizza_builder(shell, svc, view: viz.ScoutingView, theme, ex, key: str,
                       config={"metrics": selected, "mode": data.get("mode", "")})
     # unconditional show so the Save button survives the click-triggered rerun (bugfix)
     _show_stash(stash_key, key=f"{key}_pz", save=save)
+    _scouting_note(view, "pizza", {"metrics": selected}, key=f"{key}_pz_method")
 
 
 # ------------------------------------------------------------ population context

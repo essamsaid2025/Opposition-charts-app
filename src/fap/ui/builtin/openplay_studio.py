@@ -475,6 +475,47 @@ def _panel_stage(w: Studio) -> None:
         return
     st.image(cache[sig]["png"], use_container_width=True)
     st.caption("Rendered with the Open Play engine — identical to Opponent Analysis for the same options.")
+    _methodology(w, str(viz))
+
+
+# ---- Data & Methodology + Reset Display (presentation only; engine untouched) ----
+_OP_DISPLAY_KEYS = (("labels", "show", True), ("labels", "show_players", False),
+                    ("legend", "show", True), ("heat", "cell_labels", False))
+_OP_DISPLAY_WIDGETS = ("ops_lbshow", "ops_lbpl", "ops_lgshow", "ops_hcl")
+
+
+def _methodology(w: Studio, viz: str) -> None:
+    """The honest, live Data & Methodology note for the rendered visualization, plus a
+    Reset Display action. Reads the engine's per-viz metadata (category/uses_pitch) and
+    the Studio's live filters/pitch spec — it changes no analytics and no engine state."""
+    from fap.openplay.viz_descriptors import (
+        describe, normalize_openplay_selections, openplay_note, scope_from_selections,
+    )
+    from fap.ui.components.display_panel import render_methodology_note
+    reg = getattr(w.engine, "viz_registry", {}) or {}
+    meta = reg.get(viz, {}) if isinstance(reg, dict) else {}
+    category = str(meta.get("category") or st.session_state.get(CAT, "") or "")
+    uses_pitch = bool(meta.get("uses_pitch", True))
+    desc = describe(viz, category, uses_pitch)
+    spec = w.spec
+    sel = _selections()
+    note = openplay_note(
+        desc, dataset="events", filters=normalize_openplay_selections(sel),
+        scope=scope_from_selections(sel),
+        length=getattr(spec, "length", None), width=getattr(spec, "width", None),
+        spec_label=str(getattr(spec, "name", "") or getattr(spec, "label", "") or ""))
+    cols = st.columns([4, 1], vertical_alignment="center")
+    with cols[0]:
+        render_methodology_note(note, key="ops_method")
+    if cols[1].button("Reset display", key="ops_reset_display", use_container_width=True,
+                      help="Restore default display (legend/labels/cell counts). Does "
+                           "not change data, filters, selections or theme."):
+        ctl = _controls()
+        for group, key, default in _OP_DISPLAY_KEYS:
+            ctl.setdefault(group, {})[key] = default
+        for wkey in _OP_DISPLAY_WIDGETS:
+            st.session_state.pop(wkey, None)
+        st.rerun()
 
 
 def _render_current(w: Studio) -> None:

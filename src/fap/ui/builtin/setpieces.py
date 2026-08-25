@@ -35,6 +35,60 @@ def _quality_kind(q: float) -> str:
     return "success" if q >= 85 else "info" if q >= 60 else "warning" if q >= 40 else "danger"
 
 
+def _viz_instance(viz_id: str):
+    """The registered visualization plugin instance (for its display capabilities).
+    The set-piece service has already registered every SP visualization by the time
+    the picker renders, so a lookup by id is safe; failures degrade to no panel."""
+    try:
+        from fap.visuals.base import visual_registry
+        return visual_registry.create(viz_id)
+    except Exception:
+        return None
+
+
+def _sp_render_note(inst, viz: dict, filt, controls: dict, *, key: str) -> None:
+    """Data & Methodology note for a set-piece visualization — the same honest,
+    dynamic note used across the platform, built from the plugin's declared fields +
+    capabilities and the active set-piece filter."""
+    from fap.ui.components.display_panel import render_methodology_note
+    from fap.visuals.methodology import build_note
+
+    fields = list(getattr(inst, "requires", ()) or ())
+    caps = getattr(inst, "capabilities", None)
+    if caps is not None:
+        for cond, col in ((caps.xg, "xg"), (caps.outcome, "outcome")):
+            if cond and col not in fields:
+                fields.append(col)
+    pitch_based = bool(getattr(inst, "pitch_based", True))
+    length = width = None
+    if pitch_based:
+        try:
+            from fap.visuals.pitch import get_spec
+            spec = get_spec(None)
+            length, width = getattr(spec, "length", None), getattr(spec, "width", None)
+        except Exception:
+            length = width = None
+    note = build_note(
+        dataset="set_piece", fields=fields, filters=_sp_filter_chips(filt),
+        metric=viz.get("name", ""), pitch_based=pitch_based, length=length, width=width,
+        scope="Set piece", missing="" if not pitch_based else
+        "rows with missing/invalid x/y are excluded from spatial rendering")
+    render_methodology_note(note, key=key)
+
+
+def _sp_filter_chips(filt) -> list[str]:
+    """Human chips for the active set-piece filter (its own vocabulary: type/side/
+    phase/perspective/team), so the note reflects exactly what is filtered."""
+    chips: list[str] = []
+    for attr, label in (("set_piece_type", "Type"), ("side", "Side"), ("phase", "Phase"),
+                        ("perspective", "Perspective"), ("team", "Team"),
+                        ("delivery_type", "Delivery"), ("match_id", "Match")):
+        val = getattr(filt, attr, None)
+        if val and str(val).lower() not in ("", "all", "none"):
+            chips.append(f"{label}: {val}")
+    return chips
+
+
 def _check_html(ok: bool, label: str) -> str:
     """A requirement line: green check when satisfied, red cross when not."""
     kind, glyph = ("success", "check") if ok else ("danger", "x")
@@ -501,6 +555,19 @@ class SetPieceAnalysisPage(Page):
         # both keys: the new delivery charts read `sp_orientation`; the older
         # framework pitch charts read the standard `orientation` control.
         controls = {"sp_orientation": orient, "orientation": orient}
+
+        # strict capability-gated Display panel for THIS visualization (Phase 2) —
+        # presentation only; merged into the controls the renderer already receives.
+        inst = _viz_instance(viz["id"])
+        caps = getattr(inst, "capabilities", None) if inst is not None else None
+        if caps is not None:
+            from fap.ui.components.display_panel import render_display_controls
+            with st.expander("Display", expanded=False):
+                disp = render_display_controls(
+                    caps, {}, key=f"spv_disp_{viz['id']}",
+                    defaults=getattr(inst, "display_defaults", {}) or {})
+            controls.update(disp)
+
         filt = self._filter_bar(shell, svc, key="viz")
 
         self._health_dashboard(shell, svc, filt)
@@ -538,6 +605,8 @@ class SetPieceAnalysisPage(Page):
                 self._empty_state(shell, svc, viz, req, val)
             self._example_and_template(shell, svc, viz, guide)
             self._learn_more(guide)
+            if inst is not None:
+                _sp_render_note(inst, viz, filt, controls, key="spv_method")
 
         st.divider()
         if val.can_render:

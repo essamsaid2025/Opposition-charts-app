@@ -22,6 +22,7 @@ from fap.core.plugin import Plugin, PluginRegistry
 from fap.core.types import Control, RenderContext
 from fap.visuals.context import LayerContext
 from fap.visuals.controls import controls_for
+from fap.visuals.display import VisualizationCapabilities
 from fap.visuals.layers.base import Layer
 
 # kept for backward compatibility with earlier phases
@@ -35,6 +36,13 @@ class Visualization(Plugin):
     controls: tuple[Control, ...] = ()                     # plugin extras
     layout: str = "single"
     pitch_based: bool = True
+    # -- display capabilities (Phase 2) -------------------------------------
+    # Which presentation toggles this visualization can genuinely honour, and any
+    # per-viz default overrides. Conservative baseline (legend + annotations, both
+    # honoured by the framework); builders/plugins declare more where the renderer
+    # actually supports it. Never declare a capability the renderer can't honour.
+    capabilities: VisualizationCapabilities = VisualizationCapabilities()
+    display_defaults: dict = {}
 
     @property
     def all_controls(self) -> tuple[Control, ...]:

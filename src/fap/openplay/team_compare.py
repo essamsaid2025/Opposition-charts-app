@@ -24,6 +24,43 @@ from matplotlib.patches import Polygon
 
 from fap.datahub.team_stats_schema import PERCENT, TeamStat, TeamStatsSchema
 from fap.scouting.charts import palette
+from fap.visuals.display import VisualizationCapabilities
+
+# ---------------------------------------------------------------- display adapter
+# Phase 3: the SAME shared display model drives these standalone team-comparison
+# charts. Each declares only what it genuinely renders; defaults reproduce the
+# current output. Team stats are not events — no xG / player-name / spatial caps.
+CHART_CAPS: dict[str, VisualizationCapabilities] = {
+    "comparison": VisualizationCapabilities(values=True, legend=True, axes=True,
+                                            grid=True, annotations=False),
+    "diverging": VisualizationCapabilities(values=True, legend=False, annotations=False),
+    "share": VisualizationCapabilities(percentages=True, legend=True, annotations=False),
+    "donut": VisualizationCapabilities(percentages=True, legend=True, annotations=False),
+    "radar": VisualizationCapabilities(legend=True, annotations=False),
+}
+CHART_DEFAULTS: dict[str, dict[str, bool]] = {
+    "comparison": {"show_values": True, "show_grid": True},
+    "diverging": {"show_values": True},
+    "share": {"show_percentages": True},
+    "donut": {"show_percentages": True},
+}
+_DEFAULT_CAPS = VisualizationCapabilities(annotations=False)
+
+
+def capabilities_for(chart_type: str) -> VisualizationCapabilities:
+    return CHART_CAPS.get(chart_type, _DEFAULT_CAPS)
+
+
+def display_defaults_for(chart_type: str) -> dict[str, bool]:
+    from fap.visuals.display import display_defaults
+    return display_defaults(capabilities_for(chart_type), CHART_DEFAULTS.get(chart_type))
+
+
+def _show(display: dict | None, key: str, default: bool = True) -> bool:
+    if not display:
+        return default
+    v = display.get(key)
+    return default if v is None else bool(v)
 
 
 # ---------------------------------------------------------------- comparison model
@@ -146,7 +183,8 @@ def _fmt(stat: TeamStat, team: str) -> str:
 
 
 # ---------------------------------------------------------------- charts
-def comparison_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) -> Figure:
+def comparison_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any,
+                    display: dict | None = None) -> Figure:
     """Grouped horizontal bars: raw statistic values, one bar per team."""
     pal = palette(theme)
     stats = _select(cmp, labels, 14)
@@ -158,23 +196,33 @@ def comparison_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: An
     colors = _team_colors(pal, teams)
     base = np.arange(len(stats))[::-1].astype(float)
     h = 0.8 / max(len(teams), 1)
+    show_vals = _show(display, "show_values")
     for i, team in enumerate(teams):
         vals = [(s.value(team) or 0.0) for s in stats]
         y = base + (i - (len(teams) - 1) / 2) * h
         ax.barh(y, vals, height=h, color=colors[i], edgecolor=pal.bg, label=team)
-        for yi, s in zip(y, stats):
-            ax.text((s.value(team) or 0.0), yi, "  " + _fmt(s, team), va="center",
-                    ha="left", color=pal.text, fontsize=7.5)
+        if show_vals:
+            for yi, s in zip(y, stats):
+                ax.text((s.value(team) or 0.0), yi, "  " + _fmt(s, team), va="center",
+                        ha="left", color=pal.text, fontsize=7.5)
     ax.set_yticks(base)
     ax.set_yticklabels([s.name for s in stats], color=pal.text, fontsize=8)
-    ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5); ax.set_axisbelow(True)
-    ax.legend(loc="lower right", facecolor=pal.panel, edgecolor=pal.grid,
-              labelcolor=pal.text, fontsize=8)
+    if _show(display, "show_grid"):
+        ax.grid(axis="x", color=pal.grid, lw=0.6, alpha=0.5)
+    if not _show(display, "show_axes"):
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xticks([])
+    ax.set_axisbelow(True)
+    if _show(display, "legend"):
+        ax.legend(loc="lower right", facecolor=pal.panel, edgecolor=pal.grid,
+                  labelcolor=pal.text, fontsize=8)
     _titles(fig, pal, "Team comparison", "raw statistic values", _footer(cmp))
     return fig
 
 
-def diverging_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) -> Figure:
+def diverging_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any,
+                   display: dict | None = None) -> Figure:
     """Back-to-back bars for exactly two teams — the classic match-stats layout:
     one team's values extend left, the other's right, each normalized to the row's
     max so counts and percents stay legible side by side."""
@@ -190,15 +238,17 @@ def diverging_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any
     fig.subplots_adjust(left=0.28, right=0.72, top=0.82, bottom=0.08)
     colors = _team_colors(pal, teams)
     y = np.arange(len(stats))[::-1].astype(float)
+    show_vals = _show(display, "show_values")
     for yi, s in zip(y, stats):
         lv, rv = (s.value(left_t) or 0.0), (s.value(right_t) or 0.0)
         denom = max(abs(lv), abs(rv), 1e-9)
         ax.barh(yi, -lv / denom, height=0.66, color=colors[0], edgecolor=pal.bg)
         ax.barh(yi, rv / denom, height=0.66, color=colors[1], edgecolor=pal.bg)
-        ax.text(-0.02, yi, _fmt(s, left_t), va="center", ha="right",
-                color=pal.text, fontsize=8)
-        ax.text(0.02, yi, _fmt(s, right_t), va="center", ha="left",
-                color=pal.text, fontsize=8)
+        if show_vals:
+            ax.text(-0.02, yi, _fmt(s, left_t), va="center", ha="right",
+                    color=pal.text, fontsize=8)
+            ax.text(0.02, yi, _fmt(s, right_t), va="center", ha="left",
+                    color=pal.text, fontsize=8)
         ax.text(0, yi + 0.5, s.name, va="center", ha="center", color=pal.muted, fontsize=7.5)
     ax.axvline(0, color=pal.grid, lw=1.0)
     ax.set_xlim(-1.25, 1.25)
@@ -215,7 +265,8 @@ def diverging_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any
     return fig
 
 
-def share_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) -> Figure:
+def share_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any,
+               display: dict | None = None) -> Figure:
     """100%-stacked horizontal bars: each team's share of every statistic. Reads at
     a glance who dominates each area; works for any number of teams."""
     pal = palette(theme)
@@ -227,6 +278,7 @@ def share_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) ->
     fig.subplots_adjust(left=0.40, right=0.95, top=0.82, bottom=0.08)
     colors = _team_colors(pal, teams)
     y = np.arange(len(stats))[::-1].astype(float)
+    show_pct = _show(display, "show_percentages")
     for yi, s in zip(y, stats):
         vals = np.array([max(s.value(t) or 0.0, 0.0) for t in teams], dtype=float)
         total = vals.sum()
@@ -235,22 +287,24 @@ def share_bars(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) ->
         for i, team in enumerate(teams):
             w = shares[i] * 100.0
             ax.barh(yi, w, left=left, height=0.66, color=colors[i], edgecolor=pal.bg)
-            if w >= 12:
+            if show_pct and w >= 12:
                 ax.text(left + w / 2, yi, f"{w:.0f}%", va="center", ha="center",
                         color=pal.bg, fontsize=7.5, fontweight="bold")
             left += w
     ax.set_xlim(0, 100)
     ax.set_yticks(y); ax.set_yticklabels([s.name for s in stats], color=pal.text, fontsize=8)
     ax.set_xticks([0, 25, 50, 75, 100])
-    handles = [matplotlib.patches.Patch(color=colors[i], label=t) for i, t in enumerate(teams)]
-    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.005),
-              ncol=min(len(teams), 4), facecolor=pal.panel, edgecolor=pal.grid,
-              labelcolor=pal.text, fontsize=8, framealpha=0.9)
+    if _show(display, "legend"):
+        handles = [matplotlib.patches.Patch(color=colors[i], label=t) for i, t in enumerate(teams)]
+        ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.005),
+                  ncol=min(len(teams), 4), facecolor=pal.panel, edgecolor=pal.grid,
+                  labelcolor=pal.text, fontsize=8, framealpha=0.9)
     _titles(fig, pal, "Statistic share", "each team's share of the row total", _footer(cmp))
     return fig
 
 
-def donut(cmp: TeamComparison, label: str | None, theme: Any) -> Figure:
+def donut(cmp: TeamComparison, label: str | None, theme: Any,
+          display: dict | None = None) -> Figure:
     """A single statistic's split between the teams as a donut — ideal for
     possession / field tilt and other percentage rows."""
     pal = palette(theme)
@@ -267,25 +321,28 @@ def donut(cmp: TeamComparison, label: str | None, theme: Any) -> Figure:
     wedges, _ = ax.pie(vals, colors=pal_colors, startangle=90, counterclock=False,
                        wedgeprops=dict(width=0.36, edgecolor=pal.bg, linewidth=2))
     shares = vals / vals.sum() * 100.0
-    for w, team, sh in zip(wedges, teams, shares):
-        ang = math.radians((w.theta1 + w.theta2) / 2)
-        r = 0.82
-        ax.text(r * math.cos(ang), r * math.sin(ang), f"{sh:.0f}%",
-                ha="center", va="center", color=pal.bg, fontsize=12, fontweight="bold")
+    if _show(display, "show_percentages"):
+        for w, team, sh in zip(wedges, teams, shares):
+            ang = math.radians((w.theta1 + w.theta2) / 2)
+            r = 0.82
+            ax.text(r * math.cos(ang), r * math.sin(ang), f"{sh:.0f}%",
+                    ha="center", va="center", color=pal.bg, fontsize=12, fontweight="bold")
     leader = teams[int(np.argmax(vals))]
     fam = {"fontfamily": pal.font} if pal.font else {}
     ax.text(0, 0.08, stat.name, ha="center", va="center", color=pal.text,
             fontsize=12, fontweight="bold", **fam)
     ax.text(0, -0.1, leader, ha="center", va="center", color=pal.muted, fontsize=10, **fam)
     ax.set_aspect("equal")
-    ax.legend(wedges, [f"{t}  {_fmt(stat, t)}" for t in teams], loc="lower center",
-              ncol=min(len(teams), 3), facecolor=pal.panel, edgecolor=pal.grid,
-              labelcolor=pal.text, fontsize=9, bbox_to_anchor=(0.5, -0.08))
+    if _show(display, "legend"):
+        ax.legend(wedges, [f"{t}  {_fmt(stat, t)}" for t in teams], loc="lower center",
+                  ncol=min(len(teams), 3), facecolor=pal.panel, edgecolor=pal.grid,
+                  labelcolor=pal.text, fontsize=9, bbox_to_anchor=(0.5, -0.08))
     _titles(fig, pal, "Statistic split", stat.name, _footer(cmp))
     return fig
 
 
-def radar(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) -> Figure:
+def radar(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any,
+          display: dict | None = None) -> Figure:
     """Radar of team share per statistic (each axis normalized to the row total),
     one polygon per team — a compact whole-match fingerprint."""
     pal = palette(theme)
@@ -325,19 +382,21 @@ def radar(cmp: TeamComparison, labels: Sequence[str] | None, theme: Any) -> Figu
         ax.scatter([p[0] for p in pts], [p[1] for p in pts], color=col, s=20,
                    zorder=4, edgecolors=pal.panel)
     ax.set_xlim(-1.4, 1.4); ax.set_ylim(-1.35, 1.45); ax.set_aspect("equal"); ax.axis("off")
-    ax.legend(loc="upper right", facecolor=pal.panel, edgecolor=pal.grid,
-              labelcolor=pal.text, fontsize=8)
+    if _show(display, "legend"):
+        ax.legend(loc="upper right", facecolor=pal.panel, edgecolor=pal.grid,
+                  labelcolor=pal.text, fontsize=8)
     _titles(fig, pal, "Match fingerprint", "team share of each statistic", _footer(cmp))
     return fig
 
 
-# dispatch used by the UI / tests
+# dispatch used by the UI / tests. `opts["display"]` (optional) carries the shared
+# display configuration; absent = current output (backward compatible).
 RENDERERS = {
-    "comparison": lambda cmp, theme, opts: comparison_bars(cmp, opts.get("stats"), theme),
-    "diverging": lambda cmp, theme, opts: diverging_bars(cmp, opts.get("stats"), theme),
-    "share": lambda cmp, theme, opts: share_bars(cmp, opts.get("stats"), theme),
-    "donut": lambda cmp, theme, opts: donut(cmp, opts.get("stat"), theme),
-    "radar": lambda cmp, theme, opts: radar(cmp, opts.get("stats"), theme),
+    "comparison": lambda cmp, theme, opts: comparison_bars(cmp, opts.get("stats"), theme, opts.get("display")),
+    "diverging": lambda cmp, theme, opts: diverging_bars(cmp, opts.get("stats"), theme, opts.get("display")),
+    "share": lambda cmp, theme, opts: share_bars(cmp, opts.get("stats"), theme, opts.get("display")),
+    "donut": lambda cmp, theme, opts: donut(cmp, opts.get("stat"), theme, opts.get("display")),
+    "radar": lambda cmp, theme, opts: radar(cmp, opts.get("stats"), theme, opts.get("display")),
 }
 
 # stable metadata for the UI picker (id, label, needs)
@@ -363,4 +422,5 @@ def render(chart_type: str, cmp: TeamComparison, theme: Any,
 __all__ = [
     "TeamComparison", "comparison_bars", "diverging_bars", "share_bars", "donut",
     "radar", "render", "RENDERERS", "CHART_TYPES",
+    "CHART_CAPS", "CHART_DEFAULTS", "capabilities_for", "display_defaults_for",
 ]

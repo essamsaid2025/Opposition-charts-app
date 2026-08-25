@@ -154,6 +154,12 @@ def render_team_compare_workspace(shell, dataset, *, key: str = "team_cmp") -> N
     if chart_id == "diverging" and len(teams) != 2:
         C.render_alert("Head to head needs exactly two teams selected.", "info")
 
+    # capability-gated Display panel (shared model) — presentation only.
+    from fap.ui.components.display_panel import render_display_controls
+    options["display"] = render_display_controls(
+        tc.capabilities_for(chart_id), {}, key=f"{key}_disp_{chart_id}",
+        defaults=tc.display_defaults_for(chart_id))
+
     stash_key = f"{key}_stash"
     if st.button("Render chart", type="primary", key=f"{key}_render",
                  use_container_width=True):
@@ -166,6 +172,27 @@ def render_team_compare_workspace(shell, dataset, *, key: str = "team_cmp") -> N
             C.render_alert(f"Could not render the chart: {exc}", "warning")
 
     _show_stash(stash_key, key=key)
+    _team_compare_note(cmp, chart_id, options, dataset, key=f"{key}_method")
+
+
+def _team_compare_note(cmp, chart_id: str, options: dict, dataset, *, key: str) -> None:
+    """Data & Methodology note for a team-comparison chart: the statistics actually
+    plotted, the calculation (raw values vs share/percentage), the teams and scope —
+    from the live comparison. No coordinates (team stats are not spatial)."""
+    from fap.ui.components.display_panel import render_methodology_note
+    from fap.visuals.methodology import build_note
+    meta = {c["id"]: c for c in tc.CHART_TYPES}.get(chart_id, {"label": chart_id})
+    if chart_id == "donut":
+        fields = [options.get("stat")] if options.get("stat") else []
+    else:
+        fields = list(options.get("stats") or [])
+    share = chart_id in ("share", "donut", "radar")
+    metric = f"{meta['label']} · " + ("team share of the row total" if share else "raw statistic values")
+    note = build_note(
+        dataset="team_match_stats", fields=[str(f) for f in fields if f], filters=None,
+        metric=metric, pitch_based=False, scope="Team comparison · " + " vs ".join(cmp.teams),
+        population=f"{len(cmp.teams)} teams · {len(cmp.stats)} statistics")
+    render_methodology_note(note, key=key)
 
 
 __all__ = ["render_team_compare_workspace"]

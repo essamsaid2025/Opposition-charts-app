@@ -374,7 +374,7 @@ def render_visualization_workspace(shell, *, frame, player_name: str, key: str,
         st.caption("Select a visualization from the catalog to configure and render it.")
         return
     _selected_workspace(shell, reg, key, sel, labels, frame, player_name, scope, infos, on_assign,
-                        event_filter=event_filter)
+                        event_filter=event_filter, dataset_name=getattr(active, "name", ""))
 
 
 # ---------------------------------------------------------------- quick rows
@@ -511,7 +511,7 @@ def _cards(shell, key: str, section: str, items: list[dict], fav_ids: list[str])
 
 # ---------------------------------------------------------------- selected viz
 def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name, scope, infos,
-                        on_assign=None, event_filter=None) -> None:
+                        on_assign=None, event_filter=None, dataset_name="") -> None:
     info = next((i for i in infos if i["id"] == sel), {"id": sel, "name": labels.get(sel, sel)})
     try:
         viz = reg.create(sel)
@@ -569,17 +569,29 @@ def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name,
             help="Adds an interactive Plotly copy below the static chart. Downloads and "
                  "report assignment still use the static image.")
 
-    # settings: Options + Filters as tabs (single level - no nested expanders)
-    set_tabs = st.tabs(["Options", "Filters"])
+    # settings: Display + Options + Filters as tabs (single level - no nested expanders)
+    set_tabs = st.tabs(["Display", "Options", "Filters"])
+    saved_ctl = dict(st.session_state.get(f"{key}_applied_controls") or {})
     with set_tabs[0]:
+        # Strict capability-gated presentation toggles (Phase 2) + the note preview.
+        from fap.ui.components.display_panel import render_display_controls
+        caps = getattr(viz, "capabilities", None)
+        disp_defaults = getattr(viz, "display_defaults", {}) or {}
+        display_vals = render_display_controls(
+            caps, saved_ctl, key=f"{key}_disp_{sel}", defaults=disp_defaults) \
+            if caps is not None else {}
+    with set_tabs[1]:
+        # styling controls EXCLUDING the display toggles (owned by the Display tab)
         from fap.ui.components import render_controls
+        from fap.visuals.display import DISPLAY_KEYS
         controls = render_controls(getattr(viz, "all_controls", ()) or (),
-                                   saved=dict(st.session_state.get(f"{key}_applied_controls") or {}),
-                                   key_prefix=f"{key}_ctl_{sel}")
+                                   saved=saved_ctl, key_prefix=f"{key}_ctl_{sel}",
+                                   exclude=DISPLAY_KEYS)
+    controls.update(display_vals)
     controls["export_dpi"] = dpi
     if not controls.get("title"):
         controls["title"] = f"{player_name} - {labels.get(sel, sel)}"
-    with set_tabs[1]:
+    with set_tabs[2]:
         active_filters = st.session_state.get(f"{key}_active_filters")
         if active_filters:
             name = st.session_state.get(f"{key}_active_filter_name") or "preset"
@@ -605,8 +617,10 @@ def _selected_workspace(shell, reg, key, sel, labels, player_frame, player_name,
     if st.session_state.get(f"{key}_req") != signature:
         st.caption("Adjust options/filters, then click Render.")
         return
+    scope_label = f"Player · {player_name}" if scope == "player" else "Whole match"
     _render_and_export(shell, viz, render_frame, controls, filt, theme_id, player_name, key, themes,
-                       on_assign=on_assign, viz_id=sel, interactive=interactive_preview)
+                       on_assign=on_assign, viz_id=sel, interactive=interactive_preview,
+                       dataset_name=dataset_name, scope_label=scope_label)
 
 
 def _theme_manager(shell):
@@ -614,6 +628,46 @@ def _theme_manager(shell):
         return shell.platform.services.get("themes")
     except Exception:
         return None
+
+
+def note_fields_for(viz, frame) -> list[str]:
+    """The canonical fields a visualization genuinely consumes: its declared
+    ``requires`` present in the frame, plus capability-implied fields (xG when the
+    map encodes xG, outcome when it splits on outcome, end coords for vector maps).
+    Honest at the visualization level — never 'every column in the dataframe'."""
+    cols = set(getattr(frame, "columns", []))
+    fields = [c for c in getattr(viz, "requires", ()) if c in cols]
+    caps = getattr(viz, "capabilities", None)
+    if caps is not None:
+        for cond, col in ((caps.xg, "xg"), (caps.outcome, "outcome")):
+            if cond and col in cols and col not in fields:
+                fields.append(col)
+    return fields
+
+
+def _render_note(viz, ctx, controls, *, dataset_name: str, scope_label: str, key: str) -> None:
+    """Render the Data & Methodology note for a fap.visuals plugin from its live
+    render context (fields/filters/metric/coords/scope) — reused by every consumer."""
+    from fap.ui.components.display_panel import render_methodology_note
+    from fap.visuals.methodology import build_note
+    pitch_based = bool(getattr(viz, "pitch_based", True))
+    length = width = None
+    spec_label = ""
+    if pitch_based:
+        try:
+            from fap.visuals.pitch import get_spec
+            spec = get_spec(controls.get("pitch_spec"))
+            length = getattr(spec, "length", None)
+            width = getattr(spec, "width", None)
+        except Exception:
+            length = width = None
+        spec_label = str(controls.get("pitch_spec") or "").upper()
+    note = build_note(
+        dataset=dataset_name or "events", fields=note_fields_for(viz, ctx.df),
+        filters=ctx.meta.get("filters"), metric=getattr(viz.info, "name", ""),
+        pitch_based=pitch_based, length=length, width=width, spec_label=spec_label,
+        scope=scope_label)
+    render_methodology_note(note, key=key)
 
 
 def _prepare_frame(frame):
@@ -661,7 +715,8 @@ def _render_plotly_preview(viz_id, ctx, filt, key) -> None:
 
 
 def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name, key, themes,
-                       on_assign=None, viz_id: str = "", interactive: bool = False) -> None:
+                       on_assign=None, viz_id: str = "", interactive: bool = False,
+                       dataset_name: str = "", scope_label: str = "") -> None:
     from fap.core.types import RenderContext
     from fap.visuals.renderer import Renderer
     from fap.visuals.export import ExportEngine
@@ -675,6 +730,8 @@ def _render_and_export(shell, viz, frame, controls, filt, theme_id, player_name,
         st.error(f"Could not render this visualization: {exc}")
         return
     st.pyplot(fig, use_container_width=True)
+    _render_note(viz, ctx, controls, dataset_name=dataset_name, scope_label=scope_label,
+                 key=f"{key}_method")
     # Additive, default-off: an interactive copy shown alongside the static chart.
     # The matplotlib `fig` remains the ONLY source for the export/assign flow below.
     if interactive and viz_id in _INTERACTIVE_CHART_IDS:

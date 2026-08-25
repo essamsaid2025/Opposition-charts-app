@@ -19,9 +19,16 @@ from fap.core.types import Control
 from fap.visuals import analysis
 from fap.visuals.base import ChartVisualization, PitchVisualization, visual_registry
 from fap.visuals.context import LayerContext
+from fap.visuals.display import VisualizationCapabilities
 from fap.visuals.layers.base import Layer, layer_registry
 
 Selector = Callable[[pd.DataFrame, LayerContext], pd.DataFrame]
+
+
+def _labels_on(ctx: LayerContext) -> bool:
+    """Player-name labels: honour the Phase-2 ``show_player_names`` toggle, keeping
+    the legacy ``show_labels`` key working for any saved view that used it."""
+    return bool(ctx.controls.get("show_player_names") or ctx.controls.get("show_labels"))
 
 MAX_EVENTS_CONTROL = Control("max_events", "Max events drawn", "int_slider",
                              default=1500, min_value=100, max_value=5000,
@@ -64,11 +71,16 @@ def arrow_map(id: str, name: str, selector: Selector, *, category: str,
         control_groups = ("titles", "pitch", "arrows", "markers", "colors",
                           "legend", "text", "images", "export", "layout")
         controls = (MAX_EVENTS_CONTROL,) + tuple(extra_controls)
+        # split into successful/unsuccessful only when that split is meaningful;
+        # player-name labels + legend are always honourable.
+        capabilities = VisualizationCapabilities(
+            legend=True, player_names=True, outcome=split_outcome, annotations=True)
 
         def layers(self, ctx: LayerContext) -> Sequence[Layer]:
             d = _sample(selector(ctx.df, ctx).dropna(subset=["x", "y", "end_x", "end_y"]), ctx)
             out: list[Layer] = []
-            if split_outcome:
+            # show_outcome (default on) gates the colour split ONLY — never the data.
+            if split_outcome and ctx.controls.get("show_outcome", True):
                 ok, ko = analysis.successful(d), analysis.unsuccessful(d)
                 rest = d.drop(ok.index.union(ko.index))
                 if len(ok):
@@ -85,7 +97,7 @@ def arrow_map(id: str, name: str, selector: Selector, *, category: str,
                                                  color=_primary(ctx)))
             out.append(layer_registry.create("scatter", df=d, color=_primary(ctx),
                                              marker_size=int(ctx.style("marker_size")) // 2))
-            if ctx.controls.get("show_labels"):
+            if _labels_on(ctx):
                 out.append(layer_registry.create("labels", df=d, column="player"))
             if extra_layers:
                 out.extend(extra_layers(ctx, d))
@@ -100,11 +112,20 @@ def scatter_map(id: str, name: str, selector: Selector, *, category: str,
                 description: str = "", color_role: str = "accent",
                 by_type: bool = False, sized_by: str | None = None,
                 extra_controls: tuple = ()) -> type:
+    _is_xg = sized_by == "xg"
+    _is_value = bool(sized_by) and not _is_xg
+
     class _ScatterMap(PitchVisualization):
         info = PluginInfo(id=id, name=name, category=category, description=description)
         control_groups = ("titles", "pitch", "markers", "colors", "legend",
                           "text", "images", "export", "layout")
         controls = tuple(extra_controls)
+        # xG encoding (marker size) + numeric xG values are supported only when this
+        # map is actually sized by xG; a plain scatter exposes neither. `values` is
+        # the numeric-label toggle for a non-xG size metric.
+        capabilities = VisualizationCapabilities(
+            legend=True, player_names=True, xg=_is_xg, xg_values=_is_xg,
+            values=_is_value, annotations=True)
 
         def layers(self, ctx: LayerContext) -> Sequence[Layer]:
             d = selector(ctx.df, ctx).dropna(subset=["x", "y"])
@@ -118,14 +139,22 @@ def scatter_map(id: str, name: str, selector: Selector, *, category: str,
                         color=palette[i % len(palette)]))
             else:
                 sizes = None
-                if sized_by and sized_by in d.columns and len(d):
+                # show_xg (default on) gates the xG SIZE ENCODING only; a non-xG size
+                # metric always encodes (it's the map's point). Data is never touched.
+                encode = (ctx.controls.get("show_xg", True) if _is_xg else True)
+                if sized_by and sized_by in d.columns and len(d) and encode:
                     values = pd.to_numeric(d[sized_by], errors="coerce").fillna(0)
                     base = float(ctx.style("marker_size"))
                     sizes = (base * 0.4 + values / max(values.max(), 1e-6) * base * 2.2).values
                 out.append(layer_registry.create(
                     "scatter", df=d, label=name, sizes=sizes,
                     color=ctx.controls.get("primary_color") or ctx.theme.colors[color_role]))
-            if ctx.controls.get("show_labels"):
+            # numeric value labels (independent of the size encoding above)
+            if _is_xg and ctx.controls.get("show_xg_values", False):
+                out.append(layer_registry.create("value_labels", df=d, column="xg"))
+            elif _is_value and ctx.controls.get("show_values", False):
+                out.append(layer_registry.create("value_labels", df=d, column=sized_by))
+            if _labels_on(ctx):
                 out.append(layer_registry.create("labels", df=d, column="player"))
             return out
 
@@ -141,8 +170,14 @@ def density_map(id: str, name: str, selector: Selector, *, category: str,
         info = PluginInfo(id=id, name=name, category=category, description=description)
         control_groups = ("titles", "pitch", "heatmap", "legend", "text",
                           "images", "export", "layout")
+        # density is the only display encoding here; there are no legend entries, so
+        # legend is not offered (it would toggle nothing visible).
+        capabilities = VisualizationCapabilities(
+            legend=False, density=True, annotations=True)
 
         def layers(self, ctx: LayerContext) -> Sequence[Layer]:
+            if not ctx.controls.get("show_density", True):
+                return []                      # hide the density encoding (data intact)
             d = selector(ctx.df, ctx)
             if use_end:
                 d = d.dropna(subset=["end_x", "end_y"]).rename(
@@ -169,14 +204,20 @@ def zone_map(id: str, name: str, zones: tuple, *, category: str,
         info = PluginInfo(id=id, name=name, category=category, description=description)
         control_groups = ("titles", "pitch", "markers", "colors", "grid",
                           "legend", "text", "images", "export", "layout")
+        # the zone shading (show_zone_overlay), the % labels (show_percentages) and
+        # the inside-zone legend entry are all genuinely honoured.
+        capabilities = VisualizationCapabilities(
+            legend=True, zones=True, percentages=True, annotations=True)
 
         def layers(self, ctx: LayerContext) -> Sequence[Layer]:
             d = sel(ctx.df, ctx).dropna(subset=["x", "y"])
             total = max(len(d), 1)
+            show_pct = ctx.controls.get("show_percentages", True)
             spec = []
             for z in zones:
                 inside = int(analysis.in_zone(d["x"], d["y"], z).sum())
-                spec.append((*z, name, f"{inside / total * 100:.0f}%"))
+                pct = f"{inside / total * 100:.0f}%" if show_pct else None
+                spec.append((*z, "" if pct is None else name, pct))
             out: list[Layer] = []
             if ctx.controls.get("show_zone_overlay", True):
                 out.append(layer_registry.create(
@@ -199,6 +240,12 @@ def chart(id: str, name: str, artist: Callable[[LayerContext, Any], None], *,
     class _Chart(ChartVisualization):
         info = PluginInfo(id=id, name=name, category=category, description=description)
         controls = tuple(extra_controls)
+        # charts genuinely honour axes + grid visibility (via _frame_axes) and legend;
+        # they ship WITH axes and grid, so those defaults are raised to match current
+        # output (the global baseline is off for pitch maps).
+        capabilities = VisualizationCapabilities(
+            legend=True, grid=True, axes=True, annotations=False)
+        display_defaults = {"show_grid": True, "show_axes": True}
 
         def layers(self, ctx: LayerContext) -> Sequence[Layer]:
             def draw(lctx: LayerContext) -> None:
@@ -211,12 +258,22 @@ def chart(id: str, name: str, artist: Callable[[LayerContext, Any], None], *,
 
 
 def _frame_axes(ctx: LayerContext) -> None:
-    """Themed chart frame shared by every non-pitch chart."""
+    """Themed chart frame shared by every non-pitch chart. Honours show_axes /
+    show_grid (both default ON, so an unconfigured chart is unchanged)."""
     ax, c = ctx.ax, ctx.theme.colors
     ax.set_facecolor(c["panel"])
-    ax.tick_params(colors=c["text"], labelsize=ctx.style("label_size"))
-    for spine in ax.spines.values():
-        spine.set_color(c["grid"])
-    ax.grid(axis="y", color=c["grid"], alpha=0.35, linestyle="--")
+    show_axes = ctx.controls.get("show_axes", True)
+    show_grid = ctx.controls.get("show_grid", True)
+    if show_axes:
+        ax.tick_params(colors=c["text"], labelsize=ctx.style("label_size"))
+        for spine in ax.spines.values():
+            spine.set_color(c["grid"])
+    else:
+        ax.tick_params(colors=c["panel"], labelsize=ctx.style("label_size"))
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    ax.grid(axis="y", color=c["grid"], alpha=0.35 if show_grid else 0.0, linestyle="--")
     ax.xaxis.label.set_color(c["muted"])
     ax.yaxis.label.set_color(c["muted"])
