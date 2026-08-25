@@ -72,7 +72,11 @@ def reshape(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     xy = out["location"].map(_xy)
     out["x"] = [p[0] for p in xy]
-    out["y"] = [p[1] for p in xy]
+    # StatsBomb's y runs top(0)->bottom(80); on a left->right attacking frame that top
+    # touchline is the attacker's LEFT. The platform's canonical convention is y=0 = the
+    # RIGHT touchline (see fap.pipeline.coordinates), so flip y to that convention — else
+    # every spatial map reads left/right mirrored (left-back drawn on the right, etc.).
+    out["y"] = [None if p[1] is None else 100.0 - p[1] for p in xy]
     # end point: whichever of pass/carry/shot end-location the row carries (coalesced)
     endx = pd.Series([None] * len(out), index=out.index, dtype=object)
     endy = pd.Series([None] * len(out), index=out.index, dtype=object)
@@ -80,7 +84,8 @@ def reshape(df: pd.DataFrame) -> pd.DataFrame:
         if c in out.columns:
             e = out[c].map(_xy)
             ex = pd.Series([p[0] for p in e], index=out.index)
-            ey = pd.Series([p[1] for p in e], index=out.index)
+            ey = pd.Series([None if p[1] is None else 100.0 - p[1] for p in e],
+                           index=out.index)      # flip y to match the start-point flip
             endx = endx.where(endx.notna(), ex)
             endy = endy.where(endy.notna(), ey)
     out["x2"] = pd.to_numeric(endx, errors="coerce")

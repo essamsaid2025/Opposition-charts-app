@@ -49,6 +49,18 @@ def test_statsbomb_backfills_jersey_from_lineup():
     assert out.loc[out["player"] == "Beta", "jersey_number"].iloc[0] == 4
 
 
+def test_statsbomb_flips_y_to_canonical_right_touchline():
+    # StatsBomb y (0=top touchline = attacker's left) is flipped to the platform
+    # convention (y=0 = RIGHT touchline), so maps don't read left/right mirrored.
+    from fap.pipeline.statsbomb_csv import reshape
+    df = pd.DataFrame({"type.name": ["Pass"], "location": ["[0, 0]"],
+                       "player.name": ["A"], "team.name": ["T"],
+                       "pass.end_location": ["[120, 80]"]})
+    out = reshape(df)
+    assert out["x"].iloc[0] == 0.0 and out["y"].iloc[0] == 100.0    # SB top-left -> y=100
+    assert out["x2"].iloc[0] == 100.0 and out["y2"].iloc[0] == 0.0  # SB (120,80) -> y=0
+
+
 def test_statsbomb_receiver_is_name_not_id():
     # the receiver must be the recipient NAME (matches player), so network edges join
     from fap.pipeline.statsbomb_csv import reshape
