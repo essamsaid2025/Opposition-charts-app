@@ -35,6 +35,11 @@ def compute_internal_xg_series(df: pd.DataFrame, on_invalid: str = "nan") -> pd.
     if len(df) == 0:
         return result
 
+    # Guard against duplicate columns (a messy import) so df["event_type"] /
+    # df["x"] never return a DataFrame and raise. Keep the first of each.
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
+
     if "event_type" in df.columns:
         shot_mask = df["event_type"].astype(str).str.lower().eq("shot")
     else:
@@ -48,7 +53,25 @@ def compute_internal_xg_series(df: pd.DataFrame, on_invalid: str = "nan") -> pd.
         result.loc[shot_mask] = scored[xg_service.OUTPUT_COLUMN].to_numpy()
     except Exception:  # noqa: BLE001 - integration must never break the app
         log.warning("internal xG scoring unavailable; %s left as NaN", COLUMN, exc_info=True)
+        _record_scoring_error()  # visible on disk (pythonw has no console)
     return result
+
+
+def _record_scoring_error() -> None:
+    """Best-effort: append the current traceback to reports/xg_scoring_errors.log
+    so a swallowed scoring failure is diagnosable even under a windowless
+    (pythonw) runtime with no console. Never raises."""
+    try:
+        import datetime as _dt
+        import traceback as _tb
+        from fap.xg import coord_adapter  # any fap.xg module -> locate the package dir
+        log_path = Path(coord_adapter.__file__).resolve().parents[3] / "reports" / "xg_scoring_errors.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"\n=== {_dt.datetime.now().isoformat()} internal xG scoring failed ===\n")
+            fh.write(_tb.format_exc())
+    except Exception:  # noqa: BLE001 - diagnostics must never break the app
+        pass
 
 
 def sum_xg(shots: pd.DataFrame, column: str = COLUMN) -> float:
@@ -73,14 +96,28 @@ def sum_npxg(shots: pd.DataFrame, column: str = COLUMN) -> float:
     return float(s.where(sp.ne("penalty"), 0.0).sum())
 
 
+def _has_usable_xg(df: pd.DataFrame) -> bool:
+    """True only if an ``internal_xg`` column exists AND has at least one real
+    (non-NaN) value. A column that is entirely NaN counts as unusable (a failed
+    earlier enrichment) and must be recomputed - otherwise it silently sums to 0."""
+    if COLUMN not in df.columns:
+        return False
+    col = df[COLUMN]
+    if isinstance(col, pd.DataFrame):        # duplicate internal_xg column -> unusable
+        return False
+    return bool(pd.to_numeric(col, errors="coerce").notna().any())
+
+
 def attach_internal_xg(df: pd.DataFrame, *, force: bool = False,
                        on_invalid: str = "nan") -> pd.DataFrame:
-    """Return a COPY of ``df`` with an ``internal_xg`` column.
+    """Return a COPY of ``df`` with a usable ``internal_xg`` column.
 
-    Idempotent: if ``internal_xg`` already exists it is preserved unless
-    ``force=True``. The caller's dataframe is never mutated.
+    Idempotent reuse: if ``internal_xg`` already has real values it is preserved.
+    Recomputed when the column is ABSENT or entirely NaN (e.g. a match-stats file
+    with no precomputed xG, or a scoring failure that left NaN). Never mutates the
+    caller's dataframe.
     """
-    if COLUMN in df.columns and not force:
+    if _has_usable_xg(df) and not force:
         return df.copy()
     out = df.copy()
     out[COLUMN] = compute_internal_xg_series(out, on_invalid=on_invalid)

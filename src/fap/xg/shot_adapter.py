@@ -142,6 +142,13 @@ def to_xg_input(df: pd.DataFrame) -> pd.DataFrame:
     never fabricates coordinates. Returns a NEW dataframe with the model input
     features plus carried context columns (team/match/etc.) for grouping/eval.
     """
+    # Defensive: a messy import can leave DUPLICATE columns; then ``df["x"]``
+    # returns a DataFrame and downstream ``to_numeric`` raises, which upstream
+    # would swallow into an all-NaN (xG = 0) result. Keep the first occurrence of
+    # each column so scoring is robust.
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]
+
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if missing:
         raise ValueError(f"shot_adapter: missing required column(s) {missing}; "

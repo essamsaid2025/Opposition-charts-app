@@ -1,5 +1,35 @@
 # Bug Fix — Match Stats Comparison xG / NPxG showing zero
 
+> **Follow-up (still-0 report).** The first fix only recomputed when the
+> `internal_xg` column was **absent**. It did not cover the case where the column
+> is **present but entirely NaN** — which happens when the central enrichment's
+> scoring step failed and was silently swallowed. `attach_internal_xg` reused
+> that all-NaN column → xG still 0. Strengthened as follows:
+>
+> 1. **`attach_internal_xg` now recomputes when `internal_xg` is absent OR
+>    entirely NaN** (a column with at least one real value is still reused, so
+>    valid data is never clobbered). This is the direct fix for "still 0".
+> 2. **Scoring is now robust to duplicate columns.** A messy import can leave a
+>    duplicated `x`/`y` column; `df["x"]` then returns a DataFrame and
+>    `to_numeric` raised, which upstream swallowed into an all-NaN (xG 0) result.
+>    `shot_adapter`/`compute_internal_xg_series` now drop duplicate columns
+>    (keep first) so scoring never raises on them.
+> 3. **Swallowed scoring failures are now recorded** to
+>    `reports/xg_scoring_errors.log` (with traceback) so a failure is diagnosable
+>    even under the windowless `pythonw` runtime that has no console.
+>
+> Verified end-to-end via `_team_metrics`: absent → recomputed; present-but-all-
+> NaN → recomputed; penalty contribution still equals the frozen value through
+> the recompute path. New tests: `test_all_nan_internal_xg_is_recomputed`,
+> `test_scoring_robust_to_duplicate_columns`. fap.xg: **76 passed**; full app
+> suite: **1509 passed / 15 failed** (identical pre-existing set, no new
+> failures).
+>
+> The rest of this document describes the original fix.
+
+---
+
+
 ## Root cause
 The Match Stats Comparison builds per-team metrics in
 `fap.visuals.charts.match_flow._team_metrics`, which summed the canonical

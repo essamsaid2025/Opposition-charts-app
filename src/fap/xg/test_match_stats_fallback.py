@@ -52,7 +52,24 @@ def test_missing_internal_xg_is_calculated_from_shots():
     assert m["NPxG"] > 0.0        # NPxG likewise derived
 
 
-# 3: internal_xg present -> reused, not recalculated
+# 1b: internal_xg present but ENTIRELY NaN (failed enrichment) -> recomputed, not 0
+def test_all_nan_internal_xg_is_recomputed():
+    d = _shots()
+    d.loc[d["event_type"] == "shot", "internal_xg"] = np.nan
+    m = _team_metrics(d)
+    assert m["xG"] > 0.0 and m["NPxG"] > 0.0        # recovered, not stuck at 0
+
+
+# 1c: scoring is robust to duplicate columns (a messy import) -> no swallowed 0
+def test_scoring_robust_to_duplicate_columns():
+    shots = _frame([{"event_type": "shot", "team": "A", "x": 95.0, "y": 50.0, "set_piece": ""}])
+    shots = shots[shots["event_type"] == "shot"].copy()
+    shots.insert(len(shots.columns), "x", shots["x"].values, allow_duplicates=True)  # dup 'x'
+    out = xg_service.score_shots(shots)             # must NOT raise
+    assert out["internal_xg"].notna().all() and (out["internal_xg"] > 0).all()
+
+
+# 3: internal_xg present (with real values) -> reused, not recalculated
 def test_present_internal_xg_is_reused():
     d = _shots()
     shots_mask = d["event_type"] == "shot"
