@@ -84,8 +84,9 @@ class PassingLanes(PitchVisualization):
 
     def layers(self, ctx: LayerContext) -> Sequence[Layer]:
         d = A.passes(ctx.df).dropna(subset=["x", "y", "end_x", "end_y"])
-        lanes = ((0.0, 0.0, 100.0, 33.33, "Left"), (0.0, 33.33, 100.0, 66.67, "Central"),
-                 (0.0, 66.67, 100.0, 100.0, "Right"))
+        # canonical y: 0 = RIGHT touchline, 100 = LEFT touchline (attacking view)
+        lanes = ((0.0, 0.0, 100.0, 33.33, "Right"), (0.0, 33.33, 100.0, 66.67, "Central"),
+                 (0.0, 66.67, 100.0, 100.0, "Left"))
         total = max(len(d), 1)
         spec, agg_rows = [], []
         for x0, y0, x1, y1, label in lanes:
@@ -315,7 +316,8 @@ class ProgressivePassesByLane(PitchVisualization):
         if prog.empty:
             return []
         total = max(len(prog), 1)
-        lanes = (("Left", 0.0, 33.34), ("Central", 33.34, 66.67), ("Right", 66.67, 100.0))
+        # canonical y: 0 = RIGHT touchline, 100 = LEFT touchline (attacking view)
+        lanes = (("Right", 0.0, 33.34), ("Central", 33.34, 66.67), ("Left", 66.67, 100.0))
         zones = []
         for name, y0, y1 in lanes:
             n = int(prog["y"].between(y0, y1).sum())

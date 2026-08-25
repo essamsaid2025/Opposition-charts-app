@@ -118,6 +118,9 @@ class Renderer:
         if getattr(viz, "pitch_based", True):
             layers.append(PitchLayer())
         layers.extend(viz.layers(lctx) or ())
+        if getattr(viz, "pitch_based", True) and controls.get("attack_direction", True):
+            from fap.visuals.layers.pitch_layers import AttackArrowLayer
+            layers.append(AttackArrowLayer())
         annotations = ctx.meta.get("annotations")
         if annotations and controls.get("show_annotations", True):
             ann = annotations if isinstance(annotations, AnnotationSet) else \

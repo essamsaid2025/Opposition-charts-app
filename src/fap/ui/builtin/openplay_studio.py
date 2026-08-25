@@ -179,7 +179,8 @@ def _build_ctx(w: Studio) -> dict:
     ctl = _controls()
     viz = st.session_state.get(VIZ) or ""
     overrides: dict[str, Any] = {"aux": {**dict(ctl.get("aux") or {}), "df_all": w.df_all}}
-    for k in ("title", "show_title", "title_size", "label_size", "legend_size", "respect_filter"):
+    for k in ("title", "show_title", "title_size", "label_size", "legend_size",
+              "respect_filter", "attack_arrow"):
         if k in ctl:
             overrides[k] = ctl[k]
     overrides["title"] = ctl.get("title") or viz          # default title = viz name (as run_app)
@@ -595,6 +596,9 @@ def _panel_inspector(w: Studio) -> None:
             st.session_state[VIZ] = _sel("Visualization", names, st.session_state.get(VIZ), "ops_viz")
         themes = list(md.get("themes", {})) + list(md.get("club_custom_names", []))
         st.session_state[THEME] = _sel("Theme", themes, st.session_state.get(THEME), "ops_theme")
+        ctl["attack_arrow"] = st.checkbox(
+            "Attack direction arrow", value=ctl.get("attack_arrow", True),
+            key="ops_attackarrow", help="Points left→right (bottom→top when the pitch is vertical).")
         tname = st.session_state[THEME]
         tc = grp("theme_custom")
         if tname == "Club Theme":

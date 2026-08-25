@@ -27,6 +27,8 @@ CONTROL_GROUPS: dict[str, tuple[Control, ...]] = {
         Control("pitch_stripes", "Pitch stripes", "checkbox", default=True),
         Control("show_thirds", "Show thirds", "checkbox", default=False),
         Control("show_lanes", "Show lanes", "checkbox", default=False),
+        Control("attack_direction", "Attack direction arrow", "checkbox", default=True,
+                help="Left→right (bottom→top when vertical)."),
     ),
     "markers": (
         Control("marker_size", "Marker size", "int_slider", default=80, min_value=20, max_value=260),

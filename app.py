@@ -743,6 +743,29 @@ def draw_thirds(ax, vt: Dict, spec: PitchSpec, ctx: Dict):
         lane_line(2 * W / 3)
 
 
+def draw_attack_arrow(ax, spec: PitchSpec, vt: Dict, x0, x1, w0, w1) -> None:
+    """A subtle attack-direction arrow: horizontal pitches point LEFT->RIGHT, vertical
+    pitches point BOTTOM->TOP (the data is normalized so the analysed team attacks that
+    way). Positioned within the current crop so it stays visible on every view."""
+    color = vt.get("accent", vt["line"])
+    kw = dict(fontsize=8, color=color, alpha=0.9, fontfamily=vt["font"], zorder=6)
+    if spec.is_vertical():
+        # axis x in [w0, w1] (width), axis y in [x0, x1] (length, up = attacking)
+        cx = w0 + 0.5 * (w1 - w0)
+        ya, yb = x0 + 0.40 * (x1 - x0), x0 + 0.62 * (x1 - x0)
+        ax.annotate("", xy=(cx, yb), xytext=(cx, ya),
+                    arrowprops=dict(arrowstyle="-|>", color=color, lw=2.4, alpha=0.9), zorder=6)
+        ax.text(cx + 0.035 * (w1 - w0), (ya + yb) / 2, "ATTACK", rotation=90,
+                ha="left", va="center", **kw)
+    else:
+        # axis x in [x0, x1] (length, right = attacking), axis y in [w0, w1] (width)
+        cy = w0 + 0.06 * (w1 - w0)
+        xa, xb = x0 + 0.40 * (x1 - x0), x0 + 0.62 * (x1 - x0)
+        ax.annotate("", xy=(xb, cy), xytext=(xa, cy),
+                    arrowprops=dict(arrowstyle="-|>", color=color, lw=2.4, alpha=0.9), zorder=6)
+        ax.text((xa + xb) / 2, cy + 0.03 * (w1 - w0), "ATTACK", ha="center", va="bottom", **kw)
+
+
 def new_pitch_fig(vt: Dict, spec: PitchSpec, ctx: Dict, fig_scale: float = 1.0,
                   ax=None) -> Tuple[plt.Figure, plt.Axes]:
     """Create (or draw into) a themed pitch axes with crop, stripes and thirds."""
@@ -788,6 +811,11 @@ def new_pitch_fig(vt: Dict, spec: PitchSpec, ctx: Dict, fig_scale: float = 1.0,
                 ax.add_patch(Rectangle((px, py), wdt, hgt, color=vt["stripe"], alpha=0.55, zorder=1, lw=0))
 
     draw_thirds(ax, vt, spec, ctx)
+
+    # Default OFF so the engine's byte-identical baselines (which render via the raw
+    # default_ctx) are preserved; the UIs (run_app + Studio) enable it explicitly.
+    if ctx.get("attack_arrow", False):
+        draw_attack_arrow(ax, spec, vt, x0, x1, w0, w1)
 
     # crop
     if vertical:
@@ -1397,9 +1425,11 @@ def panel_zone_pct(ax, df, ctx, mode: str) -> str:
                  (33.33, 0, 33.34, W, "Mid 3rd", ((d["x"] >= 33.33) & (d["x"] < 66.67)).sum()),
                  (66.67, 0, 33.33, W, "Final 3rd", (d["x"] >= 66.67).sum())]
     else:
-        zones = [(0, 0, 100, W / 3, "Left", (d["y"] < 33.33).sum()),
+        # canonical y: 0 = RIGHT touchline, 100 = LEFT touchline (attacking view),
+        # so y<33.33 is the RIGHT channel and y>=66.67 is the LEFT channel.
+        zones = [(0, 0, 100, W / 3, "Right", (d["y"] < 33.33).sum()),
                  (0, W / 3, 100, W / 3, "Center", ((d["y"] >= 33.33) & (d["y"] < 66.67)).sum()),
-                 (0, 2 * W / 3, 100, W / 3, "Right", (d["y"] >= 66.67).sum())]
+                 (0, 2 * W / 3, 100, W / 3, "Left", (d["y"] >= 66.67).sum())]
     counts = [z[5] for z in zones]
     mx = max(counts) if counts else 1
     for (x0, y0, wdt, hgt, name, cnt) in zones:
@@ -2451,6 +2481,7 @@ def run_app():
         title=custom_title, show_title=show_title,
         title_size=title_size, label_size=label_size, legend_size=legend_size,
         respect_filter=bool(event_sel),
+        attack_arrow=True,          # show the attack-direction arrow in Opponent Analysis
         marker={"shape": m_shape, "size": m_size, "edge_width": m_edge_w, "edge_color": m_edge_c,
                 "alpha": m_alpha, "rotation": m_rot, "jitter": m_jitter, "zorder": m_zorder,
                 "shadow": m_shadow, "glow": m_glow, "glow_color": m_glow_c},

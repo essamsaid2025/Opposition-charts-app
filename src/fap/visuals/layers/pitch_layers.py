@@ -72,6 +72,31 @@ class ZoneLayer(Layer):
 
 
 @layer_registry.register
+class AttackArrowLayer(Layer):
+    """Subtle attack-direction arrow. The data is normalized so the analysed team
+    attacks toward +x, which renders LEFT->RIGHT on a horizontal pitch and
+    BOTTOM->TOP on a vertical one. Drawn from a fixed canonical span through
+    ``to_display``, so a single definition is correct in either orientation."""
+    info = PluginInfo(id="attack_arrow", name="Attack direction", category="base")
+    zorder = 24
+
+    def draw(self, ctx: LayerContext) -> None:
+        if not ctx.controls.get("attack_direction", True):
+            return
+        sx, sy = ctx.to_display([40.0], [4.0])
+        ex, ey = ctx.to_display([62.0], [4.0])
+        color = ctx.controls.get("primary_color") or ctx.theme.colors["accent"]
+        ctx.ax.annotate("", xy=(ex[0], ey[0]), xytext=(sx[0], sy[0]),
+                        arrowprops=dict(arrowstyle="-|>", color=color, lw=2.2, alpha=0.9),
+                        zorder=self.zorder)
+        lx, ly = ctx.to_display([51.0], [8.5])
+        ctx.ax.text(lx[0], ly[0], "ATTACK",
+                    rotation=90 if ctx.vertical else 0,
+                    ha="center", va="center", fontsize=7.5, color=color, alpha=0.9,
+                    zorder=self.zorder)
+
+
+@layer_registry.register
 class GoalLayer(Layer):
     """Emphasized goal mouth. Params: side ('left'|'right'), color."""
     info = PluginInfo(id="goal", name="Goal", category="base")
