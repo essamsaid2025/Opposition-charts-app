@@ -411,6 +411,24 @@ class TeamService:
                 break
         return df if not getattr(df, "empty", True) else None
 
+    def match_frame(self, match_row_id: str):
+        """The WHOLE match's event rows — loaded from the match's LINKED dataset by id
+        (active-independent) and narrowed to this match_id when the dataset holds many
+        matches. None when the match has no linked event data. Feeds the team-level
+        Style-of-Play engine (both teams needed for Possession / Field Tilt / PPDA)."""
+        mt = self.repo.get_match(match_row_id)
+        if mt is None or not mt.dataset_id or self._wm is None:
+            return None
+        try:
+            frame = self._wm.dataset_frame(mt.dataset_id)
+        except Exception:
+            frame = None
+        if frame is None or getattr(frame, "empty", True):
+            return None
+        if mt.match_id and "match_id" in frame.columns:
+            frame = frame[frame["match_id"].astype(str) == str(mt.match_id)]
+        return frame if not getattr(frame, "empty", True) else None
+
     def player_portfolio(self, team_id: str, member_id: str) -> list[TeamMedia]:
         """All charts saved for a roster player across the team's matches (their portfolio)."""
         return self.repo.list_media(team_id, member_id=member_id, kind="chart")
@@ -502,6 +520,35 @@ class TeamService:
         totals["pass_completion"] = round(100 * totals["completed_passes"] / totals["passes"], 1) \
             if totals["passes"] else None
         return totals
+
+    # ---------------------------------------------------------------- style of play (T-Style)
+    def team_style(self, team_id: str):
+        """Our team's Style-of-Play series across its linked matches (oldest first).
+
+        Reuses the pure engine in :mod:`fap.teams.style`: each match's whole-match event
+        frame is resolved to our team, then Possession / build-up / high-press / fast-recovery /
+        attacking metrics are computed. Only matches with linked event data contribute; a match
+        whose data does not resolve to our team is kept but marked unresolved (no fabrication).
+        Active-dataset independent — the series is the same regardless of the Data Hub's active set.
+        """
+        from fap.teams.style import MatchMetrics, StyleSeries, match_style_metrics
+        team = self.get_team(team_id)
+        our_name = getattr(team, "name", "") if team else ""
+        matches = sorted(self.repo.list_matches(team_id),
+                         key=lambda mt: (mt.match_date or "", mt.created_at or ""))
+        per_match: list[MatchMetrics] = []
+        for mt in matches:
+            if not mt.dataset_id:
+                continue
+            frame = self.match_frame(mt.id)
+            if frame is None:
+                continue
+            values, resolved = match_style_metrics(frame, our_name, mt.opponent)
+            per_match.append(MatchMetrics(
+                match_id=mt.id, label=(mt.match_date or (f"vs {mt.opponent}" if mt.opponent else mt.id[:6])),
+                date=(mt.match_date or ""), opponent=(mt.opponent or ""), venue=(mt.venue or ""),
+                scoreline=mt.scoreline, resolved=resolved, values=values))
+        return StyleSeries(per_match=per_match)
 
     def media_bytes(self, media: TeamMedia) -> bytes | None:
         try:

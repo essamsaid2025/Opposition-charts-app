@@ -155,19 +155,22 @@ class TeamsPage(Page):
                          f"{_html.escape(' · '.join(x for x in (tag, t.competition, t.season) if x))}"
                          f"</span>", unsafe_allow_html=True)
 
-        tabs = st.tabs(["Overview", "Data", "Roster", "Matches", "Media", "Info & crest"])
-        with tabs[0]:
-            self._overview_tab(shell, svc, t)
-        with tabs[1]:
-            self._data_tab(shell, svc, t)
-        with tabs[2]:
-            self._roster(shell, svc, t)
-        with tabs[3]:
-            self._matches(shell, svc, t)
-        with tabs[4]:
-            self._media_section(shell, svc, t, match_id="")
-        with tabs[5]:
-            self._info(shell, svc, t)
+        # Style of Play is only meaningful for OUR squads (club/academy), not scouted opponents.
+        sections = [
+            ("Overview", lambda: self._overview_tab(shell, svc, t)),
+            ("Data", lambda: self._data_tab(shell, svc, t)),
+        ]
+        if t.kind != "opponent":
+            sections.append(("Style of Play", lambda: self._style_tab(shell, svc, t)))
+        sections += [
+            ("Roster", lambda: self._roster(shell, svc, t)),
+            ("Matches", lambda: self._matches(shell, svc, t)),
+            ("Media", lambda: self._media_section(shell, svc, t, match_id="")),
+            ("Info & crest", lambda: self._info(shell, svc, t)),
+        ]
+        for tab, (_, render) in zip(st.tabs([s[0] for s in sections]), sections):
+            with tab:
+                render()
 
     # ---------------------------------------------------------------- overview (T5)
     def _overview_tab(self, shell, svc, t) -> None:
@@ -205,6 +208,128 @@ class TeamsPage(Page):
                 st.markdown(f"{C.badge_html(res, kind)} &nbsp; {_html.escape(line)}{sc}",
                             unsafe_allow_html=True)
         st.caption("Record is computed from matches that have a score recorded (nothing assumed).")
+
+    # ---------------------------------------------------------------- style of play
+    _PILLAR_STYLE = {                       # (icon name, accent) per style pillar
+        "Build-up & Possession": ("target", "primary"),
+        "High Press": ("shield", "warning"),
+        "Fast Recovery": ("pulse", "info"),
+        "Attacking Output": ("star", "success"),
+    }
+
+    @staticmethod
+    def _fmt_metric(md, v) -> str:
+        """Format a metric value for its unit; em-dash when unavailable."""
+        if v is None:
+            return "—"
+        v = float(v)
+        if md.unit == "percent":
+            return f"{v:.0f}%"
+        if md.unit == "xg":
+            return f"{v:.2f}"
+        if md.unit == "ratio":
+            return f"{v:.1f}"
+        return f"{v:.0f}" if v.is_integer() else f"{v:.1f}"
+
+    def _style_card(self, md, value, last5, allavg) -> str:
+        """A KPI card for one style metric: scope value, a trend pill vs the team's
+        rolling (all-match) average, and last-5 / average context in the hint."""
+        val_s = self._fmt_metric(md, value)
+        delta, direction = None, "flat"
+        if value is not None and allavg is not None:
+            diff = float(value) - float(allavg)
+            if abs(diff) > 1e-9:
+                improved = (diff > 0) if md.higher_is_better else (diff < 0)
+                direction = "up" if improved else "down"
+                sign = "+" if diff > 0 else "−"
+                delta = f"{sign}{self._fmt_metric(md, abs(diff))} vs avg"
+        parts = []
+        if last5 is not None:
+            parts.append(f"L5 {self._fmt_metric(md, last5)}")
+        if allavg is not None:
+            parts.append(f"avg {self._fmt_metric(md, allavg)}")
+        hint = " · ".join(parts) if parts else (md.help or "")
+        icon_name, accent = self._PILLAR_STYLE.get(md.pillar, ("pulse", "neutral"))
+        return C.metric_card_html(md.name, val_s, delta=delta, direction=direction,
+                                  icon_name=icon_name, accent=accent, hint=hint)
+
+    def _style_tab(self, shell, svc, t) -> None:
+        from fap.teams import style as S
+
+        st.markdown("**Style of Play** — how this squad expresses our identity: building play, "
+                    "possession, high pressing and fast ball recovery. Every metric is computed "
+                    "from each match's linked event data and tracked across matches.")
+        series = svc.team_style(t.id)
+        played = series.played
+        if not played:
+            C.render_empty_state(
+                "No match data yet",
+                "Link event data to this team's matches (Matches tab → “Link active dataset”) to see "
+                "style metrics. Each linked match becomes one data point.", icon_name="analysis")
+            unresolved = [m for m in series.per_match if not m.resolved]
+            if unresolved:
+                st.caption(f"{len(unresolved)} linked match(es) couldn't be matched to "
+                           f"“{_html.escape(t.name)}” inside the data — check the team name and the "
+                           "opponent set on those matches.")
+            return
+
+        scope = st.radio("Scope", ["Last match", "Last 5 matches", "All matches"],
+                         horizontal=True, key=f"style_scope_{t.id}")
+        if scope == "Last match":
+            subset = played[-1:]
+        elif scope == "Last 5 matches":
+            subset = series.window(5)
+        else:
+            subset = played
+        scope_avg = series.averages(subset)
+        last5_avg = series.averages(series.window(5))
+        all_avg = series.averages(played)
+
+        incl = " · ".join((m.label or m.opponent or m.match_id) for m in subset[-5:])
+        note = f"{len(subset)} match(es) in scope · {len(played)} with data"
+        if scope != "All matches" and incl:
+            note += f" — {_html.escape(incl)}"
+        st.caption(note)
+
+        for pillar in S.PILLARS:
+            C.render_dossier_label(pillar, icon=icon("pulse", 13))
+            cards = [self._style_card(md, scope_avg.get(md.key), last5_avg.get(md.key),
+                                      all_avg.get(md.key)) for md in S.metrics_in(pillar)]
+            C.render_metric_row(cards)
+
+        st.divider()
+        C.render_dossier_label("Trend across matches", icon=icon("clock", 13))
+        labels = {md.key: md.name for md in S.METRICS}
+        pick = st.selectbox("Metric", list(labels), format_func=lambda k: labels[k],
+                            key=f"style_metric_{t.id}")
+        md = S.metric(pick)
+        pts = series.trend(pick, window=3)
+        if any(p["raw"] is not None for p in pts):
+            import pandas as pd
+            chart_df = pd.DataFrame(
+                [{"match": p["label"], md.name: p["raw"], "Rolling avg": p["rolling"]}
+                 for p in pts]).set_index("match")
+            st.line_chart(chart_df)
+            note = md.help or ""
+            if not md.higher_is_better:
+                note = ("Lower is better for this metric. " + note).strip()
+            if note:
+                st.caption(note)
+        else:
+            st.caption("This metric isn't available in the linked data (missing columns) — "
+                       "nothing is shown rather than a fabricated value.")
+
+        with st.expander("Data & methodology"):
+            st.markdown(
+                "- **Source**: each match's linked event data (active-dataset independent). Only "
+                "matches whose data resolves to this team contribute.\n"
+                "- **Possession, Pass accuracy, Field Tilt, PPDA** reuse the platform's two-team "
+                "match-stats engine (the same one used for opponent comparison).\n"
+                "- **xG** is the frozen Internal xG Model v1.0, summed over our shots — shown only "
+                "when the data supports it.\n"
+                "- **Progressive passes, turnovers, counter-press regains, recoveries** reuse the "
+                "shared football selectors — no metric is redefined here.\n"
+                "- A metric that can't be computed shows “—”; nothing is fabricated.")
 
     # ---------------------------------------------------------------- data (linked datasets)
     def _data_tab(self, shell, svc, t) -> None:
