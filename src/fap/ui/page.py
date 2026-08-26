@@ -27,8 +27,11 @@ NAV_SECTIONS: tuple[str, ...] = ("Overview", "Analysis", "Squad", "Workspace", "
 
 # Kept registered for saved workspaces and internal compatibility, but deliberately
 # omitted from every user-facing navigation surface. Open Play Studio is the supported
-# Open Play entry point; projects remain available to the workspace internals.
-HIDDEN_PAGE_IDS: frozenset[str] = frozenset({"opponent_analysis", "projects"})
+# Open Play entry point; projects remain available to the workspace internals; the
+# standalone Players page is folded into Teams (Teams is the single home for player
+# work — club/academy squads + scouted opponents), so it is hidden from nav but kept
+# registered so any saved link / test that resolves it still works.
+HIDDEN_PAGE_IDS: frozenset[str] = frozenset({"opponent_analysis", "projects", "players"})
 
 
 class Page(Plugin):

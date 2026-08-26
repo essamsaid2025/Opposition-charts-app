@@ -415,6 +415,72 @@ class TeamService:
         """All charts saved for a roster player across the team's matches (their portfolio)."""
         return self.repo.list_media(team_id, member_id=member_id, kind="chart")
 
+    @staticmethod
+    def _match_player_metrics(frame) -> dict[str, Any]:
+        """Per-match totals for ONE player's event frame (the unit of both the
+        dashboard totals and the match-by-match progression). Pure, honest — reads
+        only columns that are present, never fabricates."""
+        m = {"events": int(len(frame)), "minutes": 0, "passes": 0, "completed_passes": 0,
+             "shots": 0, "goals": 0, "assists": 0}
+        columns = {str(c).lower(): c for c in frame.columns}
+        minute_col = columns.get("minute")
+        if minute_col is not None:
+            try:
+                values = frame[minute_col].dropna()
+                m["minutes"] = int(float(values.max())) if len(values) else 0
+            except (TypeError, ValueError):
+                pass
+        event_col = columns.get("event_type") or columns.get("type")
+        events = frame[event_col].astype(str).str.strip().str.lower() if event_col else None
+        if events is not None:
+            m["passes"] = int(events.isin(["pass", "passing"]).sum())
+            m["shots"] = int(events.isin(["shot", "shots"]).sum())
+            m["goals"] = int(events.isin(["goal", "goals"]).sum())
+        outcome_col = columns.get("outcome") or columns.get("result")
+        if events is not None and outcome_col is not None:
+            outcomes = frame[outcome_col].astype(str).str.strip().str.lower()
+            m["completed_passes"] = int((events.isin(["pass", "passing"]) &
+                                         outcomes.isin(["successful", "success", "complete", "completed"])).sum())
+            m["goals"] += int((events.isin(["shot", "shots"]) & outcomes.isin(["goal", "scored"])).sum())
+        goal_col = columns.get("is_goal")
+        if goal_col is not None:
+            try:
+                m["goals"] += int(frame[goal_col].fillna(False).astype(bool).sum())
+            except (TypeError, ValueError):
+                pass
+        assist_col = columns.get("assist") or columns.get("is_assist")
+        if assist_col is not None:
+            try:
+                m["assists"] = int(frame[assist_col].fillna(False).astype(bool).sum())
+            except (TypeError, ValueError):
+                pass
+        m["pass_completion"] = round(100 * m["completed_passes"] / m["passes"], 1) \
+            if m["passes"] else None
+        return m
+
+    def player_progression(self, team_id: str, member_id: str) -> list[dict[str, Any]]:
+        """The player's per-match metrics across this team's linked matches, oldest
+        first — the basis for a development trend (5 matches / 5 datasets → 5 points).
+        Only matches whose linked data contains an event for the player are included."""
+        member = self.repo.get_member(member_id)
+        if member is None:
+            return []
+        matches = sorted(self.repo.list_matches(team_id),
+                         key=lambda mt: (mt.match_date or "", mt.created_at or ""))
+        out: list[dict[str, Any]] = []
+        for mt in matches:
+            if not mt.dataset_id:
+                continue
+            frame = self.match_player_frame(mt.id, member.player_name)
+            if frame is None or getattr(frame, "empty", True):
+                continue
+            metrics = self._match_player_metrics(frame)
+            out.append({"match_id": mt.id, "opponent": mt.opponent,
+                        "match_date": mt.match_date, "competition": mt.competition,
+                        "dataset_id": mt.dataset_id, "scoreline": mt.scoreline,
+                        **metrics})
+        return out
+
     def player_dashboard(self, team_id: str, member_id: str) -> dict[str, Any]:
         """High-level, evidence-backed player totals across this team's linked matches.
 
@@ -422,58 +488,17 @@ class TeamService:
         roster player. This deliberately avoids presenting every team fixture as a player
         appearance when no lineup/minutes data exists.
         """
-        member = self.repo.get_member(member_id)
         matches = self.repo.list_matches(team_id)
         totals: dict[str, Any] = {"team_matches": len(matches), "linked_matches": 0,
                                   "appearances": 0, "minutes": 0, "events": 0,
                                   "passes": 0, "completed_passes": 0, "shots": 0,
                                   "goals": 0, "assists": 0}
-        if member is None:
-            return totals
-        for mt in matches:
-            if not mt.dataset_id:
-                continue
-            totals["linked_matches"] += 1
-            frame = self.match_player_frame(mt.id, member.player_name)
-            if frame is None or getattr(frame, "empty", True):
-                continue
-            totals["appearances"] += 1
-            totals["events"] += int(len(frame))
-            columns = {str(c).lower(): c for c in frame.columns}
-            minute_col = columns.get("minute")
-            if minute_col is not None:
-                try:
-                    values = frame[minute_col].dropna()
-                    totals["minutes"] += int(float(values.max())) if len(values) else 0
-                except (TypeError, ValueError):
-                    pass
-            event_col = columns.get("event_type") or columns.get("type")
-            events = frame[event_col].astype(str).str.strip().str.lower() if event_col else None
-            if events is not None:
-                totals["passes"] += int(events.isin(["pass", "passing"]).sum())
-                totals["shots"] += int(events.isin(["shot", "shots"]).sum())
-                totals["goals"] += int(events.isin(["goal", "goals"]).sum())
-            outcome_col = columns.get("outcome") or columns.get("result")
-            if events is not None and outcome_col is not None:
-                outcomes = frame[outcome_col].astype(str).str.strip().str.lower()
-                totals["completed_passes"] += int((events.isin(["pass", "passing"]) &
-                                                    outcomes.isin(["successful", "success", "complete", "completed"])).sum())
-                totals["goals"] += int((events.isin(["shot", "shots"]) & outcomes.isin(["goal", "scored"])) .sum())
-            for candidate in ("is_goal", "goal"):
-                goal_col = columns.get(candidate)
-                if goal_col is not None and candidate == "is_goal":
-                    try:
-                        totals["goals"] += int(frame[goal_col].fillna(False).astype(bool).sum())
-                    except (TypeError, ValueError):
-                        pass
-                    break
-            assist_col = columns.get("assist") or columns.get("is_assist")
-            if assist_col is not None:
-                try:
-                    values = frame[assist_col]
-                    totals["assists"] += int(values.fillna(False).astype(bool).sum())
-                except (TypeError, ValueError):
-                    pass
+        totals["linked_matches"] = sum(1 for mt in matches if mt.dataset_id)
+        per_match = self.player_progression(team_id, member_id)
+        totals["appearances"] = len(per_match)
+        for key in ("events", "minutes", "passes", "completed_passes", "shots",
+                    "goals", "assists"):
+            totals[key] = sum(int(m.get(key) or 0) for m in per_match)
         totals["pass_completion"] = round(100 * totals["completed_passes"] / totals["passes"], 1) \
             if totals["passes"] else None
         return totals

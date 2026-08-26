@@ -4,14 +4,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-TEAM_KINDS: tuple[str, ...] = ("club", "academy")
+TEAM_KINDS: tuple[str, ...] = ("club", "academy", "opponent")
+# the two top-level groups the Teams page shows
+OUR_TEAM_KINDS: tuple[str, ...] = ("club", "academy")
+OPPONENT_KIND = "opponent"
+
+
+def team_group(kind: str) -> str:
+    """'opponents' for scouted opponents, else 'our_teams' (club + academy)."""
+    return "opponents" if kind == OPPONENT_KIND else "our_teams"
 
 
 @dataclass(slots=True)
 class Team:
     id: str
     name: str
-    kind: str = "club"                # club | academy
+    kind: str = "club"                # club | academy | opponent
     age_group: str = ""              # U17 | U19 | … (academy squads)
     competition: str = ""
     season: str = ""

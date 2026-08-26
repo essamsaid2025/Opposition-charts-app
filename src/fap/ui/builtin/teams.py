@@ -19,7 +19,7 @@ from fap.theme import components as C
 from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
-_KINDS = {"club": "Club / First Team", "academy": "Academy"}
+_KINDS = {"club": "Club / First Team", "academy": "Academy", "opponent": "Opponent"}
 _SEL = "_teams_selected"
 _MEMBER = "_teams_member"          # a roster player opened for analysis/portfolio
 
@@ -75,22 +75,31 @@ class TeamsPage(Page):
 
         summaries = svc.team_summaries()
         if not summaries:
-            C.render_empty_state("No teams yet", "Create your first club or academy squad above.",
-                                 icon_name="teams")
+            C.render_empty_state("No teams yet", "Create an opponent to scout, or a club / academy "
+                                 "squad of your own, above.", icon_name="teams")
             return
-        st.caption(f"{len(summaries)} team(s)")
-        for s in summaries:
-            cols = st.columns([5, 1], vertical_alignment="center")
-            tag = _KINDS.get(s["kind"], s["kind"]) + (f" · {s['age_group']}" if s["age_group"] else "")
-            meta = " · ".join(x for x in (tag, s["competition"], s["season"],
-                                          f"{s['members']} player(s)",
-                                          f"{s.get('matches', 0)} match(es)") if x)
-            cols[0].markdown(f"**{_html.escape(s['name'])}**<br>"
-                             f"<span style='color:var(--fap-text-muted)'>{_html.escape(meta)}</span>",
-                             unsafe_allow_html=True)
-            if cols[1].button("Open", key=f"tm_open_{s['id']}", use_container_width=True):
-                st.session_state[_SEL] = s["id"]
-                st.rerun()
+        from fap.teams.models import team_group
+        # two groups: Opponents (scouting focus) and Our teams (Club + Academy)
+        groups = [("opponents", "Opponents", "Teams you scout — their data, videos, info and players."),
+                  ("our_teams", "Our teams", "Your club and academy squads.")]
+        for gkey, gtitle, gsub in groups:
+            in_group = [s for s in summaries if team_group(s["kind"]) == gkey]
+            if not in_group:
+                continue
+            st.markdown(f"#### {gtitle}  ·  {len(in_group)}")
+            st.caption(gsub)
+            for s in in_group:
+                cols = st.columns([5, 1], vertical_alignment="center")
+                tag = _KINDS.get(s["kind"], s["kind"]) + (f" · {s['age_group']}" if s["age_group"] else "")
+                meta = " · ".join(x for x in (tag, s["competition"], s["season"],
+                                              f"{s['members']} player(s)",
+                                              f"{s.get('matches', 0)} match(es)") if x)
+                cols[0].markdown(f"**{_html.escape(s['name'])}**<br>"
+                                 f"<span style='color:var(--fap-text-muted)'>{_html.escape(meta)}</span>",
+                                 unsafe_allow_html=True)
+                if cols[1].button("Open", key=f"tm_open_{s['id']}", use_container_width=True):
+                    st.session_state[_SEL] = s["id"]
+                    st.rerun()
 
         # T5: team-level comparison table (records across all teams)
         comp = [c for c in svc.teams_comparison() if c["played"] > 0]
@@ -625,54 +634,127 @@ class TeamsPage(Page):
     def _player_detail(self, shell, svc, t, member) -> None:
         """A roster player's own page — the SAME visualization system as scouting, plus a
         portfolio of every chart saved for them across the team's matches."""
-        if st.button("← Back to team", key=f"pd_back_{member.id}"):
+        top = st.columns([3, 1], vertical_alignment="center")
+        if top[0].button("← Back to team", key=f"pd_back_{member.id}"):
             st.session_state.pop(_MEMBER, None); st.rerun()
+        # keep the player's IDs visible (operational id + immutable anchor)
+        id_bits = " ".join(
+            C.badge_html(x, k) for x, k in (
+                (member.operational_id, "info"),
+                (f"ID {member.player_id}" if member.player_id else "", "neutral")) if x)
         subtitle = " · ".join(x for x in (member.operational_id, member.role,
                                           (f"#{member.shirt_number}" if member.shirt_number else "")) if x)
         C.render_section_title(member.player_name or member.operational_id or "Player",
                                eyebrow=f"{t.name} · roster", subtitle=subtitle or t.name,
                                icon_name="players")
-        tabs = st.tabs(["Overview", "Analysis", "Evidence", "Media", "Reports"])
+        if id_bits:
+            st.markdown(id_bits, unsafe_allow_html=True)
+        if self._can_edit:
+            self._edit_member(shell, svc, member)
+        tabs = st.tabs(["Overview", "Analysis", "Development", "Evidence", "Media", "Reports"])
         with tabs[0]:
             self._player_overview(shell, svc, member)
         with tabs[1]:
-            matches = [mt for mt in svc.list_matches(t.id) if mt.dataset_id]
-            if not matches:
-                C.render_alert("No matches with linked data yet. In the Matches tab, add a match and "
-                               "link its event dataset — then generate this player's charts here.", "info")
-            else:
-                labels = {mt.id: (f"vs {mt.opponent}" + (f" · {mt.match_date}" if mt.match_date else ""))
-                          for mt in matches}
-                mid = st.selectbox("Match", list(labels), format_func=lambda i: labels[i],
-                                   key=f"pd_m_{member.id}")
-                mt = next((x for x in matches if x.id == mid), None)
-                frame = svc.match_player_frame(mid, member.player_name)
-                try:
-                    if shell.wm is not None and mt is not None:
-                        shell.wm.set_active_dataset(shell.user, mt.dataset_id)   # viz query context
-                except Exception:
-                    pass
-                if frame is None:
-                    C.render_alert(f"No events for {member.player_name or 'this player'} in that "
-                                   "match's data (the name may differ in the dataset).", "info")
-                else:
-                    from fap.scouting.catalog import curate_for_scouting
-                    from fap.ui.components.viz_workspace import render_visualization_workspace
-
-                    def _save(png, title, viz_id, mid=mid, memid=member.id):
-                        svc.add_chart(shell.user, t.id, png, "image/png", title=title,
-                                      match_id=mid, member_id=memid, kind="chart")
-
-                    render_visualization_workspace(
-                        shell, frame=frame, player_name=(member.player_name or "player"),
-                        key=f"pdviz_{member.id}_{mid}",
-                        on_assign=(_save if self._can_edit else None), curate=curate_for_scouting)
+            self._player_analysis(shell, svc, t, member)
         with tabs[2]:
-            self._player_evidence(svc, t, member)
+            self._player_development(shell, svc, t, member)
         with tabs[3]:
-            self._player_media(shell, svc, t, member)
+            self._player_evidence(svc, t, member)
         with tabs[4]:
+            self._player_media(shell, svc, t, member)
+        with tabs[5]:
             self._player_reports(svc, member)
+
+    def _edit_member(self, shell, svc, member) -> None:
+        """Edit the roster player's core info (name/role/shirt/foot/nationality/DOB) —
+        persisted via the existing update_member; the player_id anchor never changes."""
+        with st.expander("Edit player info", expanded=False):
+            a = st.columns(3)
+            name = a[0].text_input("Name", value=member.player_name, key=f"pe_name_{member.id}")
+            role = a[1].text_input("Role / position", value=member.role, key=f"pe_role_{member.id}")
+            shirt = a[2].text_input("Shirt #", value=member.shirt_number, key=f"pe_shirt_{member.id}")
+            b = st.columns(3)
+            nationality = b[0].text_input("Nationality", value=member.nationality, key=f"pe_nat_{member.id}")
+            foot = b[1].selectbox("Preferred foot", ["", "right", "left", "both"],
+                                  index=(["", "right", "left", "both"].index(member.preferred_foot)
+                                         if member.preferred_foot in ("", "right", "left", "both") else 0),
+                                  key=f"pe_foot_{member.id}")
+            dob = b[2].text_input("Date of birth", value=member.date_of_birth,
+                                  key=f"pe_dob_{member.id}", placeholder="YYYY-MM-DD")
+            notes = st.text_area("Notes", value=member.notes, key=f"pe_notes_{member.id}", height=68)
+            if st.button("Save changes", type="primary", key=f"pe_save_{member.id}"):
+                try:
+                    svc.update_member(shell.user, member.id, player_name=name, role=role,
+                                      shirt_number=shirt, nationality=nationality,
+                                      preferred_foot=foot, date_of_birth=dob, notes=notes)
+                    st.toast("Player info updated")
+                    st.rerun()
+                except Exception as exc:
+                    st.warning(str(exc))
+
+    def _player_analysis(self, shell, svc, t, member) -> None:
+        """Per-match visualization — rendered from the match's LINKED dataset BY ID
+        (active-independent: it does not change, and does not need, the globally active
+        dataset), reusing the shared player viz workspace."""
+        matches = [mt for mt in svc.list_matches(t.id) if mt.dataset_id]
+        if not matches:
+            C.render_alert("No matches with linked data yet. In the Matches tab, add a match and "
+                           "link its event dataset — then generate this player's charts here.", "info")
+            return
+        labels = {mt.id: (f"vs {mt.opponent}" + (f" · {mt.match_date}" if mt.match_date else ""))
+                  for mt in matches}
+        mid = st.selectbox("Match", list(labels), format_func=lambda i: labels[i],
+                           key=f"pd_m_{member.id}")
+        mt = next((x for x in matches if x.id == mid), None)
+        frame = svc.match_player_frame(mid, member.player_name)
+        if frame is None:
+            C.render_alert(f"No events for {member.player_name or 'this player'} in that "
+                           "match's data (the name may differ in the dataset).", "info")
+            return
+        from fap.scouting.catalog import curate_for_scouting
+        from fap.ui.components.viz_workspace import render_visualization_workspace
+
+        def _save(png, title, viz_id, mid=mid, memid=member.id):
+            svc.add_chart(shell.user, t.id, png, "image/png", title=title,
+                          match_id=mid, member_id=memid, kind="chart")
+
+        ds_name = labels[mid]
+        render_visualization_workspace(
+            shell, frame=frame, player_name=(member.player_name or "player"),
+            key=f"pdviz_{member.id}_{mid}",
+            on_assign=(_save if self._can_edit else None), curate=curate_for_scouting,
+            dataset_context=(mt.dataset_id, ds_name))   # active-INDEPENDENT
+
+    def _player_development(self, shell, svc, t, member) -> None:
+        """The player's progression across the team's linked matches — if you attach 5
+        matches (5 datasets), you see the trend across all 5. Active-independent."""
+        prog = svc.player_progression(t.id, member.id)
+        if len(prog) < 1:
+            C.render_alert("No linked-match data for this player yet. Add matches with linked "
+                           "event datasets (Matches tab) to build a development trend.", "info")
+            return
+        st.caption(f"{len(prog)} match(es) with data for {member.player_name or 'this player'} · "
+                   "oldest → newest. Every value is counted from that match's own dataset.")
+        metric_labels = {"events": "Events", "passes": "Passes", "pass_completion": "Pass %",
+                         "shots": "Shots", "goals": "Goals", "assists": "Assists",
+                         "minutes": "Minutes"}
+        metric = st.selectbox("Metric", list(metric_labels),
+                              format_func=lambda k: metric_labels[k], key=f"pdev_metric_{member.id}")
+        import pandas as pd
+        rows = []
+        for i, m in enumerate(prog, 1):
+            lab = (f"vs {m['opponent']}" if m['opponent'] else f"Match {i}")
+            if m.get("match_date"):
+                lab += f"\n{m['match_date']}"
+            rows.append({"Match": lab, metric_labels[metric]: m.get(metric)})
+        chart_df = pd.DataFrame(rows).set_index("Match")
+        st.line_chart(chart_df, use_container_width=True)
+        # full per-match table + the linked dataset behind each point (transparency)
+        table = [{"Match": (f"vs {m['opponent']}" if m['opponent'] else f"Match {i}"),
+                  "Date": m.get("match_date", ""), "Score": m.get("scoreline", ""),
+                  **{metric_labels[k]: m.get(k) for k in metric_labels}}
+                 for i, m in enumerate(prog, 1)]
+        st.dataframe(table, use_container_width=True, hide_index=True)
 
     def _player_evidence(self, svc, t, member) -> None:
         """Match-level evidence, mirroring Scouting's evidence separation."""
