@@ -93,5 +93,19 @@ def test_player_progression_across_matches(tmp_path):
         assert prog[0]["opponent"] == "Rival A"
         dash = teams.player_dashboard(team.id, member.id)
         assert dash["appearances"] == 2 and dash["passes"] == 9      # dashboard = sum
+
+        # the premium hero + dashboard must render without error (bare mode)
+        import streamlit as st
+        from types import SimpleNamespace
+        from fap.ui.page import get_page, load_builtin_pages
+        st.session_state.clear()
+        load_builtin_pages()
+        page = get_page("teams")
+        page._can_edit = True
+        shell = SimpleNamespace(user=user, wm=platform.workspace_manager,
+                                workspace_id=ws.id,
+                                platform=SimpleNamespace(teams=teams), goto=lambda *a: None)
+        page._member_hero(shell, teams, team, member)       # premium hero + snapshot
+        page._player_overview(shell, teams, member)         # dossier dashboard
     finally:
         platform.db.close()

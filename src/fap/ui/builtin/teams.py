@@ -20,6 +20,25 @@ from fap.theme import icon
 from fap.ui.page import Page, page_registry
 
 _KINDS = {"club": "Club / First Team", "academy": "Academy", "opponent": "Opponent"}
+
+
+def _data_uri(data: bytes | None, mime: str = "image/png") -> str:
+    import base64
+    return f"data:{mime};base64," + base64.b64encode(data).decode() if data else ""
+
+
+def _age_from_dob(dob: str) -> int | None:
+    import datetime as _dt
+    try:
+        d = _dt.date.fromisoformat(str(dob)[:10])
+        t = _dt.date.today()
+        return t.year - d.year - ((t.month, t.day) < (d.month, d.day))
+    except Exception:
+        return None
+
+
+def _initials(name: str) -> str:
+    return "".join(p[:1] for p in str(name or "Player").split()[:2]).upper() or "?"
 _SEL = "_teams_selected"
 _MEMBER = "_teams_member"          # a roster player opened for analysis/portfolio
 
@@ -634,24 +653,14 @@ class TeamsPage(Page):
     def _player_detail(self, shell, svc, t, member) -> None:
         """A roster player's own page — the SAME visualization system as scouting, plus a
         portfolio of every chart saved for them across the team's matches."""
-        top = st.columns([3, 1], vertical_alignment="center")
-        if top[0].button("← Back to team", key=f"pd_back_{member.id}"):
+        if st.button("← Back to team", key=f"pd_back_{member.id}"):
             st.session_state.pop(_MEMBER, None); st.rerun()
-        # keep the player's IDs visible (operational id + immutable anchor)
-        id_bits = " ".join(
-            C.badge_html(x, k) for x, k in (
-                (member.operational_id, "info"),
-                (f"ID {member.player_id}" if member.player_id else "", "neutral")) if x)
-        subtitle = " · ".join(x for x in (member.operational_id, member.role,
-                                          (f"#{member.shirt_number}" if member.shirt_number else "")) if x)
-        C.render_section_title(member.player_name or member.operational_id or "Player",
-                               eyebrow=f"{t.name} · roster", subtitle=subtitle or t.name,
-                               icon_name="players")
-        if id_bits:
-            st.markdown(id_bits, unsafe_allow_html=True)
+        # premium player hero (same look as the Players page) + snapshot counts
+        self._member_hero(shell, svc, t, member)
         if self._can_edit:
-            self._edit_member(shell, svc, member)
-        tabs = st.tabs(["Overview", "Analysis", "Development", "Evidence", "Media", "Reports"])
+            with st.expander("Edit player info", expanded=False):
+                self._edit_player_profile(shell, svc, member)
+        tabs = st.tabs(["Dashboard", "Analysis", "Development", "Evidence", "Media", "Reports"])
         with tabs[0]:
             self._player_overview(shell, svc, member)
         with tabs[1]:
@@ -665,32 +674,44 @@ class TeamsPage(Page):
         with tabs[5]:
             self._player_reports(svc, member)
 
-    def _edit_member(self, shell, svc, member) -> None:
-        """Edit the roster player's core info (name/role/shirt/foot/nationality/DOB) —
-        persisted via the existing update_member; the player_id anchor never changes."""
-        with st.expander("Edit player info", expanded=False):
-            a = st.columns(3)
-            name = a[0].text_input("Name", value=member.player_name, key=f"pe_name_{member.id}")
-            role = a[1].text_input("Role / position", value=member.role, key=f"pe_role_{member.id}")
-            shirt = a[2].text_input("Shirt #", value=member.shirt_number, key=f"pe_shirt_{member.id}")
-            b = st.columns(3)
-            nationality = b[0].text_input("Nationality", value=member.nationality, key=f"pe_nat_{member.id}")
-            foot = b[1].selectbox("Preferred foot", ["", "right", "left", "both"],
-                                  index=(["", "right", "left", "both"].index(member.preferred_foot)
-                                         if member.preferred_foot in ("", "right", "left", "both") else 0),
-                                  key=f"pe_foot_{member.id}")
-            dob = b[2].text_input("Date of birth", value=member.date_of_birth,
-                                  key=f"pe_dob_{member.id}", placeholder="YYYY-MM-DD")
-            notes = st.text_area("Notes", value=member.notes, key=f"pe_notes_{member.id}", height=68)
-            if st.button("Save changes", type="primary", key=f"pe_save_{member.id}"):
-                try:
-                    svc.update_member(shell.user, member.id, player_name=name, role=role,
-                                      shirt_number=shirt, nationality=nationality,
-                                      preferred_foot=foot, date_of_birth=dob, notes=notes)
-                    st.toast("Player info updated")
-                    st.rerun()
-                except Exception as exc:
-                    st.warning(str(exc))
+    def _member_hero(self, shell, svc, t, member) -> None:
+        """The premium dossier hero (photo/crest/identity/badges/context) + snapshot
+        counts — the same look the standalone Players page used, fed from the roster
+        member and this team's linked-match data."""
+        stats = svc.player_dashboard(t.id, member.id)
+        media = svc.list_media(t.id, member_id=member.id)
+        counts = {"video": 0, "chart": 0, "note": 0}
+        for md in media:
+            counts[md.kind] = counts.get(md.kind, 0) + 1
+        badges = ""
+        if member.shirt_number:
+            badges += C.badge_html(f"#{member.shirt_number}", "neutral") + " "
+        avail = (member.availability or "available").title()
+        badges += C.badge_html(avail, "success" if avail.lower() == "available" else "warning")
+        src = {"scouting": "Scouted", "first_team": "First team"}.get(member.source, "")
+        if src:
+            badges += " " + C.badge_html(src, "info")
+        oid = member.operational_id or (f"ID {member.player_id[:8]}" if member.player_id else "")
+        age = _age_from_dob(member.date_of_birth)
+        ctx = [("Age", str(age) if age is not None else "—"),
+               ("Nationality", _html.escape(member.nationality or "—")),
+               ("Foot", (member.preferred_foot or "").title() or "—"),
+               ("Shirt", f"#{member.shirt_number}" if member.shirt_number else "—")]
+        C.render_player_hero(
+            _html.escape(member.player_name or "Player"),
+            position_line=_html.escape("  ·  ".join(x for x in (member.role or "Player", t.name) if x)),
+            photo_uri=_data_uri(svc.member_photo_bytes(member.id)),
+            initials=_initials(member.player_name),
+            logo_uri=_data_uri(svc.crest_bytes(t.id)),
+            badges_html=badges, operational_id=_html.escape(oid), context=ctx)
+        C.render_snapshot_counts([
+            (icon("match", 16), str(stats["appearances"]), "Matches"),
+            (icon("datasets", 16), str(stats["linked_matches"]), "Data sources"),
+            (icon("video", 16), str(counts.get("video", 0)), "Videos"),
+            (icon("grid", 16), str(counts.get("chart", 0)), "Saved visuals"),
+            (icon("text", 16), str(counts.get("note", 0)), "Notes"),
+            (icon("layers", 16), str(stats["events"]), "Player events"),
+        ])
 
     def _player_analysis(self, shell, svc, t, member) -> None:
         """Per-match visualization — rendered from the match's LINKED dataset BY ID
@@ -825,28 +846,30 @@ class TeamsPage(Page):
                            mime="text/csv", key=f"preport_{member.id}")
 
     def _player_overview(self, shell, svc, member) -> None:
-        """High-level player dashboard, with profile editing kept out of the dashboard."""
+        """The premium player dashboard (same look as the Players page): a profile
+        dossier grid + performance analytics from the team's linked matches."""
         stats = svc.player_dashboard(member.team_id, member.id)
         charts = len(svc.player_portfolio(member.team_id, member.id))
-        hero = st.columns([1, 6], vertical_alignment="center")
-        photo = svc.member_photo_bytes(member.id)
-        if photo:
-            hero[0].image(photo, width=88)
-        else:
-            initials = "".join(part[:1] for part in (member.player_name or "Player").split()[:2]).upper()
-            hero[0].markdown(
-                f"<div style='width:88px;height:88px;border-radius:50%;display:flex;align-items:center;"
-                f"justify-content:center;background:var(--fap-surface-2,#eef1f5);font-size:28px;font-weight:700;'>"
-                f"{_html.escape(initials or '?')}</div>", unsafe_allow_html=True)
-        hero[1].markdown(f"### {_html.escape(member.player_name or member.operational_id or 'Player')}  \n"
-                         f"{_html.escape(member.role or 'Club player')} · "
-                         f"{_html.escape((member.availability or 'available').title())}")
-        C.render_snapshot_counts([
-            (icon("match", 16), str(stats["appearances"]), "Appearances"),
-            (icon("datasets", 16), str(stats["linked_matches"]), "Linked matches"),
-            (icon("grid", 16), str(charts), "Visualizations"),
-            (icon("layers", 16), str(stats["events"]), "Player events"),
-        ])
+
+        # ---- profile dossier grid (icon + label + value tiles) ----
+        C.render_dossier_label("Player profile", icon=icon("user", 13))
+        age = _age_from_dob(member.date_of_birth)
+        _v = lambda x: "—" if x in (None, "", []) else str(x)      # noqa: E731
+        tiles = [
+            C.dossier_stat_html("Age", _v(age), icon=icon("calendar", 15)),
+            C.dossier_stat_html("Foot", (member.preferred_foot or "").title() or "—", icon=icon("ball", 15)),
+            C.dossier_stat_html("Height", f"{member.height_cm}" if member.height_cm else "—",
+                                sub="cm" if member.height_cm else "", icon=icon("line-straight", 15)),
+            C.dossier_stat_html("Weight", f"{member.weight_kg}" if member.weight_kg else "—",
+                                sub="kg" if member.weight_kg else "", icon=icon("layers", 15)),
+            C.dossier_stat_html("Position", _html.escape(member.role or "—"), icon=icon("map-pin", 15)),
+            C.dossier_stat_html("Nationality", _html.escape(member.nationality or "—"), icon=icon("flag", 15)),
+            C.dossier_stat_html("Shirt", f"#{member.shirt_number}" if member.shirt_number else "—",
+                                icon=icon("jersey", 15)),
+            C.dossier_stat_html("Contract", _v(member.contract_end), icon=icon("book", 15)),
+        ]
+        C.render_dossier_grid(tiles)
+
         C.render_dossier_label("Performance dashboard", icon=icon("analysis", 13))
         top = st.columns(4)
         top[0].metric("Appearances", stats["appearances"])
@@ -886,9 +909,6 @@ class TeamsPage(Page):
             if member.notes:
                 st.markdown("**Notes**")
                 st.write(member.notes)
-            return
-        with st.expander("Edit profile", expanded=False):
-            self._edit_player_profile(shell, svc, member)
 
     def _edit_player_profile(self, shell, svc, member) -> None:
         """The editing form is intentionally separate from the performance dashboard."""
