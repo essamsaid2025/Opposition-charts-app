@@ -173,16 +173,37 @@ class TeamsPage(Page):
     def _overview_tab(self, shell, svc, t) -> None:
         rec = svc.team_record(t.id)
         n_players = len(svc.list_members(t.id))
-        c = st.columns(4)
-        c[0].metric("Players", n_players)
-        c[1].metric("Matches", rec["played"])
-        c[2].metric("W-D-L", f"{rec['wins']}-{rec['draws']}-{rec['losses']}")
-        c[3].metric("Points", rec["points"])
-        c2 = st.columns(4)
-        c2[0].metric("Goals for", rec["gf"])
-        c2[1].metric("Goals against", rec["ga"])
-        c2[2].metric("Goal diff", rec["gd"])
-        c2[3].metric("Win rate", f"{rec['win_pct']}%")
+        is_opp = (t.kind == "opponent")
+        C.render_metric_row([
+            C.metric_card_html("Players", str(n_players), icon_name="players", accent="primary",
+                               hint=("scouted" if is_opp else "in squad")),
+            C.metric_card_html("Matches", str(rec["played"]), icon_name="match", accent="info",
+                               hint="with a score"),
+            C.metric_card_html("Record", f"{rec['wins']}-{rec['draws']}-{rec['losses']}",
+                               icon_name="pulse", accent="success", hint="W-D-L"),
+            C.metric_card_html("Points", str(rec["points"]), icon_name="star", accent="primary",
+                               hint=f"{rec['win_pct']}% win rate"),
+        ])
+        C.render_metric_row([
+            C.metric_card_html("Goals for", str(rec["gf"]), icon_name="target", accent="success"),
+            C.metric_card_html("Goals against", str(rec["ga"]), icon_name="shield", accent="danger"),
+            C.metric_card_html("Goal diff", f"{rec['gd']:+d}" if rec["played"] else "0",
+                               icon_name="analysis", accent="info"),
+            C.metric_card_html("Linked data", str(len(svc.list_linked_datasets(t.id))),
+                               icon_name="datasets", accent="neutral", hint="data files"),
+        ])
+        # recent matches (form) — last five, most recent first
+        matches = sorted(svc.list_matches(t.id), key=lambda mt: (mt.match_date or ""), reverse=True)[:5]
+        if matches:
+            C.render_dossier_label("Recent matches", icon=icon("clock", 13))
+            for mt in matches:
+                res = mt.result or "·"
+                kind = {"W": "success", "L": "danger", "D": "warning"}.get(res, "neutral")
+                line = " · ".join(x for x in (mt.match_date, f"vs {mt.opponent}" if mt.opponent else "",
+                                              mt.competition) if x)
+                sc = f"  {C.badge_html(mt.scoreline, kind)}" if mt.scoreline else ""
+                st.markdown(f"{C.badge_html(res, kind)} &nbsp; {_html.escape(line)}{sc}",
+                            unsafe_allow_html=True)
         st.caption("Record is computed from matches that have a score recorded (nothing assumed).")
 
     # ---------------------------------------------------------------- data (linked datasets)
@@ -586,22 +607,70 @@ class TeamsPage(Page):
         if not members:
             C.render_empty_state("Empty roster", "Add players above.", icon_name="players")
             return
-        st.caption(f"{len(members)} player(s) — open a player for charts, analysis & portfolio")
-        for m in members:
-            cols = st.columns([5, 1, 1], vertical_alignment="center")
-            n_charts = len(svc.player_portfolio(t.id, m.id))
-            bits = " · ".join(x for x in (m.operational_id, m.role,
-                                          (f"#{m.shirt_number}" if m.shirt_number else ""),
-                                          (f"{n_charts} chart(s)" if n_charts else "")) if x)
-            cols[0].markdown(f"**{_html.escape(m.player_name or m.operational_id)}**"
-                             + (f" &nbsp; <span style='color:var(--fap-text-muted)'>{_html.escape(bits)}"
-                                f"</span>" if bits else ""), unsafe_allow_html=True)
-            if cols[1].button("Open", key=f"tm_mopen_{m.id}", use_container_width=True):
-                st.session_state[_MEMBER] = m.id
-                st.rerun()
-            if self._can_edit and cols[2].button("Remove", key=f"tm_mrm_{m.id}",
-                                                  use_container_width=True):
-                svc.remove_member(shell.user, m.id); st.rerun()
+        self._roster_view(shell, svc, t, members)
+
+    def _roster_view(self, shell, svc, t, members) -> None:
+        """The premium squad view — Grid (photo cards) / List (rows) / Table — the same
+        look the standalone Players page used, fed from the team roster."""
+        head = st.columns([2, 2], vertical_alignment="center")
+        head[0].caption(f"{len(members)} player(s) — open one for the dashboard, analysis & portfolio")
+        view = head[1].radio("View", ["Grid", "List", "Table"], horizontal=True,
+                             key=f"tm_rv_{t.id}", label_visibility="collapsed")
+        if view == "Table":
+            rows = [{"#": m.shirt_number or "", "Name": m.player_name,
+                     "ID": m.operational_id, "Position": m.role,
+                     "Age": _age_from_dob(m.date_of_birth) or "",
+                     "Nationality": m.nationality, "Foot": (m.preferred_foot or "").title(),
+                     "Availability": (m.availability or "available").title()} for m in members]
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+            return
+        if view == "List":
+            for m in members:
+                self._member_row(shell, svc, t, m)
+            return
+        cols = st.columns(3)
+        for i, m in enumerate(members):
+            with cols[i % 3]:
+                self._member_card(shell, svc, t, m)
+
+    def _member_card(self, shell, svc, t, m) -> None:
+        age = _age_from_dob(m.date_of_birth)
+        st.markdown(C.player_card_html(
+            _html.escape(m.player_name or m.operational_id or "Player"),
+            number=(m.shirt_number or None), position=m.role or "",
+            nationality=m.nationality or "", age=(f"{age} yrs" if age is not None else ""),
+            contract=(f"exp {m.contract_end}" if m.contract_end else ""),
+            minutes=(m.operational_id or ""),
+            photo_uri=_data_uri(svc.member_photo_bytes(m.id)),
+            status=(m.availability or "available")), unsafe_allow_html=True)
+        b = st.columns([3, 1]) if self._can_edit else [st]
+        if b[0].button("Open profile", key=f"tm_gopen_{m.id}", use_container_width=True):
+            st.session_state[_MEMBER] = m.id; st.rerun()
+        if self._can_edit and b[1].button("✕", key=f"tm_grm_{m.id}", use_container_width=True,
+                                          help="Remove from roster"):
+            svc.remove_member(shell.user, m.id); st.rerun()
+
+    def _member_row(self, shell, svc, t, m) -> None:
+        with st.container(border=True):
+            c = st.columns([1, 3, 2, 1], vertical_alignment="center")
+            photo = svc.member_photo_bytes(m.id)
+            if photo:
+                c[0].image(photo, use_container_width=True)
+            else:
+                c[0].markdown(C.avatar_html(initials=_initials(m.player_name), size=46),
+                              unsafe_allow_html=True)
+            num = f"#{m.shirt_number} " if m.shirt_number else ""
+            c[1].markdown(f"**{num}{_html.escape(m.player_name or m.operational_id or 'Player')}**  \n"
+                          f"{_html.escape(m.role or '—')} · {_age_from_dob(m.date_of_birth) or '—'} · "
+                          f"{_html.escape(m.nationality or '—')}")
+            avail = (m.availability or "available").title()
+            c[2].markdown(
+                C.badge_html(avail, "success" if avail.lower() == "available" else "warning")
+                + (f"<br><span style='color:var(--fap-text-muted);font-size:.8rem'>"
+                   f"{_html.escape(m.operational_id or '')}</span>" if m.operational_id else ""),
+                unsafe_allow_html=True)
+            if c[3].button("Open", key=f"tm_lopen_{m.id}", use_container_width=True):
+                st.session_state[_MEMBER] = m.id; st.rerun()
 
     def _import_roster(self, shell, svc, t) -> None:
         """Bulk-import a roster from a CSV/Excel file — at minimum a column of

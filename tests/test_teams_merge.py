@@ -107,5 +107,10 @@ def test_player_progression_across_matches(tmp_path):
                                 platform=SimpleNamespace(teams=teams), goto=lambda *a: None)
         page._member_hero(shell, teams, team, member)       # premium hero + snapshot
         page._player_overview(shell, teams, member)         # dossier dashboard
+        page._overview_tab(shell, teams, team)              # professional team dashboard
+        members = teams.list_members(team.id)
+        for v in ("Grid", "List", "Table"):                 # roster views must all render
+            st.session_state[f"tm_rv_{team.id}"] = v
+            page._roster_view(shell, teams, team, members)
     finally:
         platform.db.close()
