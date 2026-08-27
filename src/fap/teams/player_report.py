@@ -21,6 +21,7 @@ from typing import Any
 
 TEMPLATE_ID = "player_evaluation"
 META_KIND = "team_player_evaluation"
+COVER_SENTINEL = "__player_cover__"      # id the image_resolver maps to the bespoke cover PNG
 
 # recommendation vocabulary (analyst picks one; shown verbatim)
 RECOMMENDATIONS: dict[str, str] = {
@@ -45,6 +46,7 @@ def build_player_report_document(data: dict[str, Any], *,
                                  chart_images: dict[str, bytes] | None = None,
                                  saved_charts: list[dict[str, Any]] | None = None,
                                  brand: dict[str, str] | None = None,
+                                 cover_png: bytes | None = None,
                                  options: dict[str, Any] | None = None):
     """Build the Player Evaluation ``ReportDocument`` from a data dict + pre-rendered PNGs."""
     from fap.reports.models import Chart, Cover, Insight, KPI, ReportDocument, Section, Table
@@ -218,7 +220,7 @@ def build_player_report_document(data: dict[str, Any], *,
         cover=cover, sections=sections,
         meta={"kind": META_KIND, "member_id": data.get("member_id", ""),
               "team_id": data.get("team_id", ""), "rating": rating})
-    _apply_branding(doc, brand)
+    _setup_publishing(doc, data, brand, cover_png)
     return doc
 
 
@@ -231,22 +233,44 @@ def _as_list(v: Any) -> list[str]:
     return [p for p in parts if p]
 
 
-def _apply_branding(document, brand: dict[str, str] | None) -> None:
-    """Apply report-only brand colours to the cover via the EXISTING PublishSettings
-    (professional preset). Never touches global app/chart themes."""
+def _setup_publishing(document, data: dict[str, Any], brand: dict[str, str] | None,
+                      cover_png: bytes | None) -> None:
+    """Configure the report's publish settings (professional preset) and, when a bespoke
+    cover PNG is supplied, make it the WHOLE cover: the engine's own cover text/overlay/
+    logos are suppressed (our PNG carries everything) and the inside footer shows the
+    department instead of any user email. Never touches global app/chart themes."""
     try:
-        from fap.reports.publishing import preset
+        from fap.reports.publishing import Zone, preset
         settings = preset("professional")
         b = {k: str(v).strip() for k, v in (brand or {}).items() if str(v or "").strip()}
-        primary = b.get("primary")
-        accent = b.get("accent") or primary
-        if primary:
-            settings.cover.overlay_color = primary
-        if accent:
-            settings.cover.accent_color = accent
+        accent = b.get("accent") or b.get("primary") or "#c8a24a"
+        settings.cover.accent_color = accent
+        department = data.get("department") or "Data Analysis Department"
+
+        if cover_png is not None:
+            # our composed PNG is the entire cover → blank the engine's cover text + overlay
+            cov = document.cover
+            for fld in ("title", "subtitle", "player", "club", "competition", "season",
+                        "opponent", "analyst", "version", "generated_at", "organization_logo"):
+                if hasattr(cov, fld):
+                    setattr(cov, fld, "")
+            cov.cover_image = COVER_SENTINEL
+            cov.club_logo = ""
+            settings.cover.background_color = "#ffffff"
+            settings.cover.overlay_opacity = 0.0
+            settings.cover.divider = False
+            settings.cover.show_logos = False
+            # inside pages: department in the footer (never the user's email), clean header
+            date = data.get("generated_at") or ""
+            team_name = data.get("team_name") or ""
+            settings.inside_master.footer = Zone(left=department, center="",
+                                                 right="Page {n} of {total}")
+            settings.inside_master.header = Zone(left=team_name, center="Player Evaluation",
+                                                 right=date)
         settings.write_to(document)
     except Exception:
         pass
 
 
-__all__ = ["build_player_report_document", "TEMPLATE_ID", "META_KIND", "RECOMMENDATIONS"]
+__all__ = ["build_player_report_document", "TEMPLATE_ID", "META_KIND", "COVER_SENTINEL",
+           "RECOMMENDATIONS"]

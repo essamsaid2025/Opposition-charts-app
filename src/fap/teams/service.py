@@ -772,6 +772,7 @@ class TeamService:
             "contract": member.contract_end,
             "profile_image_id": member.profile_image_id,
             "crest_image_id": getattr(team, "crest_image_id", "") if team else "",
+            "department": "Data Analysis Department",
             "analyst": analyst, "generated_at": generated_at,
             "dashboard": dash, "saved_chart_count": len(saved_charts),
             "development_columns": dev_cols, "development_table": dev_rows,
@@ -784,17 +785,43 @@ class TeamService:
     def render_player_report(self, user: Any, team_id: str, member_id: str, *,
                              fmt: str = "pdf", options: dict[str, Any] | None = None):
         """Render the Player Evaluation report to a downloadable file (bytes). Reuses the
-        existing report exporter registry with an image resolver so the cover player photo
-        and team crest resolve; charts/QR/heat-map are already embedded as image bytes."""
+        existing report exporter registry. A bespoke, light-corporate cover PNG (crest +
+        framed photo + name + shirt/position + department) is composed here and rendered as
+        the whole cover; charts/QR/heat-map are already embedded as image bytes."""
         from datetime import date
         from fap.reports.renderer import ReportRenderer
-        from fap.teams.player_report import build_player_report_document
-        analyst = getattr(user, "email", "") or ""
-        bundle = self.player_report_data(team_id, member_id, analyst=analyst,
-                                         generated_at=date.today().isoformat(), options=options)
-        doc = build_player_report_document(bundle["data"], chart_images=bundle["chart_images"],
-                                           saved_charts=bundle["saved_charts"])
-        resolver = (lambda iid: self._images.load(iid)) if self._images is not None else None
+        from fap.teams.player_report import COVER_SENTINEL, build_player_report_document
+        options = options or {}
+        generated_at = date.today().isoformat()
+        bundle = self.player_report_data(team_id, member_id, generated_at=generated_at,
+                                         options=options)
+        data = bundle["data"]
+
+        # ---- bespoke cover PNG (light corporate, gold/black) ----
+        cover_png = None
+        try:
+            from fap.teams import player_report_visuals as V
+            photo = self.member_photo_bytes(member_id)
+            crest = self.crest_bytes(team_id)
+            cover_png = V.render_cover_png(
+                player_name=data.get("name") or "Player", position=data.get("position") or "",
+                club=data.get("team_name") or "", shirt=str(data.get("shirt") or ""),
+                department=data.get("department") or "Data Analysis Department",
+                title_line=("Player Evaluation Report" if options.get("cover_title", True) else ""),
+                date=generated_at, photo_bytes=photo, crest_bytes=crest,
+                accent=str(options.get("accent") or "#c8a24a"),
+                show_shirt=bool(options.get("cover_shirt", True)))
+        except Exception:
+            cover_png = None
+
+        doc = build_player_report_document(data, chart_images=bundle["chart_images"],
+                                           saved_charts=bundle["saved_charts"],
+                                           cover_png=cover_png)
+
+        def resolver(iid):
+            if iid == COVER_SENTINEL:
+                return cover_png
+            return self._images.load(iid) if self._images is not None else None
         rendered = ReportRenderer().render(doc, fmt, None, image_resolver=resolver)
         self._record(user, "teams.player.report", team_id=team_id, member_id=member_id, fmt=fmt)
         return rendered

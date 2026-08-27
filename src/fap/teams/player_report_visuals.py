@@ -151,4 +151,147 @@ def render_touch_heatmap_png(frame, *, accent: str = _ACCENT) -> bytes | None:
         return None
 
 
-__all__ = ["render_development_png", "render_touch_heatmap_png"]
+def _rounded_portrait(photo_bytes: bytes, *, ratio: float = 0.78, radius_frac: float = 0.07,
+                      border: str = "#c8a24a", border_px: int = 10):
+    """Center-crop a portrait to ``ratio`` (w/h), round its corners and stroke a border.
+    Returns a PIL RGBA image, or None."""
+    try:
+        import io as _io
+        from PIL import Image, ImageDraw
+    except Exception:
+        return None
+    try:
+        im = Image.open(_io.BytesIO(photo_bytes)).convert("RGBA")
+    except Exception:
+        return None
+    w, h = im.size
+    if w == 0 or h == 0:
+        return None
+    # crop to target aspect (keep the upper body: bias the crop toward the top)
+    target = ratio
+    if w / h > target:                       # too wide → crop sides
+        nw = int(h * target); im = im.crop(((w - nw) // 2, 0, (w - nw) // 2 + nw, h))
+    else:                                    # too tall → crop bottom, keep the head
+        nh = int(w / target); im = im.crop((0, 0, w, min(nh, h)))
+    w, h = im.size
+    rad = int(min(w, h) * radius_frac)
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius=rad, fill=255)
+    im.putalpha(mask)
+    if border_px > 0:
+        draw = ImageDraw.Draw(im)
+        for k in range(border_px):
+            draw.rounded_rectangle((k, k, w - 1 - k, h - 1 - k), radius=max(rad - k, 1),
+                                   outline=border)
+    return im
+
+
+def render_cover_png(*, player_name: str, position: str = "", club: str = "", shirt: str = "",
+                     department: str = "Data Analysis Department", title_line: str = "",
+                     date: str = "", photo_bytes: bytes | None = None,
+                     crest_bytes: bytes | None = None, accent: str = "#c8a24a",
+                     show_title: bool = True, show_shirt: bool = True) -> bytes | None:
+    """A bespoke, light-corporate A4 cover: crest, a small report title, the player's
+    photo in a rounded gold-framed panel, the name, shirt/position/club, a gold rule, the
+    department and the date. Fully self-designed so it does not depend on the report
+    engine's cover text layout. Returns None if matplotlib is unavailable."""
+    try:
+        import io as _io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception:
+        return None
+
+    INK, MUTED, BG, PANEL = "#14181f", "#6b7280", "#ffffff", "#eef0f4"
+    figw, figh = 8.27, 11.69                              # A4 portrait inches
+    fig = plt.figure(figsize=(figw, figh), dpi=150)
+    fig.patch.set_facecolor(BG)
+
+    # frame rules (thin gold top + bottom)
+    for yy in (0.955, 0.045):
+        fig.add_artist(plt.Line2D([0.12, 0.88], [yy, yy], color=accent, lw=1.4,
+                                  transform=fig.transFigure))
+
+    def _sp(s: str) -> str:                               # faux letter-spacing for small caps
+        return "  ".join(list(s.upper()))
+
+    # crest (top center)
+    if crest_bytes:
+        try:
+            im = plt.imread(_io.BytesIO(crest_bytes))
+            ih, iw = im.shape[0], im.shape[1]
+            cw = 0.135
+            ch = cw * (figw / figh) * (ih / max(iw, 1))
+            ax = fig.add_axes([0.5 - cw / 2, 0.885 - ch / 2, cw, ch]); ax.imshow(im); ax.axis("off")
+        except Exception:
+            pass
+
+    if show_title and title_line:
+        fig.text(0.5, 0.808, _sp(title_line), ha="center", va="center", fontsize=11.5,
+                 color=accent, fontweight="bold")
+
+    # player photo (rounded, gold border), centered on white — clean, no hard shadow
+    placed = False
+    if photo_bytes:
+        pil = _rounded_portrait(photo_bytes, border=accent, border_px=12)
+        if pil is not None:
+            import numpy as np
+            arr = np.asarray(pil)
+            ih, iw = arr.shape[0], arr.shape[1]
+            pw = 0.38
+            ph = pw * (figw / figh) * (ih / max(iw, 1))
+            cy = 0.60
+            ax = fig.add_axes([0.5 - pw / 2, cy - ph / 2, pw, ph]); ax.imshow(arr); ax.axis("off")
+            placed = True
+    if not placed:
+        # initials medallion fallback
+        initials = "".join(w[0] for w in player_name.split()[:2]).upper() or "P"
+        ax = fig.add_axes([0.37, 0.50, 0.26, 0.185]); ax.axis("off")
+        ax.add_patch(plt.Circle((0.5, 0.5), 0.5, facecolor=PANEL, edgecolor=accent, lw=3))
+        ax.text(0.5, 0.5, initials, ha="center", va="center", fontsize=42, color=INK,
+                fontweight="bold")
+
+    # name (auto-size to fit)
+    name = player_name or "Player"
+    nsize = 31 if len(name) <= 16 else 26 if len(name) <= 24 else 20
+    fig.text(0.5, 0.355, name, ha="center", va="center", fontsize=nsize, color=INK,
+             fontweight="bold")
+
+    # shirt · position · club
+    bits = []
+    if show_shirt and shirt:
+        bits.append(f"#{shirt}")
+    if position:
+        bits.append(position)
+    if club:
+        bits.append(club)
+    if bits:
+        fig.text(0.5, 0.313, "   ·   ".join(bits), ha="center", va="center", fontsize=13.5,
+                 color=MUTED)
+
+    # gold rule
+    fig.add_artist(plt.Line2D([0.435, 0.565], [0.279, 0.279], color=accent, lw=2.4,
+                              transform=fig.transFigure))
+
+    # department + date
+    fig.text(0.5, 0.232, _sp(department), ha="center", va="center", fontsize=12,
+             color=INK, fontweight="bold")
+    if date:
+        fig.text(0.5, 0.11, date, ha="center", va="center", fontsize=10.5, color=MUTED)
+
+    try:
+        buf = _io.BytesIO()
+        fig.savefig(buf, format="png", facecolor=BG, bbox_inches=None)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        return None
+
+
+__all__ = ["render_development_png", "render_touch_heatmap_png", "render_cover_png"]
