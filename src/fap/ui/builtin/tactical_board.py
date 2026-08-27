@@ -637,14 +637,22 @@ class TacticalBoardPage(Page):
         # the armed draw tool (persistent). "select" (default) => None => unchanged behaviour.
         tool = st.session_state.get(TB_DRAW_TOOL, "select")
         draw_tool = {"type": tool, "props": default_props(tool)} if (can_edit and tool != "select") else None
-        # include the last processed action stamp AND the draw tool so the nonce ALWAYS changes
-        # after a commit or when the tool is armed/disarmed — guarantees the canvas gets a fresh
-        # render (post-commit SVG settles a dropped piece; the new draw_tool reaches the JS).
+        # The canvas re-renders ONLY when this nonce changes (the JS gates on it), so it must
+        # change iff something the user should SEE or interact-with changed — and must stay STABLE
+        # across the unrelated / duplicate reruns Streamlit fires (re-rendering on those is exactly
+        # what snapped a just-dragged piece back to its old position and churned/froze the board).
+        # The rendered SVG string already encodes every visual (positions, colours, selection
+        # highlight, grid, pitch), so hashing it is an EXACT content signature — immune to the
+        # same-second timestamp collisions the old updated_at-based nonce could hit. Interaction-
+        # only params that are NOT drawn into the SVG (armed draw tool, snap, multi-selection,
+        # editability) are appended so arming a tool or changing selection still pushes a fresh
+        # render.
+        import hashlib as _hashlib
         multi = [i for i in (st.session_state.get(TB_MULTI) or []) if board.frame(_frame_index()).object(i)]
         if not multi and sel:
             multi = [sel]
-        nonce = (f"{board.updated_at}|{_frame_index()}|{sel}|{','.join(multi)}|{int(grid)}"
-                 f"|{int(bool(snap))}|{st.session_state.get(TB_CANVAS_TS)}|{tool}")
+        _svg_sig = _hashlib.md5(svg.encode("utf-8")).hexdigest()[:16]
+        nonce = f"{_svg_sig}|{tool}|{int(bool(snap))}|{','.join(multi)}|{int(bool(can_edit))}"
         # palette=[] retires the old always-on drag-chip strip (option a): adding pieces now
         # lives solely in the left rail (click a category item, or arm a draw tool). The JS
         # renderPalette() hides the strip when the palette is empty — no JS change needed.

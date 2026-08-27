@@ -851,10 +851,24 @@
     }
   });
 
+  var lastNonce = null;                     // the board version we last drew (see below)
   window.addEventListener("message", function (event) {
     var data = event.data || {};
     if (data.type !== "streamlit:render") return;
     var args = data.args || {};
+    // Streamlit re-delivers "streamlit:render" on EVERY app rerun — including reruns triggered
+    // by unrelated widgets, and (crucially) right after this component posts a value, BEFORE
+    // Python has applied it. The old code rebuilt the whole SVG (stage.innerHTML = svg) on every
+    // one of those, which reset the piece the user had just dragged back to its previous position
+    // (the "snap-back") and churned/froze the board. The nonce is an exact content signature of
+    // the board + interaction state, so an unchanged nonce means nothing visible changed → ignore
+    // the (stale/duplicate) render entirely and keep the user's current, in-progress positions.
+    var nonce = (args.nonce != null) ? String(args.nonce) : null;
+    if (nonce !== null && nonce === lastNonce && stage.querySelector("svg")) {
+      setHeight();
+      return;
+    }
+    lastNonce = nonce;
     cfg.svg = args.svg || "";
     cfg.editable = args.editable !== false;
     cfg.snap = Number(args.snap || 0);

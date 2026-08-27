@@ -11,7 +11,7 @@
       "name": "tb",
       "runtimeExecutable": "C:\\Users\\Essam\\OneDrive\\Desktop\\python\\pythonw.exe",
       "runtimeArgs": ["-m", "streamlit", "run",
-                      "C:\\Users\\Essam\\AppData\\Local\\Temp\\claude\\C--Users-Essam-OneDrive-Desktop-Github-Opposition-charts-app\\3eb67987-44b9-4a0f-a617-493c974546b0\\scratchpad\\tb_harness.py",
+                      "C:\\Users\\Essam\\AppData\\Local\\Temp\\claude\\C--Users-Essam-OneDrive-Desktop-Github-Opposition-charts-app\\6de28fba-9a72-4eab-9b4c-42bf757c2232\\scratchpad\\tb_harness.py",
                       "--server.headless", "true", "--server.port", "8521",
                       "--browser.gatherUsageStats", "false"],
       "port": 8521
