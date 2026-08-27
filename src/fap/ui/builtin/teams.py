@@ -441,8 +441,8 @@ class TeamsPage(Page):
     # ---------------------------------------------------------------- media (T4)
     def _media_section(self, shell, svc, t, match_id: str = "") -> None:
         if self._can_edit:
-            add = st.radio("Add", ["Note", "Video link", "Chart / image"], horizontal=True,
-                           key=f"tmm_type_{t.id}_{match_id}")
+            add = st.radio("Add", ["Note", "Video link", "Video upload", "Chart / image"],
+                           horizontal=True, key=f"tmm_type_{t.id}_{match_id}")
             if add == "Note":
                 ti = st.text_input("Title", key=f"tmm_nt_{t.id}_{match_id}")
                 bo = st.text_area("Note", key=f"tmm_nb_{t.id}_{match_id}", height=80)
@@ -459,6 +459,17 @@ class TeamsPage(Page):
                 if st.button("Add video", key=f"tmm_vadd_{t.id}_{match_id}"):
                     try:
                         svc.add_video(shell.user, t.id, url=vu, title=vt, match_id=match_id)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.warning(str(exc))
+            elif add == "Video upload":
+                vt = st.text_input("Title", key=f"tmm_vft_{t.id}_{match_id}")
+                vf = st.file_uploader("Video file", type=["mp4", "mov", "webm", "m4v", "avi", "mkv"],
+                                      key=f"tmm_vfu_{t.id}_{match_id}")
+                if vf is not None and st.button("Upload video", key=f"tmm_vfadd_{t.id}_{match_id}"):
+                    try:
+                        svc.add_video(shell.user, t.id, title=(vt or vf.name), data=vf.getvalue(),
+                                      filename=vf.name, mime=vf.type or "video/mp4", match_id=match_id)
                         st.rerun()
                     except ValueError as exc:
                         st.warning(str(exc))
@@ -486,7 +497,12 @@ class TeamsPage(Page):
                 else:
                     cols[0].caption(md.title or md.kind)
             else:  # video / clip
-                if md.url:
+                if md.file_id:                              # uploaded file → inline player
+                    data = svc.media_bytes(md)
+                    cols[0].caption(md.title or "Uploaded video")
+                    if data:
+                        cols[0].video(data)
+                elif md.url:
                     cols[0].markdown(f"[{_html.escape(md.title or 'Video')}]({md.url})")
                 else:
                     cols[0].caption(md.title or "Uploaded video")
@@ -950,9 +966,14 @@ class TeamsPage(Page):
             return
         st.caption(f"{len(prog)} match(es) with data for {member.player_name or 'this player'} · "
                    "oldest → newest. Every value is counted from that match's own dataset.")
-        metric_labels = {"events": "Events", "passes": "Passes", "pass_completion": "Pass %",
-                         "shots": "Shots", "goals": "Goals", "assists": "Assists",
-                         "minutes": "Minutes"}
+        metric_labels = {"events": "Events", "minutes": "Minutes", "passes": "Passes",
+                         "pass_completion": "Pass %", "progressive_passes": "Progressive passes",
+                         "key_passes": "Key passes", "crosses": "Crosses",
+                         "final_third_passes": "Final-third passes", "take_ons": "Take-ons",
+                         "shots": "Shots", "shots_on_target": "Shots on target",
+                         "xg": "xG", "goals": "Goals", "assists": "Assists",
+                         "tackles": "Tackles", "interceptions": "Interceptions",
+                         "recoveries": "Recoveries"}
         metric = st.selectbox("Metric", list(metric_labels),
                               format_func=lambda k: metric_labels[k], key=f"pdev_metric_{member.id}")
         import pandas as pd
@@ -988,24 +1009,48 @@ class TeamsPage(Page):
                         unsafe_allow_html=True)
 
     def _player_media(self, shell, svc, t, member) -> None:
-        """Player-scoped notes, video links and saved visual evidence."""
+        """Player-scoped notes, videos (link or uploaded file) and saved visual evidence,
+        grouped under the match each item belongs to."""
         if self._can_edit:
             with st.expander("Add player media", expanded=False):
-                kind = st.radio("Add", ["Note", "Video link"], horizontal=True, key=f"pmed_kind_{member.id}")
+                kind = st.radio("Add", ["Note", "Video link", "Video upload"], horizontal=True,
+                                key=f"pmed_kind_{member.id}")
                 title = st.text_input("Title", key=f"pmed_title_{member.id}")
+                # optionally file the item under one of the team's matches
+                matches = svc.list_matches(t.id)
+                mopts = {"": "General (no match)"} | {
+                    mt.id: (f"vs {mt.opponent}" if mt.opponent else "Match")
+                           + (f" · {mt.match_date}" if mt.match_date else "") for mt in matches}
+                mid = st.selectbox("Match (optional)", list(mopts),
+                                   format_func=lambda k: mopts[k], key=f"pmed_match_{member.id}")
                 if kind == "Note":
                     body = st.text_area("Note", key=f"pmed_body_{member.id}", height=90)
                     if st.button("Add note", key=f"pmed_note_{member.id}"):
                         try:
-                            svc.add_note(shell.user, t.id, title=title, body=body, member_id=member.id)
+                            svc.add_note(shell.user, t.id, title=title, body=body,
+                                         member_id=member.id, match_id=mid)
+                            st.rerun()
+                        except ValueError as exc:
+                            st.warning(str(exc))
+                elif kind == "Video link":
+                    url = st.text_input("Video URL", key=f"pmed_url_{member.id}")
+                    if st.button("Add video", key=f"pmed_video_{member.id}"):
+                        try:
+                            svc.add_video(shell.user, t.id, title=title, url=url,
+                                          member_id=member.id, match_id=mid)
                             st.rerun()
                         except ValueError as exc:
                             st.warning(str(exc))
                 else:
-                    url = st.text_input("Video URL", key=f"pmed_url_{member.id}")
-                    if st.button("Add video", key=f"pmed_video_{member.id}"):
+                    up = st.file_uploader("Video file",
+                                          type=["mp4", "mov", "webm", "m4v", "avi", "mkv"],
+                                          key=f"pmed_vfile_{member.id}")
+                    if up is not None and st.button("Upload video", key=f"pmed_vup_{member.id}"):
                         try:
-                            svc.add_video(shell.user, t.id, title=title, url=url, member_id=member.id)
+                            svc.add_video(shell.user, t.id, title=(title or up.name),
+                                          data=up.getvalue(), filename=up.name,
+                                          mime=up.type or "video/mp4",
+                                          member_id=member.id, match_id=mid)
                             st.rerun()
                         except ValueError as exc:
                             st.warning(str(exc))
@@ -1013,19 +1058,45 @@ class TeamsPage(Page):
         if not media:
             st.caption("No player media or saved visualizations yet.")
             return
-        C.render_dossier_label(f"Player media ({len(media)})")
+        # group everything under the match it belongs to (charts/videos/notes), general last
+        labels = {mt.id: (f"vs {mt.opponent}" if mt.opponent else "Match")
+                        + (f" · {mt.match_date}" if mt.match_date else "")
+                  for mt in svc.list_matches(t.id)}
+        groups: dict[str, list] = {}
         for md in media:
-            cols = st.columns([6, 1], vertical_alignment="center")
-            if md.kind == "note":
-                cols[0].markdown(f"**{_html.escape(md.title or 'Note')}**  \n{_html.escape(md.body)}")
-            elif md.kind in ("chart", "image"):
+            groups.setdefault(md.match_id or "", []).append(md)
+        ordered = [k for k in labels if k in groups] + (["" ] if "" in groups else [])
+        C.render_dossier_label(f"Player media ({len(media)})")
+        for gid in ordered:
+            items = groups.get(gid, [])
+            if not items:
+                continue
+            st.markdown(f"**{_html.escape(labels.get(gid, 'General'))}** "
+                        f"<span style='color:var(--fap-text-muted)'>· {len(items)} item(s)</span>",
+                        unsafe_allow_html=True)
+            for md in items:
+                self._render_player_media_item(shell, svc, md)
+
+    def _render_player_media_item(self, shell, svc, md) -> None:
+        cols = st.columns([6, 1], vertical_alignment="center")
+        if md.kind == "note":
+            cols[0].markdown(f"**{_html.escape(md.title or 'Note')}**  \n{_html.escape(md.body)}")
+        elif md.kind in ("chart", "image"):
+            data = svc.media_bytes(md)
+            if data:
+                cols[0].image(data, caption=md.title or "Visualization", width=320)
+        elif md.kind in ("video", "clip"):
+            if md.file_id:                                  # uploaded file → inline player
                 data = svc.media_bytes(md)
                 if data:
-                    cols[0].image(data, caption=md.title or "Visualization", width=320)
+                    cols[0].caption(md.title or "Uploaded video")
+                    cols[0].video(data)
+                else:
+                    cols[0].caption(md.title or "Uploaded video")
             elif md.url:
                 cols[0].markdown(f"[{_html.escape(md.title or 'Video')}]({md.url})")
-            if self._can_edit and cols[1].button("Delete", key=f"pmed_del_{md.id}"):
-                svc.delete_media(shell.user, md.id); st.rerun()
+        if self._can_edit and cols[1].button("Delete", key=f"pmed_del_{md.id}"):
+            svc.delete_media(shell.user, md.id); st.rerun()
 
     def _player_reports(self, svc, member) -> None:
         """Portable club-player dashboard export."""

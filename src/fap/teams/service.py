@@ -439,7 +439,12 @@ class TeamService:
         dashboard totals and the match-by-match progression). Pure, honest — reads
         only columns that are present, never fabricates."""
         m = {"events": int(len(frame)), "minutes": 0, "passes": 0, "completed_passes": 0,
-             "shots": 0, "goals": 0, "assists": 0}
+             "shots": 0, "goals": 0, "assists": 0,
+             # richer, event-derived development metrics (default 0 / None so the trend and
+             # table stay consistent even when a sparse frame can't fill them)
+             "progressive_passes": 0, "key_passes": 0, "crosses": 0, "final_third_passes": 0,
+             "take_ons": 0, "tackles": 0, "interceptions": 0, "recoveries": 0,
+             "shots_on_target": 0, "xg": None}
         columns = {str(c).lower(): c for c in frame.columns}
         minute_col = columns.get("minute")
         if minute_col is not None:
@@ -474,6 +479,38 @@ class TeamService:
                 pass
         m["pass_completion"] = round(100 * m["completed_passes"] / m["passes"], 1) \
             if m["passes"] else None
+        # --- richer development metrics from the canonical event frame. Reuse the shared
+        # football selectors (no metric redefined); guard so a sparse frame yields 0/None,
+        # never an error. Only runs when the frame actually carries an event-type column. ---
+        if events is not None:
+            try:
+                import pandas as _pd
+                from fap.visuals import analysis as _A
+                p = _A.passes(frame)
+                m["progressive_passes"] = int(len(_A.progressive(p)))
+                m["key_passes"] = int(len(_A.key_passes(frame)))
+                m["crosses"] = int(len(_A.crosses(frame)))
+                m["final_third_passes"] = int((_pd.to_numeric(p.get("x"), errors="coerce") > 66.6667).sum())
+                m["take_ons"] = int(len(_A.successful(frame[events.eq("dribble")])))
+                m["tackles"] = int(events.isin(["duel", "tackle", "challenge"]).sum())
+                m["interceptions"] = int(events.eq("interception").sum())
+                m["recoveries"] = int(events.isin(["recovery", "ball recovery"]).sum())
+                sh = _A.shots(frame)
+                if "shot_result" in sh.columns:
+                    sr = sh["shot_result"].astype(str).str.lower()
+                    m["shots_on_target"] = int(sr.isin(["goal", "saved"]).sum())
+                    # goals may live in shot_result (canonical) rather than outcome; count them
+                    # too, using max so a goal recorded in both places is never double-counted.
+                    m["goals"] = max(int(m["goals"]), int(sr.eq("goal").sum()))
+            except Exception:  # noqa: BLE001 - richer metrics are best-effort
+                pass
+            # per-player xG from the frozen Internal xG Model v1.0 (shown only when computable)
+            try:
+                from fap.teams.style import _team_xg, _with_internal_xg
+                from fap.visuals import analysis as _A
+                m["xg"] = _team_xg(_A.shots(_with_internal_xg(frame)))
+            except Exception:  # noqa: BLE001
+                m["xg"] = None
         return m
 
     def player_progression(self, team_id: str, member_id: str) -> list[dict[str, Any]]:
