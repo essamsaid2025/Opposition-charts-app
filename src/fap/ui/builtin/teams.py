@@ -8,6 +8,7 @@ Performance-Analyst+ (same convention as Scouting/Players).
 """
 from __future__ import annotations
 
+import datetime as _dt
 import html as _html
 
 import streamlit as st
@@ -882,7 +883,7 @@ class TeamsPage(Page):
         with tabs[4]:
             self._player_media(shell, svc, t, member)
         with tabs[5]:
-            self._player_reports(svc, member)
+            self._player_reports(shell, svc, t, member)
 
     def _member_hero(self, shell, svc, t, member) -> None:
         """The premium dossier hero (photo/crest/identity/badges/context) + snapshot
@@ -1098,17 +1099,73 @@ class TeamsPage(Page):
         if self._can_edit and cols[1].button("Delete", key=f"pmed_del_{md.id}"):
             svc.delete_media(shell.user, md.id); st.rerun()
 
-    def _player_reports(self, svc, member) -> None:
-        """Portable club-player dashboard export."""
-        stats = svc.player_dashboard(member.team_id, member.id)
-        rows = ["Metric,Value", *[f"{key.replace('_', ' ').title()},{value}"
-                                    for key, value in stats.items() if key != "pass_completion"]]
-        if stats["pass_completion"] is not None:
-            rows.append(f"Pass completion,{stats['pass_completion']}%")
-        st.caption("Player performance summary. Visual evidence remains available in Media.")
-        st.download_button("Download player performance summary", "\n".join(rows),
-                           file_name=f"{(member.player_name or 'player').replace(' ', '_')}_summary.csv",
-                           mime="text/csv", key=f"preport_{member.id}")
+    def _player_reports(self, shell, svc, t, member) -> None:
+        """Professional Player Evaluation report for the technical director — the player's
+        info + photo + team crest, the Development trend, every saved chart, QR codes for
+        video links, notes and an analyst-authored evaluation, exported to PDF. Reuses the
+        existing report engine end to end."""
+        from fap.teams.player_report import RECOMMENDATIONS
+        st.markdown("**Player Evaluation report** — a professional dossier to present to the "
+                    "technical director: profile, performance, development trend, saved charts, "
+                    "video QR codes, notes and your written assessment.")
+
+        # ---- analyst-authored evaluation (persisted, reused across sessions) ----
+        ev = svc.get_player_evaluation(t.id, member.id)
+        if self._can_edit:
+            with st.expander("Coach's evaluation (included in the report)",
+                             expanded=not ev):
+                rating = st.text_input("Overall rating (e.g. A / B+ / 8.5)",
+                                       value=ev.get("rating", ""), key=f"pev_rating_{member.id}")
+                summary = st.text_area("Assessment summary", value=ev.get("summary", ""),
+                                       key=f"pev_sum_{member.id}", height=90)
+                strengths = st.text_area("Strengths (one per line)",
+                                         value=ev.get("strengths", ""), key=f"pev_str_{member.id}",
+                                         height=80)
+                dev_areas = st.text_area("Areas to develop (one per line)",
+                                         value=ev.get("dev_areas", ""), key=f"pev_dev_{member.id}",
+                                         height=80)
+                rec_keys = list(RECOMMENDATIONS)
+                cur = ev.get("recommendation", "")
+                rec = st.selectbox("Recommendation", ["", *rec_keys],
+                                   index=(rec_keys.index(cur) + 1) if cur in rec_keys else 0,
+                                   format_func=lambda k: RECOMMENDATIONS.get(k, "— choose —") if k else "— choose —",
+                                   key=f"pev_rec_{member.id}")
+                if st.button("Save evaluation", type="primary", key=f"pev_save_{member.id}"):
+                    svc.set_player_evaluation(shell.user, t.id, member.id, {
+                        "rating": rating.strip(), "summary": summary.strip(),
+                        "strengths": strengths.strip(), "dev_areas": dev_areas.strip(),
+                        "recommendation": rec, "author": getattr(shell.user, "email", "") or "",
+                        "date": _dt.date.today().isoformat()})
+                    st.success("Evaluation saved.")
+                    st.rerun()
+        elif ev:
+            st.caption(f"Evaluation on file — rating {ev.get('rating') or '—'}.")
+
+        # ---- options + generate ----
+        opts = st.columns(2)
+        inc_form = opts[0].checkbox("Include form (last 5 vs season)", value=True,
+                                    key=f"prep_form_{member.id}")
+        inc_heat = opts[1].checkbox("Include touch/heat map", value=True,
+                                    key=f"prep_heat_{member.id}")
+        state_key = f"_prep_pdf_{member.id}"
+        if st.button("Build evaluation report (PDF)", type="primary",
+                     key=f"prep_build_{member.id}"):
+            try:
+                with st.spinner("Rendering professional report…"):
+                    rendered = svc.render_player_report(
+                        shell.user, t.id, member.id, fmt="pdf",
+                        options={"include_form": inc_form, "include_heatmap": inc_heat})
+                st.session_state[state_key] = (rendered.filename, rendered.content, rendered.mime)
+            except Exception as exc:                       # noqa: BLE001
+                st.session_state.pop(state_key, None)
+                st.error(f"Could not build the report: {exc}")
+        built = st.session_state.get(state_key)
+        if built:
+            fname, content, mime = built
+            st.download_button("Download PDF", content, file_name=fname, mime=mime,
+                               key=f"prep_dl_{member.id}")
+            st.caption("Report built. Charts, QR codes and the heat map are embedded — the PDF is "
+                       "self-contained. Nothing is fabricated: sections without data are omitted.")
 
     def _player_overview(self, shell, svc, member) -> None:
         """The premium player dashboard (same look as the Players page): a profile

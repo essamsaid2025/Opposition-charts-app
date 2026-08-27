@@ -587,6 +587,218 @@ class TeamService:
                 scoreline=mt.scoreline, resolved=resolved, values=values))
         return StyleSeries(per_match=per_match)
 
+    # ---------------------------------------------------------------- player evaluation report
+    # The analyst's written evaluation is persisted as a single TeamMedia of kind
+    # "evaluation" (JSON in the body) keyed to the player — zero migration, reusing the
+    # existing media store. Only the latest one is kept.
+    _EVAL_KIND = "evaluation"
+
+    def set_player_evaluation(self, user: Any, team_id: str, member_id: str,
+                              evaluation: dict[str, Any]) -> None:
+        import json
+        for old in self.repo.list_media(team_id, kind=self._EVAL_KIND, member_id=member_id):
+            self.repo.delete_media(old.id)
+        m = TeamMedia(id=self._uid(), team_id=team_id, kind=self._EVAL_KIND,
+                      member_id=str(member_id or ""), title="Player Evaluation",
+                      body=json.dumps(evaluation or {}), created_by=getattr(user, "email", "") or "")
+        self.repo.add_media(m)
+        self._record(user, "teams.player.evaluation", team_id=team_id, member_id=member_id)
+
+    def get_player_evaluation(self, team_id: str, member_id: str) -> dict[str, Any]:
+        import json
+        rows = self.repo.list_media(team_id, kind=self._EVAL_KIND, member_id=member_id)
+        if not rows:
+            return {}
+        try:
+            return json.loads(rows[-1].body or "{}") or {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _match_label(mt) -> str:
+        return (f"vs {mt.opponent}" if mt.opponent else "Match") + \
+               (f" · {mt.match_date}" if mt.match_date else "")
+
+    def player_event_frame(self, team_id: str, player_name: str):
+        """The player's event rows aggregated across ALL the team's linked matches — the
+        basis for the touch/heat map. Active-independent. None when there are no events."""
+        import pandas as pd
+        frames = []
+        for mt in self.repo.list_matches(team_id):
+            if not mt.dataset_id:
+                continue
+            fr = self.match_player_frame(mt.id, player_name)
+            if fr is not None and not getattr(fr, "empty", True):
+                frames.append(fr)
+        if not frames:
+            return None
+        try:
+            return pd.concat(frames, ignore_index=True)
+        except Exception:
+            return frames[0]
+
+    # metrics surfaced in the report's development table + form section
+    _REPORT_METRICS: tuple[tuple[str, str], ...] = (
+        ("minutes", "Minutes"), ("passes", "Passes"), ("pass_completion", "Pass %"),
+        ("progressive_passes", "Progressive"), ("shots", "Shots"), ("goals", "Goals"),
+        ("assists", "Assists"), ("take_ons", "Take-ons"), ("tackles", "Tackles"),
+        ("recoveries", "Recoveries"))
+
+    @staticmethod
+    def _avg(vals: list) -> float | None:
+        nums = [float(v) for v in vals if v is not None]
+        return round(sum(nums) / len(nums), 1) if nums else None
+
+    def _player_form(self, progression: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Last-5 vs season average per metric, with a trend arrow (higher = better)."""
+        if not progression:
+            return []
+        out = []
+        for key, label in self._REPORT_METRICS:
+            season = self._avg([m.get(key) for m in progression])
+            last5 = self._avg([m.get(key) for m in progression[-5:]])
+            if season is None and last5 is None:
+                continue
+            trend = "→"
+            if last5 is not None and season is not None:
+                if last5 > season + 1e-9:
+                    trend = "↑"
+                elif last5 < season - 1e-9:
+                    trend = "↓"
+            out.append({"label": label,
+                        "last5": ("—" if last5 is None else f"{last5:g}"),
+                        "season": ("—" if season is None else f"{season:g}"), "trend": trend})
+        return out
+
+    def player_report_data(self, team_id: str, member_id: str, *,
+                           analyst: str = "", generated_at: str = "",
+                           options: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Assemble the data dict + pre-rendered PNGs for the Player Evaluation report.
+
+        Reuses the existing squad services only (profile / dashboard / progression / media /
+        notes / evaluation); renders the development trend, touch heat-map and video QR codes
+        to PNG bytes. Never fabricates: a missing input simply omits its section."""
+        import base64
+        from datetime import date
+        options = options or {}
+        team = self.get_team(team_id)
+        member = self.repo.get_member(member_id)
+        if member is None:
+            raise ValueError("player not found")
+        dash = self.player_dashboard(team_id, member.id)
+        progression = self.player_progression(team_id, member.id)
+        matches = {mt.id: mt for mt in self.repo.list_matches(team_id)}
+
+        # age from DOB
+        age = None
+        dob = member.date_of_birth or ""
+        try:
+            if dob:
+                y, m, d = (int(x) for x in dob.split("-")[:3])
+                today = date.today()
+                age = today.year - y - ((today.month, today.day) < (m, d))
+        except Exception:
+            age = None
+
+        # development table (compact, transparent)
+        dev_cols = ["Match", "Min", "Passes", "Pass %", "Prog", "Shots", "Goals", "Assists"]
+        dev_rows = []
+        for i, mrow in enumerate(progression, 1):
+            lab = (f"vs {mrow.get('opponent')}" if mrow.get("opponent") else f"Match {i}")
+            dev_rows.append([lab, mrow.get("minutes"), mrow.get("passes"),
+                             (f"{mrow.get('pass_completion')}%" if mrow.get("pass_completion") is not None else "—"),
+                             mrow.get("progressive_passes"), mrow.get("shots"),
+                             mrow.get("goals"), mrow.get("assists")])
+
+        # saved charts for this player (grouped label by match)
+        saved_charts = []
+        for md in self.repo.list_media(team_id, kind="chart", member_id=member.id):
+            png = self.media_bytes(md)
+            if not png:
+                continue
+            mt = matches.get(md.match_id)
+            saved_charts.append({"title": md.title or "Visualization", "png": png,
+                                 "match_label": self._match_label(mt) if mt else ""})
+
+        # videos (+ QR for external links)
+        videos = []
+        for md in self.repo.list_media(team_id, kind="video", member_id=member.id):
+            entry = {"title": md.title or "Video", "url": md.url,
+                     "match_label": self._match_label(matches[md.match_id]) if md.match_id in matches else ""}
+            if md.url:
+                try:
+                    from fap.reports.blocks import qr_png
+                    png = qr_png(md.url)
+                    if png:
+                        entry["qr_b64"] = base64.b64encode(png).decode("ascii")
+                except Exception:
+                    pass
+            videos.append(entry)
+
+        # notes (player + team-level)
+        def _notes(rows):
+            return [{"date": n.created_at, "author": n.created_by,
+                     "text": (f"{n.title}\n{n.body}" if n.title else n.body)} for n in rows]
+        player_notes = _notes(self.repo.list_media(team_id, kind="note", member_id=member.id))
+        team_notes = _notes([n for n in self.repo.list_media(team_id, kind="note", member_id="")
+                             if not n.match_id])
+
+        # pre-rendered PNGs
+        chart_images: dict[str, bytes] = {}
+        try:
+            from fap.teams import player_report_visuals as V
+            dev_png = V.render_development_png(progression, list(self._REPORT_METRICS))
+            if dev_png:
+                chart_images["development"] = dev_png
+            if options.get("include_heatmap", True):
+                frame = self.player_event_frame(team_id, member.player_name)
+                heat = V.render_touch_heatmap_png(frame) if frame is not None else None
+                if heat:
+                    chart_images["heatmap"] = heat
+        except Exception:
+            pass
+
+        data = {
+            "member_id": member.id, "team_id": team_id,
+            "name": member.player_name or "Player",
+            "operational_id": member.operational_id,
+            "team_name": getattr(team, "name", "") if team else "",
+            "competition": getattr(team, "competition", "") if team else "",
+            "position": member.role, "secondary_role": member.secondary_role,
+            "date_of_birth": member.date_of_birth, "age": age,
+            "nationality": member.nationality, "foot": member.preferred_foot,
+            "height_cm": member.height_cm, "weight_kg": member.weight_kg,
+            "shirt": member.shirt_number, "joined_date": member.joined_date,
+            "contract": member.contract_end,
+            "profile_image_id": member.profile_image_id,
+            "crest_image_id": getattr(team, "crest_image_id", "") if team else "",
+            "analyst": analyst, "generated_at": generated_at,
+            "dashboard": dash, "saved_chart_count": len(saved_charts),
+            "development_columns": dev_cols, "development_table": dev_rows,
+            "form": (self._player_form(progression) if options.get("include_form", True) else []),
+            "videos": videos, "player_notes": player_notes, "team_notes": team_notes,
+            "evaluation": self.get_player_evaluation(team_id, member.id),
+        }
+        return {"data": data, "chart_images": chart_images, "saved_charts": saved_charts}
+
+    def render_player_report(self, user: Any, team_id: str, member_id: str, *,
+                             fmt: str = "pdf", options: dict[str, Any] | None = None):
+        """Render the Player Evaluation report to a downloadable file (bytes). Reuses the
+        existing report exporter registry with an image resolver so the cover player photo
+        and team crest resolve; charts/QR/heat-map are already embedded as image bytes."""
+        from datetime import date
+        from fap.reports.renderer import ReportRenderer
+        from fap.teams.player_report import build_player_report_document
+        analyst = getattr(user, "email", "") or ""
+        bundle = self.player_report_data(team_id, member_id, analyst=analyst,
+                                         generated_at=date.today().isoformat(), options=options)
+        doc = build_player_report_document(bundle["data"], chart_images=bundle["chart_images"],
+                                           saved_charts=bundle["saved_charts"])
+        resolver = (lambda iid: self._images.load(iid)) if self._images is not None else None
+        rendered = ReportRenderer().render(doc, fmt, None, image_resolver=resolver)
+        self._record(user, "teams.player.report", team_id=team_id, member_id=member_id, fmt=fmt)
+        return rendered
+
     def media_bytes(self, media: TeamMedia) -> bytes | None:
         try:
             if media.image_id and self._images is not None:
