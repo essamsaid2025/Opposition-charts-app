@@ -256,7 +256,7 @@
 
   var svg = null, plane = null;          // <svg> and the element whose local space == pitch plane
   var objects = [];                       // [{id,type,x,y,x2,y2,locked}] — metadata only, for handles
-  var cfg = { editable: true, snap: 0, selectedId: null, selectedIds: [], colors: {}, palette: [], drawTool: null, placeTool: null };
+  var cfg = { editable: true, snap: 0, selectedId: null, selectedIds: [], colors: {}, palette: [], drawTool: null, placeTool: null, toolDefaults: {} };
   var activeTool = "select";
   var _prevIds = {};                        // object ids from the previous render (auto-select new)
   // strictly-increasing, session-unique action stamp. Date.now() only moves forward, so
@@ -1043,18 +1043,29 @@
     emit({ ts: nextTs(), commands: [{ op: "add_object", type: t.type, x: p.x, y: p.y,
                                       props: Object.assign({}, t.props || {}) }] });
   }
+  function toolType(name){ return (name==="home"||name==="away") ? "player" : name; }
+  function hasDefaults(name){ return name!=="select" && name!=="ball" && name!=="cone"; }
+  function defaultsFor(name){                             // starting props for a tool's sticky defaults
+    if (name==="home"||name==="away") return { team:(name==="away"?"away":"home"), number:0, name:"", color:"", goalkeeper:false, captain:false };
+    if (name==="circle") return { color:"#2f7bd6", filled:false, opacity:0.28, stroke_width:2.5 };
+    if (name==="shape"||name==="zone"||name==="highlight") return { color:"#2f7bd6", filled:true, opacity:0.28, stroke_width:2 };
+    if (VECTOR[name]) return { variant:"", curvature:0, label:"" };
+    if (name==="text") return { text:"T", size:14, color:"#111318" };
+    return {};
+  }
   function armTool(name){
     cfg.placeTool = null; cfg.drawTool = null; activeTool = name;
+    if (name !== "select") cfg.toolDefaults[name] = cfg.toolDefaults[name] || defaultsFor(name);
+    var props = cfg.toolDefaults[name];                   // sticky: the SAME object every add reads/writes
     if (POINT[name]){
-      var type = (name === "home" || name === "away") ? "player" : name;
-      var props = name === "home" ? { team: "home" } : name === "away" ? { team: "away" } : {};
-      cfg.placeTool = { type: type, props: props };
+      cfg.placeTool = { type: toolType(name), props: props };
       cfg.selectedId = null; cfg.selectedIds = [];
     } else if (DRAWT[name]){
-      cfg.drawTool = { type: name, props: {} };
+      cfg.drawTool = { type: name, props: props };
       cfg.selectedId = null; cfg.selectedIds = [];
     }
     document.querySelectorAll('#toolrail .tool').forEach(function(b){ b.classList.toggle('on', b.dataset.tool === name); });
+    clearSelectionDecor();
     renderChrome();
   }
   function selIds(){ return (cfg.selectedIds && cfg.selectedIds.length) ? cfg.selectedIds.slice() : (cfg.selectedId ? [cfg.selectedId] : []); }
@@ -1114,26 +1125,41 @@
   function renderCtx(){
     var panel=document.getElementById('ctxpanel'); if(!panel) return;
     var ids=selIds(), obj = ids.length===1 ? objects.find(function(o){return o.id===ids[0];}) : null;
-    var html = obj ? editorFor(obj) : (activeTool && activeTool!=='select' ? toolHint(activeTool) : placedList());
+    var toolName=null, html;
+    if(obj){ html=editorFor(obj); }
+    else if(activeTool && activeTool!=='select' && hasDefaults(activeTool)){
+      toolName=activeTool;
+      var synth={ id:null, type:toolType(activeTool), props: cfg.toolDefaults[activeTool] || defaultsFor(activeTool) };
+      var tip = POINT[activeTool] ? 'Click the pitch to place. These settings stick to every one you add.'
+                                  : 'Drag on the pitch to draw. These settings stick to every one you draw.';
+      html='<div class="chead"><span class="q">?</span><b>New '+labelFor(activeTool)+'</b></div><div class="note">'+tip+'</div>'+editorFor(synth);
+    } else if(activeTool && activeTool!=='select'){ html=toolHint(activeTool); }
+    else { html=placedList(); }
     panel.innerHTML = html.replace(/\$ic:(\w+)\$/g,function(m,k){return TB_IC[k]||'';});
-    wireCtx(panel, obj);
+    wireCtx(panel, obj, toolName);
     var done=document.getElementById('tb-done'); if(done) done.onclick=function(){ armTool('select'); };
   }
-  function wireCtx(panel, obj){
-    if(!obj){ panel.querySelectorAll('.prow[data-id]').forEach(function(r){ r.onclick=function(){ emit({ts:nextTs(),select:r.dataset.id,commands:[]}); }; }); return; }
-    var id=obj.id;
+  function wireCtx(panel, obj, toolName){
+    if(!obj && !toolName){                                // "Placed objects" list → instant local select
+      panel.querySelectorAll('.prow[data-id]').forEach(function(r){ r.onclick=function(){ _applyLocalSel([r.dataset.id]); }; });
+      return;
+    }
+    // a selected object edits the model (update_object); a tool-defaults panel writes the sticky
+    // defaults so EVERY object you then add keeps them (colour/style/number…).
+    var apply = obj ? function(pr){ emitUpdate(obj.id, pr); }
+                    : function(pr){ Object.assign(cfg.toolDefaults[toolName], pr); };
     panel.querySelectorAll('input[data-k]').forEach(function(inp){ inp.onchange=function(){
       var k=inp.dataset.k, v = inp.type==='number' ? (parseInt(inp.value||'0',10)||0) : inp.value;
-      var pr={}; pr[k]=v; emitUpdate(id,pr); }; });
+      var pr={}; pr[k]=v; apply(pr); }; });
     panel.querySelectorAll('input[data-krange]').forEach(function(inp){ var out=inp.parentNode.querySelector('.val');
       inp.oninput=function(){ if(out) out.textContent=inp.value; };
-      inp.onchange=function(){ var k=inp.dataset.krange, sc=parseFloat(inp.dataset.scale||'1'); var pr={}; pr[k]=Math.round(parseFloat(inp.value)*sc*1000)/1000; emitUpdate(id,pr); }; });
-    panel.querySelectorAll('select[data-k]').forEach(function(s){ s.onchange=function(){ var pr={}; pr[s.dataset.k]=s.value; emitUpdate(id,pr); }; });
+      inp.onchange=function(){ var k=inp.dataset.krange, sc=parseFloat(inp.dataset.scale||'1'); var pr={}; pr[k]=Math.round(parseFloat(inp.value)*sc*1000)/1000; apply(pr); }; });
+    panel.querySelectorAll('select[data-k]').forEach(function(s){ s.onchange=function(){ var pr={}; pr[s.dataset.k]=s.value; apply(pr); }; });
     panel.querySelectorAll('[data-seg]').forEach(function(seg){ seg.querySelectorAll('button').forEach(function(b){ b.onclick=function(){
       seg.querySelectorAll('button').forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
-      var pr={}; pr[seg.dataset.seg]=b.dataset.v; emitUpdate(id,pr); }; }); });
-    panel.querySelectorAll('[data-toggle]').forEach(function(t){ t.onclick=function(){ var on=!t.classList.contains('on'); t.classList.toggle('on',on); var pr={}; pr[t.dataset.toggle]=on; emitUpdate(id,pr); }; });
-    panel.querySelectorAll('[data-reset]').forEach(function(b){ b.onclick=function(){ var pr={}; pr[b.dataset.reset]=''; emitUpdate(id,pr); }; });
+      var pr={}; pr[seg.dataset.seg]=b.dataset.v; apply(pr); }; }); });
+    panel.querySelectorAll('[data-toggle]').forEach(function(t){ t.onclick=function(){ var on=!t.classList.contains('on'); t.classList.toggle('on',on); var pr={}; pr[t.dataset.toggle]=on; apply(pr); }; });
+    panel.querySelectorAll('[data-reset]').forEach(function(b){ b.onclick=function(){ var pr={}; pr[b.dataset.reset]=''; apply(pr); }; });
   }
   function renderChrome(){
     var n=selIds().length, del=document.getElementById('tb-del'), dup=document.getElementById('tb-dup');
@@ -1165,8 +1191,9 @@
     var rows=pos.map(function(p){return '<div class="mrow"><input class="fnm" placeholder="name"><input class="fno" placeholder="no."><span class="fpos">'+p+'</span></div>';}).join('');
     var body=document.getElementById('form-body');
     body.innerHTML='<div class="ftabs"><button class="'+(formTeam==='home'?'on':'')+'" data-t="home">Home</button><button class="'+(formTeam==='away'?'on':'')+'" data-t="away">Away</button></div>'
-      +'<div class="frow2"><select id="fsel">'+opts+'</select><button class="mpill" id="fplace">Place</button></div>'
-      +'<div class="flist">'+rows+'</div>';
+      +'<div class="frow2"><span class="slbl" style="margin:0 6px 0 0">Formation</span><select id="fsel">'+opts+'</select></div>'
+      +'<div class="flist">'+rows+'</div>'
+      +'<button class="mpill" id="fplace" style="width:100%;margin-top:14px;padding:12px;font-size:14px">＋  Add '+formTeam+' team to the pitch</button>';
     body.querySelectorAll('.ftabs button').forEach(function(bb){ bb.onclick=function(){ formTeam=bb.dataset.t; buildFormBody(); }; });
     body.querySelector('#fsel').onchange=function(){ formFormation=this.value; buildFormBody(); };
     body.querySelector('#fplace').onclick=function(){
