@@ -602,7 +602,7 @@
     preview.setAttribute("stroke-width", isVec ? "4" : "2");
     preview.setAttribute("stroke-dasharray", "6 5");
     preview.style.pointerEvents = "none";
-    plane.appendChild(preview);
+    preview.setAttribute("class", "tb-preview"); plane.appendChild(preview);
 
     var pending = start, raf = 0;
     function paint() { raf = 0; drawPreview(preview, tool, start, pending, isVec); }
@@ -774,7 +774,7 @@
     var preview = document.createElementNS(NS, "rect");   // dashed live bounding box
     preview.setAttribute("fill", "none"); preview.setAttribute("stroke", acc);
     preview.setAttribute("stroke-width", 2); preview.setAttribute("stroke-dasharray", "6 5");
-    preview.style.pointerEvents = "none"; plane.appendChild(preview);
+    preview.style.pointerEvents = "none"; preview.setAttribute("class","tb-preview"); plane.appendChild(preview);
     function compute(loc) {
       var P = toPitch(loc);                                // pointer, pitch, snapped/clamped
       var dl = rotVec(P.x - O.x, P.y - O.y, -th);          // diagonal in the object's local (un-rotated) frame
@@ -854,7 +854,7 @@
     box.setAttribute("fill", acc); box.setAttribute("fill-opacity", "0.10");
     box.setAttribute("stroke", acc); box.setAttribute("stroke-width", "1.5");
     box.setAttribute("stroke-dasharray", "5 4"); box.style.pointerEvents = "none";
-    plane.appendChild(box);
+    box.setAttribute("class", "tb-preview"); plane.appendChild(box);
     var pending = start, raf = 0;
     function paint() {
       raf = 0;
@@ -1069,6 +1069,8 @@
   function selIds(){ return (cfg.selectedIds && cfg.selectedIds.length) ? cfg.selectedIds.slice() : (cfg.selectedId ? [cfg.selectedId] : []); }
   function emitUpdate(id, props){ emit({ ts: nextTs(), select: "__keep__", commands: [{ op: "update_object", id: id, props: props }] }); }
 
+  function sizeRow(o){ var pct=Math.round((o.scale||1)*100);
+    return '<div class="sec"><div class="lbl" style="margin-bottom:6px">Size</div><div class="row"><input type="range" min="40" max="220" value="'+pct+'" data-sizectl><span class="val">'+pct+'%</span></div></div>'; }
   function editorPlayer(o){ var p=o.props||{}; var col=p.color||(p.team==='away'?'#2f6fd6':'#e23b3b');
     return '<div class="fn"><div class="lbl">Player</div></div>'
      +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Number</div><input type="number" data-k="number" value="'+escH(p.number)+'"></div>'
@@ -1076,7 +1078,8 @@
      +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Team</div><div class="seg" data-seg="team"><button data-v="home" '+(p.team!=='away'?'class="on"':'')+'>Home</button><button data-v="away" '+(p.team==='away'?'class="on"':'')+'>Away</button></div></div>'
      +'<div class="sec"><div class="row between"><span>Colour</span><div class="row"><input type="color" data-k="color" value="'+col+'"><button class="ghost" style="width:auto;padding:5px 10px" data-reset="color">Reset</button></div></div></div>'
      +'<div class="sec"><div class="row between"><span>Goalkeeper</span><button class="toggle '+(p.goalkeeper?'on':'')+'" data-toggle="goalkeeper"></button></div></div>'
-     +'<div class="sec"><div class="row between"><span>Captain</span><button class="toggle '+(p.captain?'on':'')+'" data-toggle="captain"></button></div></div>';
+     +'<div class="sec"><div class="row between"><span>Captain</span><button class="toggle '+(p.captain?'on':'')+'" data-toggle="captain"></button></div></div>'
+     +sizeRow(o);
   }
   function editorVector(o){ var p=o.props||{};
     var vs=['','pass','run','movement','pressing','defensive','dribble','shot'];
@@ -1106,7 +1109,24 @@
     if(VECTOR[o.type]) return editorVector(o);
     if(o.type==='zone'||o.type==='shape'||o.type==='circle'||o.type==='highlight') return editorShape(o);
     if(o.type==='text'||o.type==='number') return editorText(o);
+    if(o.type==='ball'||o.type==='cone'||o.type==='goal'||o.type==='mannequin')
+      return '<div class="fn"><div class="lbl">'+labelFor(o.type)+'</div></div>'+sizeRow(o);
     return '<div class="fn"><div class="lbl">'+escH(o.type)+'</div></div><div class="note">No editable settings for this object.</div>';
+  }
+  function bulkEditor(ids){
+    return '<div class="chead"><span class="q">?</span><b>'+ids.length+' selected</b></div>'
+      +'<div class="note">Changes apply to all selected. Drag any one to move them together.</div>'
+      +'<div class="sec"><div class="row between"><span>Colour (all)</span><input type="color" id="bulk-color" value="#2f7bd6"></div></div>'
+      +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Size (all)</div><div class="row"><input type="range" min="40" max="220" value="100" id="bulk-size"><span class="val">100%</span></div></div>'
+      +'<div class="sec"><button class="ghost" id="bulk-dup">Duplicate all</button></div>'
+      +'<div class="sec"><button class="ghost" id="bulk-del" style="color:#c0392b;border-color:#e6b3ad">Delete all</button></div>';
+  }
+  function wireBulk(panel, ids){
+    var col=panel.querySelector('#bulk-color'); if(col) col.onchange=function(){ emit({commands: ids.map(function(id){ return {op:'update_object', id:id, props:{color:col.value}}; })}); };
+    var sz=panel.querySelector('#bulk-size'), out=sz&&sz.parentNode.querySelector('.val');
+    if(sz){ sz.oninput=function(){ if(out) out.textContent=sz.value+'%'; }; sz.onchange=function(){ var v=parseFloat(sz.value)/100; emit({commands: ids.map(function(id){ return {op:'update_object', id:id, scale:v}; })}); }; }
+    var dup=panel.querySelector('#bulk-dup'); if(dup) dup.onclick=function(){ emit({commands:[{op:'duplicate_objects', ids:ids}]}); };
+    var del=panel.querySelector('#bulk-del'); if(del) del.onclick=function(){ emit({commands:[{op:'delete_objects', ids:ids}]}); };
   }
   function placedList(){
     if(!objects.length) return '<div class="fn"><div class="lbl">File name</div></div><div class="chead"><span class="q">?</span><b>Placed objects</b></div><div class="note">No objects yet. Pick a tool from the rail, then click the pitch to place — or drag to draw a shape/arrow.</div>';
@@ -1123,8 +1143,9 @@
   function renderCtx(){
     var panel=document.getElementById('ctxpanel'); if(!panel) return;
     var ids=selIds(), obj = ids.length===1 ? objects.find(function(o){return o.id===ids[0];}) : null;
-    var toolName=null, html;
-    if(obj){ html=editorFor(obj); }
+    var toolName=null, html, bulk = ids.length>1;
+    if(bulk){ html=bulkEditor(ids); }
+    else if(obj){ html=editorFor(obj); }
     else if(activeTool && activeTool!=='select' && hasDefaults(activeTool)){
       toolName=activeTool;
       var synth={ id:null, type:toolType(activeTool), props: cfg.toolDefaults[activeTool] || defaultsFor(activeTool) };
@@ -1134,7 +1155,7 @@
     } else if(activeTool && activeTool!=='select'){ html=toolHint(activeTool); }
     else { html=placedList(); }
     panel.innerHTML = html.replace(/\$ic:(\w+)\$/g,function(m,k){return TB_IC[k]||'';});
-    wireCtx(panel, obj, toolName);
+    if(bulk) wireBulk(panel, ids); else wireCtx(panel, obj, toolName);
     var done=document.getElementById('tb-done'); if(done) done.onclick=function(){ armTool('select'); };
   }
   function wireCtx(panel, obj, toolName){
@@ -1158,6 +1179,9 @@
       var pr={}; pr[seg.dataset.seg]=b.dataset.v; apply(pr); }; }); });
     panel.querySelectorAll('[data-toggle]').forEach(function(t){ t.onclick=function(){ var on=!t.classList.contains('on'); t.classList.toggle('on',on); var pr={}; pr[t.dataset.toggle]=on; apply(pr); }; });
     panel.querySelectorAll('[data-reset]').forEach(function(b){ b.onclick=function(){ var pr={}; pr[b.dataset.reset]=''; apply(pr); }; });
+    panel.querySelectorAll('[data-sizectl]').forEach(function(inp){ var out=inp.parentNode.querySelector('.val');
+      inp.oninput=function(){ if(out) out.textContent=inp.value+'%'; };
+      inp.onchange=function(){ var v=parseFloat(inp.value)/100; if(obj) emit({commands:[{op:'update_object', id:obj.id, scale:v}]}); }; });
   }
   function renderChrome(){
     var n=selIds().length, del=document.getElementById('tb-del'), dup=document.getElementById('tb-dup');
@@ -1209,11 +1233,17 @@
       +'<div class="slbl" style="margin-top:14px">Pitch</div>'
       +'<div class="mrow2"><span>Pitch colour</span><input type="color" id="s-grass" value="'+(c.grass||'#ffffff')+'"></div>'
       +'<div class="mrow2"><span>Line colour</span><input type="color" id="s-line" value="'+(c.line||'#14181f')+'"></div>'
+      +'<div class="slbl" style="margin-top:14px">Players</div>'
+      +'<div class="mrow2"><span>Player size (all)</span><input type="range" min="40" max="200" value="100" id="s-psize"></div>'
+      +'<div class="slbl" style="margin-top:14px">Board</div>'
       +'<div class="mrow2"><span>Grid lines</span><button class="toggle '+(b.grid?'on':'')+'" id="s-grid"></button></div>'
       +'<div class="mrow2"><span>Orientation</span><button class="mghost" id="s-orient">'+(b.orientation==='vertical'?'Vertical':'Horizontal')+' — flip</button></div>'
       +'<div class="mrow2"><span>New board</span><button class="mghost" id="s-new">Clear</button></div>';
     function col(id, key){ var el=body.querySelector(id); el.onchange=function(){ var o={}; o[key]=el.value; emitAction('set_colors', o); }; }
     col('#s-home','home'); col('#s-away','away'); col('#s-grass','grass'); col('#s-line','line');
+    var ps=body.querySelector('#s-psize'); if(ps) ps.onchange=function(){ var v=parseFloat(this.value)/100;
+      var ids=objects.filter(function(o){return o.type==='player';}).map(function(o){return o.id;});
+      if(ids.length) emit({commands: ids.map(function(id){ return {op:'update_object', id:id, scale:v}; })}); };
     body.querySelector('#s-grid').onclick=function(){ emitAction('grid',{on:!b.grid}); closeOv('ov-set'); };
     body.querySelector('#s-orient').onclick=function(){ emitAction('orientation'); closeOv('ov-set'); };
     body.querySelector('#s-new').onclick=function(){ emitAction('new'); closeOv('ov-set'); };
@@ -1325,6 +1355,9 @@
     plane = svg.querySelector('#tb-plane') || svg;
     piecesLayer = svg.querySelector('#tb-pieces');
     if(!piecesLayer) return;
+    // sweep any leaked transient preview (marquee box / draw / resize outline) so stray blue
+    // dashes never linger on the board.
+    svg.querySelectorAll('.tb-preview').forEach(function(el){ if(el.parentNode) el.parentNode.removeChild(el); });
     piecesLayer.textContent = '';
     objects.slice().sort(function(a,b){ return (a.z||0)-(b.z||0); }).forEach(function(o){
       if(o.props && o.props.hidden) return;
@@ -1353,6 +1386,7 @@
         mirrorGeom(o); objects.push(o); addedId=o.id;
       } else if(op==="update_object"){
         var m=metaOf(cmd.id); if(m){ if(cmd.x!=null)m.x=cmd.x; if(cmd.y!=null)m.y=cmd.y; if(cmd.rotation!=null)m.rotation=cmd.rotation;
+          if(cmd.scale!=null)m.scale=cmd.scale;
           if(cmd.props){ m.props=Object.assign(m.props||{}, cmd.props); mirrorGeom(m); } }
       } else if(op==="move_objects"){
         (cmd.ids||[]).forEach(function(id){ var m=metaOf(id); if(m && !(m.props&&m.props.locked)){ m.x=clamp(m.x+(cmd.dx||0),0,100); m.y=clamp(m.y+(cmd.dy||0),0,100); } });
