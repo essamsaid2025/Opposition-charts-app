@@ -81,6 +81,9 @@
   .mbd .toggle{ width:38px;height:22px;border-radius:22px;background:#cfd3db;position:relative;border:0;flex:none; }
   .mbd .toggle::after{ content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff; }
   .mbd .toggle.on{ background:var(--e-head); } .mbd .toggle.on::after{ left:18px; }
+  .mbd .slbl{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--e-mut); font-weight:700; margin:2px 0 4px; }
+  .mbd input[type=color]{ width:40px; height:28px; padding:0; border:1px solid var(--e-line); border-radius:6px; background:#fff; cursor:pointer; }
+  .mbd .cdot{ display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:middle; border:1px solid rgba(0,0,0,.15); }
   #editor button{ font:inherit; color:inherit; cursor:pointer; }
   #editor .lbl{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--e-mut); font-weight:600; }
   #topbar{ background:var(--e-bar); color:#fff; display:flex; align-items:center; gap:2px; padding:0 8px; }
@@ -255,6 +258,7 @@
   var objects = [];                       // [{id,type,x,y,x2,y2,locked}] — metadata only, for handles
   var cfg = { editable: true, snap: 0, selectedId: null, selectedIds: [], colors: {}, palette: [], drawTool: null, placeTool: null };
   var activeTool = "select";
+  var _prevIds = {};                        // object ids from the previous render (auto-select new)
   // strictly-increasing, session-unique action stamp. Date.now() only moves forward, so
   // even if Streamlit remounts the iframe (resetting JS state) a later action never
   // reuses an earlier stamp - this is what lets Python dedup re-delivered values without
@@ -334,17 +338,54 @@
     if (cfg.selectedIds && cfg.selectedIds.length) return cfg.selectedIds.slice();
     return cfg.selectedId != null ? [cfg.selectedId] : [];
   }
-  function emitSel(ids) {
+  // Selection is CLIENT-OWNED and instant — it never round-trips to Python (that was the
+  // biggest source of "laggy" control: a plain click used to trigger a full Streamlit rerun +
+  // SVG rebuild just to draw a ring). The component draws every selection ring + handle itself
+  // (drawSelectionDecor), the in-board Properties panel is already client-side, and delete /
+  // duplicate / keyboard all read the local selection (selIds). Python no longer draws a ring
+  // (board_svg is passed selected_id=None) and no longer needs the selection.
+  function _applyLocalSel(ids){
     cfg.selectedIds = ids.slice();
     cfg.selectedId = ids.length ? ids[ids.length - 1] : null;
-    focusStage();
-    emit({ ts: nextTs(), select: ids.length === 1 ? ids[0] : ids.slice(), commands: [] });
-  }
-  function select(id) {                 // single-select (used by handle/endpoint drags)
-    cfg.selectedId = id;
-    cfg.selectedIds = id != null ? [id] : [];
     focusStage();                       // ensure Delete/Backspace reach the keydown handler
-    emit({ ts: nextTs(), select: id === undefined ? null : id, commands: [] });
+    clearSelectionDecor(); drawSelectionDecor(); renderCtx();
+  }
+  function emitSel(ids) { _applyLocalSel(ids); }
+  function select(id) { _applyLocalSel(id != null ? [id] : []); }
+  function clearSelectionDecor(){
+    if(!plane) return;
+    plane.querySelectorAll('.tb-seldecor, .tb-handle, .tb-resize').forEach(function(el){
+      if(el.parentNode) el.parentNode.removeChild(el); });
+  }
+  function drawSelectionDecor(){
+    if(!plane) return;
+    var NS="http://www.w3.org/2000/svg", ac=cfg.colors.accent||"#2f7bd6";
+    selArray().forEach(function(sid){
+      var m=metaOf(sid); if(!m) return;
+      var lc=pitchToLocal(m.x,m.y);
+      var halo=document.createElementNS(NS,"circle");
+      halo.setAttribute("cx",lc.x);halo.setAttribute("cy",lc.y);halo.setAttribute("r",28);
+      halo.setAttribute("fill","none");halo.setAttribute("stroke",ac);halo.setAttribute("stroke-width","6");
+      halo.setAttribute("stroke-opacity","0.22");halo.setAttribute("class","tb-seldecor");
+      halo.style.pointerEvents="none";plane.appendChild(halo);
+      var ring=document.createElementNS(NS,"circle");
+      ring.setAttribute("cx",lc.x);ring.setAttribute("cy",lc.y);ring.setAttribute("r",24);
+      ring.setAttribute("fill","none");ring.setAttribute("stroke",ac);ring.setAttribute("stroke-width","2.5");
+      ring.setAttribute("class","tb-seldecor");ring.style.pointerEvents="none";plane.appendChild(ring);
+    });
+    var sel=(selArray().length<=1)&&cfg.selectedId&&metaOf(cfg.selectedId);
+    if(sel&&VECTOR[sel.type]){
+      addHandle(sel.x,sel.y,sel.id,"start");
+      addHandle(sel.x2!=null?sel.x2:sel.x+12,sel.y2!=null?sel.y2:sel.y,sel.id,"end");
+      if(sel.type==="curved_arrow"){
+        var s=pitchToLocal(sel.x,sel.y),en=pitchToLocal(sel.x2!=null?sel.x2:sel.x+12,sel.y2!=null?sel.y2:sel.y);
+        var k=sel.curvature!=null?sel.curvature:0.3, cp=curveControlPoint(s,en,k);
+        makeHandle(cp.x,cp.y,sel.id,"control",true);
+      }
+    } else if(sel&&cfg.editable&&!sel.locked){
+      addRotateHandle(sel);
+      if(sel.type==="zone"||sel.type==="highlight"||sel.type==="shape"||sel.type==="circle") addResizeHandles(sel);
+    }
   }
   function isTypingTarget(t) {
     if (!t) return false;
@@ -800,47 +841,9 @@
       g.style.touchAction = "none";
       g.addEventListener("pointerdown", function (e) { beginObjectDrag(g, id, kind, e); });
     });
-    // handles for the currently-selected object. Vector types keep ONLY their endpoint/curve
-    // handles (mutually exclusive - no rotate/resize on arrows). Everything else gets a rotate
-    // handle; zone/highlight/shape additionally get corner resize handles. New handles are
-    // gated on editable + not locked (endpoint handles already gate the drag in beginHandleDrag).
-    // rings for every EXTRA selected object (the primary already gets the Python-drawn ring)
-    selArray().forEach(function (sid) {
-      if (sid === cfg.selectedId) return;
-      var m = metaOf(sid); if (!m) return;
-      var lc = pitchToLocal(m.x, m.y);
-      var NS = "http://www.w3.org/2000/svg", ac = cfg.colors.accent || "#2f7bd6";
-      // solid ring + soft halo — the SAME shape render.py draws for the primary selection
-      var halo = document.createElementNS(NS, "circle");
-      halo.setAttribute("cx", lc.x); halo.setAttribute("cy", lc.y); halo.setAttribute("r", 28);
-      halo.setAttribute("fill", "none"); halo.setAttribute("stroke", ac);
-      halo.setAttribute("stroke-width", "6"); halo.setAttribute("stroke-opacity", "0.22");
-      halo.style.pointerEvents = "none"; plane.appendChild(halo);
-      var ring = document.createElementNS(NS, "circle");
-      ring.setAttribute("cx", lc.x); ring.setAttribute("cy", lc.y); ring.setAttribute("r", 24);
-      ring.setAttribute("fill", "none"); ring.setAttribute("stroke", ac);
-      ring.setAttribute("stroke-width", "2.5");
-      ring.style.pointerEvents = "none"; plane.appendChild(ring);
-    });
-    // rotate/resize/endpoint handles only make sense for a SINGLE selection
-    var sel = (selArray().length <= 1) && cfg.selectedId && metaOf(cfg.selectedId);
-    if (sel && VECTOR[sel.type]) {
-      addHandle(sel.x, sel.y, sel.id, "start");
-      addHandle(sel.x2 != null ? sel.x2 : sel.x + 12, sel.y2 != null ? sel.y2 : sel.y, sel.id, "end");
-      // curved arrows also get a draggable control-point handle sitting on the current curve
-      if (sel.type === "curved_arrow") {
-        var s = pitchToLocal(sel.x, sel.y);
-        var en = pitchToLocal(sel.x2 != null ? sel.x2 : sel.x + 12,
-                              sel.y2 != null ? sel.y2 : sel.y);
-        var k = sel.curvature != null ? sel.curvature : 0.3;
-        var cp = curveControlPoint(s, en, k);
-        makeHandle(cp.x, cp.y, sel.id, "control", true);
-      }
-    } else if (sel && cfg.editable && !sel.locked) {
-      addRotateHandle(sel);
-      if (sel.type === "zone" || sel.type === "highlight" || sel.type === "shape"
-          || sel.type === "circle") addResizeHandles(sel);
-    }
+    // selection rings + rotate/resize/endpoint handles are drawn CLIENT-SIDE (see
+    // drawSelectionDecor) so selecting is instant and never round-trips to Python.
+    drawSelectionDecor();
   }
 
   // ---- marquee / box selection (empty-pitch drag) -------------------------------
@@ -1172,11 +1175,20 @@
     };
   }
   function buildSetBody(){
-    var b=cfg.board||{};
+    var b=cfg.board||{}, c=b.colors||{};
     var body=document.getElementById('set-body');
-    body.innerHTML='<div class="mrow2"><span>Grid lines</span><button class="toggle '+(b.grid?'on':'')+'" id="s-grid"></button></div>'
+    body.innerHTML=
+       '<div class="slbl">Team kits</div>'
+      +'<div class="mrow2"><span><span class="cdot" style="background:'+(c.home||'#e23b3b')+'"></span> Home team colour</span><input type="color" id="s-home" value="'+(c.home||'#e23b3b')+'"></div>'
+      +'<div class="mrow2"><span><span class="cdot" style="background:'+(c.away||'#2f6fd6')+'"></span> Away team colour</span><input type="color" id="s-away" value="'+(c.away||'#2f6fd6')+'"></div>'
+      +'<div class="slbl" style="margin-top:14px">Pitch</div>'
+      +'<div class="mrow2"><span>Pitch colour</span><input type="color" id="s-grass" value="'+(c.grass||'#ffffff')+'"></div>'
+      +'<div class="mrow2"><span>Line colour</span><input type="color" id="s-line" value="'+(c.line||'#14181f')+'"></div>'
+      +'<div class="mrow2"><span>Grid lines</span><button class="toggle '+(b.grid?'on':'')+'" id="s-grid"></button></div>'
       +'<div class="mrow2"><span>Orientation</span><button class="mghost" id="s-orient">'+(b.orientation==='vertical'?'Vertical':'Horizontal')+' — flip</button></div>'
       +'<div class="mrow2"><span>New board</span><button class="mghost" id="s-new">Clear</button></div>';
+    function col(id, key){ var el=body.querySelector(id); el.onchange=function(){ var o={}; o[key]=el.value; emitAction('set_colors', o); }; }
+    col('#s-home','home'); col('#s-away','away'); col('#s-grass','grass'); col('#s-line','line');
     body.querySelector('#s-grid').onclick=function(){ emitAction('grid',{on:!b.grid}); closeOv('ov-set'); };
     body.querySelector('#s-orient').onclick=function(){ emitAction('orientation'); closeOv('ov-set'); };
     body.querySelector('#s-new').onclick=function(){ emitAction('new'); closeOv('ov-set'); };
@@ -1224,14 +1236,20 @@
     cfg.svg = args.svg || "";
     cfg.editable = args.editable !== false;
     cfg.snap = Number(args.snap || 0);
-    cfg.selectedId = args.selected_id != null ? args.selected_id : null;
-    cfg.selectedIds = Array.isArray(args.selected_ids) ? args.selected_ids
-                      : (cfg.selectedId != null ? [cfg.selectedId] : []);
     cfg.colors = args.colors || {};
     cfg.palette = args.palette || [];
     if (args.draw_tool) cfg.drawTool = args.draw_tool;   // Python-armed tool (kept in sync)
     cfg.board = args.board_state || cfg.board || {};     // frames / grid / orientation for the chrome
     objects = args.objects || [];
+    // Selection is client-owned (never sent to Python). On a re-render we KEEP the local
+    // selection — only dropping ids that no longer exist — and auto-select a freshly-added
+    // object (exactly one new id since the last render), so "place then set its number" works.
+    var curIds = {}; objects.forEach(function(o){ curIds[o.id] = 1; });
+    var added = objects.filter(function(o){ return !_prevIds[o.id]; });
+    cfg.selectedIds = (cfg.selectedIds || []).filter(function(id){ return curIds[id]; });
+    if (added.length === 1) cfg.selectedIds = [added[0].id];
+    cfg.selectedId = cfg.selectedIds.length ? cfg.selectedIds[cfg.selectedIds.length - 1] : null;
+    _prevIds = curIds;
     render();
     renderChrome();                          // refresh the in-board panels for the new state
   });

@@ -154,7 +154,7 @@ def parse_result(value: Any) -> dict[str, Any] | None:
 # typed params, exactly like the batch-op trust boundary.
 _ACTION_NAMES: frozenset[str] = frozenset(
     {"new", "grid", "snap", "orientation", "add_frame", "del_frame", "goto_frame",
-     "theme", "formation", "template"})
+     "theme", "formation", "template", "set_colors"})
 
 
 def _clean_action(a: Any) -> dict[str, Any] | None:
@@ -174,6 +174,13 @@ def _clean_action(a: Any) -> dict[str, Any] | None:
             out["index"] = 0
     elif name in ("theme", "template"):
         out["id"] = str(a.get("id", ""))
+    elif name == "set_colors":
+        cols: dict[str, str] = {}
+        for k in ("home", "away", "grass", "line"):
+            v = a.get(k)
+            if isinstance(v, str) and v.strip():
+                cols[k] = v.strip()[:9]
+        out["colors"] = cols
     elif name == "formation":
         out["team"] = "away" if str(a.get("team")) == "away" else "home"
         out["formation"] = str(a.get("formation", ""))

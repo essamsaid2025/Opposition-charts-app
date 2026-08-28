@@ -196,22 +196,37 @@ def _theme_manager(shell):
         return None
 
 
+def _tacticalista_palette() -> dict[str, str]:
+    """The default board look — a clean WHITE pitch with black markings (Tacticalista
+    style), instead of the old green grass. Team kits default to a strong red / blue."""
+    return {**DEFAULT_COLORS, "grass": "#ffffff", "grass_alt": "#f5f6f8",
+            "line": "#14181f", "bg": "#ffffff", "text": "#14181f",
+            "home": "#e23b3b", "away": "#2f6fd6"}
+
+
 def _resolve_board_colors(shell, board) -> dict[str, str]:
-    """Colours the board renders + exports with. A board with NO theme in its meta
-    is byte-identical to today (``DEFAULT_COLORS``); a selected theme is mapped onto
-    the tactical roles. Any failure (missing theme, bad shape) degrades to the
-    default palette rather than breaking the board."""
-    tid = str((getattr(board, "meta", None) or {}).get("theme") or "").strip()
-    if not tid:
-        return dict(DEFAULT_COLORS)                 # critical: existing boards unchanged
-    try:
-        themes = _theme_manager(shell)
-        theme = themes.get(tid) if themes else None
-        if theme is None:
-            return dict(DEFAULT_COLORS)
-        return tactical_colors_from_theme(theme)
-    except Exception:
-        return dict(DEFAULT_COLORS)
+    """Colours the board renders + exports with. Defaults to the white Tacticalista pitch;
+    a selected theme maps onto the tactical roles; and per-board overrides in
+    ``board.meta['colors']`` (team kits / pitch / lines, set from the in-board Settings) win
+    over both. Any failure degrades to the default palette rather than breaking the board."""
+    meta = getattr(board, "meta", None) or {}
+    tid = str(meta.get("theme") or "").strip()
+    base = _tacticalista_palette()
+    if tid:
+        try:
+            themes = _theme_manager(shell)
+            theme = themes.get(tid) if themes else None
+            if theme is not None:
+                base = tactical_colors_from_theme(theme)
+        except Exception:
+            base = _tacticalista_palette()
+    overrides = meta.get("colors")
+    if isinstance(overrides, dict):
+        for k in ("home", "away", "grass", "grass_alt", "line", "bg", "text"):
+            v = overrides.get(k)
+            if isinstance(v, str) and v.strip():
+                base[k] = v
+    return base
 
 
 def _canvas_palette(colors: dict[str, str]) -> list[dict]:
@@ -299,6 +314,12 @@ def _handle_action(act: dict) -> bool:
     elif name == "theme":
         st.session_state[TB_HIST].record(board)
         board.meta["theme"] = str(act.get("id", "")); board.touch()
+    elif name == "set_colors":
+        cols = act.get("colors") or {}
+        if cols:
+            st.session_state[TB_HIST].record(board)
+            merged = dict(board.meta.get("colors") or {}); merged.update(cols)
+            board.meta["colors"] = merged; board.touch()
     elif name == "goto_frame":
         _set_frame(int(act.get("index", 0)))
     elif name == "add_frame":
@@ -685,7 +706,9 @@ class TacticalBoardPage(Page):
         grid = st.session_state.get(TB_GRID, False)
         sel = st.session_state.get(TB_SEL)
         colors = _resolve_board_colors(shell, board)
-        svg = board_svg(board, _frame_index(), colors=colors, grid=grid, selected_id=sel)
+        # selection ring is now drawn CLIENT-SIDE by the component (selection is client-owned and
+        # instant — no round-trip), so the server SVG carries no ring. selected_id=None.
+        svg = board_svg(board, _frame_index(), colors=colors, grid=grid, selected_id=None)
 
         # Phase 15: the JS drag-and-drop canvas is the primary renderer + interaction.
         # It reuses the Python SVG above and only reports intent (JSON commands); if it
@@ -720,6 +743,8 @@ class TacticalBoardPage(Page):
             "orientation": board.pitch.orientation, "theme": board.meta.get("theme", ""),
             "formations": ["4-3-3", "4-2-3-1", "4-4-2", "3-5-2"],
             "templates": ["Set Pieces", "Pressing", "Build-up", "Transitions"],
+            "colors": {"home": colors.get("home", "#e23b3b"), "away": colors.get("away", "#2f6fd6"),
+                       "grass": colors.get("grass", "#ffffff"), "line": colors.get("line", "#14181f")},
         }
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
