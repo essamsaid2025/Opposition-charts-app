@@ -45,9 +45,42 @@
   #editor{ --e-bar:#2c2c30; --e-ink:#1c1e22; --e-mut:#8a8f99; --e-line:#e6e6ec; --e-panel:#fff;
     --e-canvas:#e8e8ea; --e-chip:#e2e5ea; --e-sel:#4a90d9; --e-head:#2e9e5b; --e-home:#e23b3b;
     --e-away:#2f6fd6; --e-pill:#1c1e22;
-    display:grid; grid-template-rows:44px auto; background:var(--e-canvas);
+    display:grid; grid-template-rows:44px 1fr 44px; min-height:660px; background:var(--e-canvas);
     border:1px solid var(--e-line); border-radius:12px; overflow:hidden;
     color:var(--e-ink); font-size:13px; }
+  #timeline{ background:var(--e-panel); border-top:1px solid var(--e-line); display:flex; align-items:center; gap:6px; padding:0 10px; }
+  #timeline .tl-nav{ width:30px; height:28px; border:1px solid var(--e-line); border-radius:6px; background:#fff; display:grid; place-items:center; color:#3a3d44; }
+  #timeline .tl-nav:hover{ background:#f2f3f6; } #timeline .tl-nav svg{ width:16px; height:16px; }
+  #tl-frames{ display:flex; gap:6px; overflow-x:auto; flex:1; padding:6px 0; }
+  #tl-frames .tl-chip{ min-width:64px; height:30px; border:1px solid var(--e-line); border-radius:6px; background:#fff; display:grid; place-items:center; font-size:11px; font-weight:600; color:#5a5d64; white-space:nowrap; padding:0 8px; }
+  #tl-frames .tl-chip.on{ border-color:var(--e-sel); color:var(--e-ink); box-shadow:inset 0 0 0 1px var(--e-sel); }
+  .ov{ position:fixed; inset:0; background:rgba(20,22,28,.32); display:none; place-items:center; z-index:60; }
+  .ov.show{ display:grid; }
+  .mdl{ background:#fff; border-radius:12px; box-shadow:0 24px 70px rgba(0,0,0,.35); width:min(390px,94vw); overflow:hidden; }
+  .mdl.wide{ width:min(760px,94vw); }
+  .mhd{ background:var(--e-bar); color:#fff; display:flex; align-items:center; padding:12px 16px; }
+  .mhd b{ flex:1; text-align:center; font-size:15px; font-weight:700; }
+  .mhd .x{ width:30px; height:30px; border-radius:50%; background:#4a4a50; border:0; color:#fff; display:grid; place-items:center; }
+  .mhd .x svg{ width:16px; height:16px; }
+  .mbd{ padding:16px 18px; max-height:76vh; overflow:auto; color:var(--e-ink); }
+  #topbar .ic.on{ background:#4a4a50; color:#fff; }
+  .ftabs{ display:flex; border-bottom:1px solid var(--e-line); margin-bottom:12px; }
+  .ftabs button{ flex:1; background:#fff; border:0; padding:9px; font-weight:700; color:#8a8f99; border-bottom:2px solid transparent; }
+  .ftabs button.on{ color:var(--e-sel); border-bottom-color:var(--e-sel); }
+  .frow2{ display:flex; gap:10px; align-items:center; margin-bottom:12px; }
+  .frow2 select{ flex:1; border:1px solid var(--e-line); border-radius:8px; padding:9px; font-weight:700; background:#fff; }
+  .mpill{ background:var(--e-pill); color:#fff; border:0; border-radius:8px; padding:9px 18px; font-weight:700; }
+  .flist{ display:flex; flex-direction:column; gap:4px; }
+  .mrow{ display:flex; align-items:center; gap:8px; }
+  .mrow .fnm{ flex:1; } .mrow .fno{ width:56px; }
+  .mrow input{ border:1px solid var(--e-line); border-radius:6px; padding:7px; font-size:12px; min-width:0; }
+  .mrow .fpos{ width:44px; text-align:right; font-weight:700; color:#5a5d64; font-size:12px; }
+  .mrow2{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-top:1px solid var(--e-line); }
+  .mrow2:first-child{ border-top:0; }
+  .mghost{ background:#fff; border:1px solid var(--e-line); border-radius:8px; padding:7px 14px; font-weight:600; }
+  .mbd .toggle{ width:38px;height:22px;border-radius:22px;background:#cfd3db;position:relative;border:0;flex:none; }
+  .mbd .toggle::after{ content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff; }
+  .mbd .toggle.on{ background:var(--e-head); } .mbd .toggle.on::after{ left:18px; }
   #editor button{ font:inherit; color:inherit; cursor:pointer; }
   #editor .lbl{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--e-mut); font-weight:600; }
   #topbar{ background:var(--e-bar); color:#fff; display:flex; align-items:center; gap:2px; padding:0 8px; }
@@ -107,14 +140,20 @@
 <body>
 <div id="editor">
   <div id="topbar">
-    <div class="frames"><span id="tb-frames">1/1</span></div>
+    <button class="ic" id="tb-new" title="New board">$ic:file$</button>
     <span class="sep"></span>
     <button class="ic" id="tb-undo" title="Undo">$ic:undo$</button>
     <button class="ic" id="tb-redo" title="Redo">$ic:redo$</button>
     <span class="sep"></span>
     <button class="ic" id="tb-dup" title="Duplicate" disabled>$ic:paste$</button>
     <button class="ic" id="tb-del" title="Delete" disabled>$ic:trash$</button>
+    <span class="sep"></span>
+    <button class="ic" id="tb-grid" title="Grid lines">$ic:grid$</button>
+    <button class="ic" id="tb-orient" title="Flip orientation">$ic:flip$</button>
+    <button class="ic" id="tb-form" title="Formation">$ic:formation$</button>
+    <button class="ic" id="tb-set" title="Board settings">$ic:gear$</button>
     <div class="spacer"></div>
+    <span class="frames"><span id="tb-frames">1/1</span></span>
     <span class="zoom">100%</span>
     <span class="b2d">2D</span>
   </div>
@@ -140,7 +179,15 @@
       <div id="stage"></div>
     </div>
   </div>
+  <div id="timeline">
+    <button class="tl-nav" id="tl-prev" title="Previous frame">$ic:chevL$</button>
+    <div id="tl-frames"></div>
+    <button class="tl-nav" id="tl-add" title="Add frame">$ic:plus$</button>
+    <button class="tl-nav" id="tl-del" title="Delete frame">$ic:trash$</button>
+  </div>
 </div>
+<div class="ov" id="ov-form"><div class="mdl"><div class="mhd"><b>Formation batch setting</b><button class="x" data-close="ov-form">$ic:x$</button></div><div class="mbd" id="form-body"></div></div></div>
+<div class="ov" id="ov-set"><div class="mdl"><div class="mhd"><b>Board settings</b><button class="x" data-close="ov-set">$ic:x$</button></div><div class="mbd" id="set-body"></div></div></div>
 <div id="ghost"></div>
 <script>
 (function () {
@@ -970,7 +1017,17 @@
     circle:'<svg '+TF+'><circle cx="12" cy="12" r="7"/></svg>',
     square:'<svg '+TF+'><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
     zone:'<svg '+TS+'><path d="M5 8V5h3M16 5h3v3M19 16v3h-3M8 19H5v-3"/></svg>',
-    text:'<svg '+TS+'><path d="M6 6h12M12 6v13M9 19h6"/></svg>'
+    text:'<svg '+TS+'><path d="M6 6h12M12 6v13M9 19h6"/></svg>',
+    file:'<svg '+TS+'><path d="M13 3H6a1 1 0 00-1 1v16a1 1 0 001 1h12a1 1 0 001-1V9z"/><path d="M13 3v6h6"/></svg>',
+    grid:'<svg '+TS+'><rect x="4" y="4" width="16" height="16" rx="1.5"/><path d="M4 10h16M4 15h16M10 4v16M15 4v16"/></svg>',
+    flip:'<svg '+TS+'><path d="M8 7L4 11l4 4M16 17l4-4-4-4"/><path d="M4 11h16"/></svg>',
+    formation:'<svg '+TS+'><circle cx="12" cy="6" r="1.6"/><circle cx="6" cy="12" r="1.6"/><circle cx="18" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>',
+    gear:'<svg '+TS+'><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>',
+    x:'<svg '+TS+'><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    plus:'<svg '+TS+'><path d="M12 5v14M5 12h14"/></svg>',
+    chevL:'<svg '+TS+'><path d="M15 6l-6 6 6 6"/></svg>',
+    chevR:'<svg '+TS+'><path d="M9 6l6 6-6 6"/></svg>',
+    team:'<svg '+TS+'><circle cx="9" cy="9" r="2.5"/><circle cx="16" cy="10" r="2"/><path d="M4 18c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>'
   };
   function escH(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   var POINT={ home:1, away:1, ball:1, cone:1, text:1 };
@@ -1078,10 +1135,54 @@
   function renderChrome(){
     var n=selIds().length, del=document.getElementById('tb-del'), dup=document.getElementById('tb-dup');
     if(del) del.disabled=!n; if(dup) dup.disabled=!n;
+    var gr=document.getElementById('tb-grid'); if(gr) gr.classList.toggle('on', !!(cfg.board||{}).grid);
+    renderTimeline();
     renderCtx();
   }
+  function emitAction(name, p){ emit({ ts: nextTs(), select: "__keep__", commands: [], action: Object.assign({ name: name }, p || {}) }); }
+  function openOv(id){ var o=document.getElementById(id); if(o) o.classList.add('show'); }
+  function closeOv(id){ var o=document.getElementById(id); if(o) o.classList.remove('show'); }
+  function renderTimeline(){
+    var b=cfg.board||{}, frames=b.frames||[], idx=b.frame_index||0;
+    var fr=document.getElementById('tb-frames'); if(fr) fr.textContent=(idx+1)+'/'+(frames.length||1);
+    var el=document.getElementById('tl-frames'); if(!el) return;
+    el.innerHTML = (frames.length?frames:[{name:'Frame 1'}]).map(function(f,i){
+      return '<button class="tl-chip'+(i===idx?' on':'')+'" data-i="'+i+'">'+escH(f.name||('Frame '+(i+1)))+'</button>'; }).join('');
+    el.querySelectorAll('.tl-chip').forEach(function(c){ c.onclick=function(){ emitAction('goto_frame',{index:parseInt(c.dataset.i,10)}); }; });
+  }
+  var _POSByF={ '4-3-3':['GK','RB','RCB','LCB','LB','RCM','CM','LCM','RW','ST','LW'],
+    '4-4-2':['GK','RB','RCB','LCB','LB','RM','RCM','LCM','LM','RCF','LCF'],
+    '4-2-3-1':['GK','RB','RCB','LCB','LB','RDM','LDM','RAM','CAM','LAM','ST'],
+    '3-5-2':['GK','RCB','CB','LCB','RWB','RCM','CM','LCM','LWB','RCF','LCF'] };
+  var formTeam='home', formFormation='';
+  function buildFormBody(){
+    var b=cfg.board||{}, fs=b.formations||['4-3-3','4-2-3-1','4-4-2','3-5-2'];
+    var f=formFormation||fs[0]; formFormation=f; var pos=_POSByF[f]||_POSByF['4-3-3'];
+    var opts=fs.map(function(x){return '<option '+(x===f?'selected':'')+'>'+x+'</option>';}).join('');
+    var rows=pos.map(function(p){return '<div class="mrow"><input class="fnm" placeholder="name"><input class="fno" placeholder="no."><span class="fpos">'+p+'</span></div>';}).join('');
+    var body=document.getElementById('form-body');
+    body.innerHTML='<div class="ftabs"><button class="'+(formTeam==='home'?'on':'')+'" data-t="home">Home</button><button class="'+(formTeam==='away'?'on':'')+'" data-t="away">Away</button></div>'
+      +'<div class="frow2"><select id="fsel">'+opts+'</select><button class="mpill" id="fplace">Place</button></div>'
+      +'<div class="flist">'+rows+'</div>';
+    body.querySelectorAll('.ftabs button').forEach(function(bb){ bb.onclick=function(){ formTeam=bb.dataset.t; buildFormBody(); }; });
+    body.querySelector('#fsel').onchange=function(){ formFormation=this.value; buildFormBody(); };
+    body.querySelector('#fplace').onclick=function(){
+      var rws=[].map.call(body.querySelectorAll('.flist .mrow'), function(r,i){ return { name:r.querySelector('.fnm').value, number:r.querySelector('.fno').value, pos:pos[i] }; });
+      emitAction('formation',{ team:formTeam, formation:formFormation, rows:rws }); closeOv('ov-form');
+    };
+  }
+  function buildSetBody(){
+    var b=cfg.board||{};
+    var body=document.getElementById('set-body');
+    body.innerHTML='<div class="mrow2"><span>Grid lines</span><button class="toggle '+(b.grid?'on':'')+'" id="s-grid"></button></div>'
+      +'<div class="mrow2"><span>Orientation</span><button class="mghost" id="s-orient">'+(b.orientation==='vertical'?'Vertical':'Horizontal')+' — flip</button></div>'
+      +'<div class="mrow2"><span>New board</span><button class="mghost" id="s-new">Clear</button></div>';
+    body.querySelector('#s-grid').onclick=function(){ emitAction('grid',{on:!b.grid}); closeOv('ov-set'); };
+    body.querySelector('#s-orient').onclick=function(){ emitAction('orientation'); closeOv('ov-set'); };
+    body.querySelector('#s-new').onclick=function(){ emitAction('new'); closeOv('ov-set'); };
+  }
   function initChrome(){
-    ['#topbar','#toolrail'].forEach(function(sel){ var el=document.querySelector(sel);
+    ['#topbar','#toolrail','#timeline','#ov-form','#ov-set'].forEach(function(sel){ var el=document.querySelector(sel);
       if(el) el.innerHTML=el.innerHTML.replace(/\$ic:(\w+)\$/g,function(m,k){return TB_IC[k]||'';}); });
     document.querySelectorAll('#toolrail .tool').forEach(function(b){ b.addEventListener('click',function(){ armTool(b.dataset.tool); }); });
     var U=document.getElementById('tb-undo'),R=document.getElementById('tb-redo'),D=document.getElementById('tb-del'),P=document.getElementById('tb-dup');
@@ -1089,6 +1190,16 @@
     if(R) R.onclick=function(){ emit({ts:nextTs(),select:"__keep__",commands:[],redo:true}); };
     if(D) D.onclick=function(){ var ids=selIds(); if(ids.length) emit({ts:nextTs(),select:null,commands:[{op:"delete_objects",ids:ids}]}); };
     if(P) P.onclick=function(){ var ids=selIds(); if(ids.length) emit({ts:nextTs(),select:"__keep__",commands:[{op:"duplicate_objects",ids:ids}]}); };
+    var NW=document.getElementById('tb-new'); if(NW) NW.onclick=function(){ emitAction('new'); };
+    var GR=document.getElementById('tb-grid'); if(GR) GR.onclick=function(){ emitAction('grid',{on:!((cfg.board||{}).grid)}); };
+    var OR=document.getElementById('tb-orient'); if(OR) OR.onclick=function(){ emitAction('orientation'); };
+    var FM=document.getElementById('tb-form'); if(FM) FM.onclick=function(){ formTeam='home'; formFormation=''; buildFormBody(); openOv('ov-form'); };
+    var ST=document.getElementById('tb-set'); if(ST) ST.onclick=function(){ buildSetBody(); openOv('ov-set'); };
+    var PV=document.getElementById('tl-prev'); if(PV) PV.onclick=function(){ var i=((cfg.board||{}).frame_index||0)-1; if(i>=0) emitAction('goto_frame',{index:i}); };
+    var AF=document.getElementById('tl-add'); if(AF) AF.onclick=function(){ emitAction('add_frame'); };
+    var DF=document.getElementById('tl-del'); if(DF) DF.onclick=function(){ emitAction('del_frame'); };
+    document.querySelectorAll('.ov .x[data-close]').forEach(function(x){ x.onclick=function(){ closeOv(x.getAttribute('data-close')); }; });
+    document.querySelectorAll('.ov').forEach(function(o){ o.addEventListener('click',function(e){ if(e.target===o) closeOv(o.id); }); });
     renderChrome();
   }
 
@@ -1119,6 +1230,7 @@
     cfg.colors = args.colors || {};
     cfg.palette = args.palette || [];
     if (args.draw_tool) cfg.drawTool = args.draw_tool;   // Python-armed tool (kept in sync)
+    cfg.board = args.board_state || cfg.board || {};     // frames / grid / orientation for the chrome
     objects = args.objects || [];
     render();
     renderChrome();                          // refresh the in-board panels for the new state

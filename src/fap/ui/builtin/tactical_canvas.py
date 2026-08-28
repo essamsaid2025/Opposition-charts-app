@@ -133,7 +133,9 @@ def parse_result(value: Any) -> dict[str, Any] | None:
     draw_reset = value.get("draw_reset") is True
     undo = value.get("undo") is True     # UI-only intents (like draw_reset) — Ctrl+Z / Ctrl+Y on
     redo = value.get("redo") is True     # the canvas; the caller drives History, not the model.
-    if not commands and sel == "__keep__" and not draw_reset and not undo and not redo:
+    action = _clean_action(value.get("action"))   # in-board top bar / modals (grid/orientation/…)
+    if (not commands and sel == "__keep__" and not draw_reset and not undo and not redo
+            and action is None):
         return None                       # nothing actionable
     out: dict[str, Any] = {"ts": float(ts), "commands": commands, "select": sel}
     if draw_reset:
@@ -142,6 +144,49 @@ def parse_result(value: Any) -> dict[str, Any] | None:
         out["undo"] = True
     if redo:
         out["redo"] = True
+    if action is not None:
+        out["action"] = action
+    return out
+
+
+# UI actions the in-board top bar / modals may emit (NOT board ops — the host maps them to the
+# same session/service calls the old Streamlit toolbar used). Kept as a tight allow-list with
+# typed params, exactly like the batch-op trust boundary.
+_ACTION_NAMES: frozenset[str] = frozenset(
+    {"new", "grid", "snap", "orientation", "add_frame", "del_frame", "goto_frame",
+     "theme", "formation", "template"})
+
+
+def _clean_action(a: Any) -> dict[str, Any] | None:
+    """Validate one UI action into ``{"name", ...typed params}`` or ``None``."""
+    if not isinstance(a, dict):
+        return None
+    name = a.get("name")
+    if name not in _ACTION_NAMES:
+        return None
+    out: dict[str, Any] = {"name": name}
+    if name in ("grid", "snap"):
+        out["on"] = bool(a.get("on", True))
+    elif name == "goto_frame":
+        try:
+            out["index"] = int(a.get("index", 0))
+        except (TypeError, ValueError):
+            out["index"] = 0
+    elif name in ("theme", "template"):
+        out["id"] = str(a.get("id", ""))
+    elif name == "formation":
+        out["team"] = "away" if str(a.get("team")) == "away" else "home"
+        out["formation"] = str(a.get("formation", ""))
+        rows = a.get("rows")
+        clean_rows: list[dict[str, Any]] = []
+        if isinstance(rows, list):
+            for r in rows[:40]:
+                if not isinstance(r, dict):
+                    continue
+                clean_rows.append({"name": str(r.get("name", ""))[:40],
+                                   "number": str(r.get("number", ""))[:4],
+                                   "pos": str(r.get("pos", ""))[:6]})
+        out["rows"] = clean_rows
     return out
 
 
@@ -149,7 +194,8 @@ def tactical_canvas(svg: str, objects: list[dict[str, Any]], *, key: str,
                     colors: dict[str, str], palette: list[dict[str, Any]],
                     selected_id: str | None, snap: float, editable: bool,
                     nonce: str, draw_tool: dict[str, Any] | None = None,
-                    selected_ids: list[str] | None = None
+                    selected_ids: list[str] | None = None,
+                    board_state: dict[str, Any] | None = None
                     ) -> tuple[bool, dict[str, Any] | None]:
     """Render the interactive board and return ``(rendered, intent)``.
 
@@ -171,6 +217,7 @@ def tactical_canvas(svg: str, objects: list[dict[str, Any]], *, key: str,
         value = _component()(svg=svg, objects=objects, colors=colors, palette=palette,
                              selected_id=selected_id, selected_ids=list(selected_ids or []),
                              snap=float(snap), editable=bool(editable), draw_tool=draw_tool,
+                             board_state=dict(board_state or {}),
                              nonce=nonce, key=key, default=None)
     except Exception:
         return False, None

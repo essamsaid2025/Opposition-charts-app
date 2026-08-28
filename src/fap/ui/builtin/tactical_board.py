@@ -281,6 +281,64 @@ def _detach_ball_on_manual_move(board: Board, cmd: dict) -> None:
         cmd["props"] = props
 
 
+def _handle_action(act: dict) -> bool:
+    """Apply an in-board top-bar / modal UI action (the same operations the old Streamlit
+    toolbar exposed). Session/board only — download-dependent actions (save/export/load) stay
+    as Streamlit controls. Returns True (the caller reruns)."""
+    name = act.get("name")
+    board = st.session_state[TB_BOARD]
+    if name == "new":
+        _new_board()
+    elif name == "grid":
+        st.session_state[TB_GRID] = bool(act.get("on", True))
+    elif name == "snap":
+        st.session_state[TB_SNAP] = bool(act.get("on", True))
+    elif name == "orientation":
+        cur = board.pitch.orientation
+        _apply({"op": "set_pitch", "orientation": ("vertical" if cur == "horizontal" else "horizontal")})
+    elif name == "theme":
+        st.session_state[TB_HIST].record(board)
+        board.meta["theme"] = str(act.get("id", "")); board.touch()
+    elif name == "goto_frame":
+        _set_frame(int(act.get("index", 0)))
+    elif name == "add_frame":
+        cur = _frame_index()
+        _apply({"op": "add_frame", "from": cur}); _set_frame(cur + 1)
+    elif name == "del_frame":
+        _apply({"op": "delete_frame", "index": _frame_index()})
+        _set_frame(max(0, _frame_index() - 1))
+    elif name == "template":
+        try:
+            from fap.tactical.templates import builtin_template
+            b = builtin_template(str(act.get("id", "")))
+            if b is not None:
+                _load(b)
+        except Exception:
+            return False
+    elif name == "formation":
+        from fap.tactical.models import TacticalObject, new_id
+        from fap.tactical.templates import _FORMATIONS
+        fmt = str(act.get("formation") or "4-3-3")
+        team = "away" if act.get("team") == "away" else "home"
+        rows = act.get("rows") or []
+        pts = _FORMATIONS.get(fmt, _FORMATIONS["4-3-3"])
+        st.session_state[TB_HIST].record(board)
+        fr = board.frame(_frame_index())
+        for i, (x, y, num, gk) in enumerate(pts):
+            px = x if team == "home" else 100 - x
+            r = rows[i] if i < len(rows) else {}
+            number = (str(r.get("number")).strip() or str(num)) if r.get("number") not in (None, "") else num
+            fr.objects.append(TacticalObject(
+                id=new_id(), type="player", x=float(px), y=float(y),
+                props={"number": number, "team": team, "name": str(r.get("name", "")),
+                       "color": "", "role": str(r.get("pos", "")), "goalkeeper": bool(gk),
+                       "captain": False}))
+        board.touch()
+    else:
+        return False
+    return True
+
+
 def _commit_canvas(result: dict, can_edit: bool) -> bool:
     """Apply one validated canvas intent batch to the AUTHORITATIVE board. Returns True if
     anything changed. Deduplicated by the browser's monotonic ``ts`` (so a value Streamlit
@@ -299,6 +357,8 @@ def _commit_canvas(result: dict, can_edit: bool) -> bool:
         _undo(); return True
     if result.get("redo") and can_edit:
         _redo(); return True
+    if result.get("action") and can_edit:                # in-board top bar / modal actions
+        return _handle_action(result["action"])
 
     changed = False
     # Escape in draw mode: the canvas sent a UI-only ``draw_reset`` (not a board command) —
@@ -378,20 +438,21 @@ class TacticalBoardPage(Page):
         # so every panel (board + properties) reflects it in this same run
         _consume_canvas_intent(can_edit)
 
-        C.render_section_title(
-            "Tactical Board", eyebrow="Analysis", icon_name="setpiece",
-            subtitle="Design routines, animate frames and share professional coaching boards.")
-
-        self._toolbar(shell, svc, board, hist, can_edit)
-
-        # The Tacticalista-style editor chrome (tool rail + context panels + top bar) now lives
-        # INSIDE the board component, so the board takes the full width. Formations / saved boards
-        # (which need Python) stay as a slim expander; the old Streamlit rail/properties/objects
-        # panels are retired — their capabilities moved in-board.
+        # The editor is now a SINGLE full-bleed surface (Tacticalista-style): the component owns
+        # the top bar, the tool rail, the context panels, the frame timeline and the Formation /
+        # Settings dialogs. The only Streamlit bits left are the download-dependent ones (save a
+        # board, load a saved board, export a file) which a sandboxed component can't do — kept in
+        # one collapsed "File" expander so they never dominate the editor. No page title, no
+        # Streamlit toolbar, no side panels, no bottom timeline — those all moved in-board.
         self._board_view(shell, board, can_edit)
-        with st.expander("Templates, formations & saved boards", expanded=False):
+        with st.expander("File — name, theme, save, load & export", expanded=False):
+            fcols = st.columns([3, 2])
+            nm = fcols[0].text_input("Board name", value=board.name, key="tb_name")
+            if nm != board.name:
+                _apply({"op": "rename_board", "name": nm}, record=False)
+            self._theme_selector(shell, board, fcols[1])
+            self._toolbar(shell, svc, board, hist, can_edit)
             self._templates_and_saved(shell, svc, board, can_edit)
-        self._timeline(board, can_edit)
 
     # ------------------------------------------------------------ toolbar
     def _toolbar(self, shell, svc, board, hist, can_edit) -> None:
@@ -619,13 +680,8 @@ class TacticalBoardPage(Page):
         flash = st.session_state.pop("_tb_flash", "")
         if flash:
             C.render_alert(flash, "success")
-        hcols = st.columns([4, 1.6])
-        name = hcols[0].text_input("Board name", value=board.name, key="tb_name",
-                                   label_visibility="collapsed")
-        if name != board.name:
-            _apply({"op": "rename_board", "name": name}, record=False)
-        self._theme_selector(shell, board, hcols[1])
-
+        # (board name + theme now live in the collapsed File expander — the board itself is
+        # the full-bleed editor, with no Streamlit header above it.)
         grid = st.session_state.get(TB_GRID, False)
         sel = st.session_state.get(TB_SEL)
         colors = _resolve_board_colors(shell, board)
@@ -653,14 +709,23 @@ class TacticalBoardPage(Page):
         if not multi and sel:
             multi = [sel]
         _svg_sig = _hashlib.md5(svg.encode("utf-8")).hexdigest()[:16]
-        nonce = f"{_svg_sig}|{tool}|{int(bool(snap))}|{','.join(multi)}|{int(bool(can_edit))}"
+        nonce = (f"{_svg_sig}|{tool}|{int(bool(snap))}|{','.join(multi)}|{int(bool(can_edit))}"
+                 f"|{_frame_index()}|{len(board.frames)}|{board.pitch.orientation}|{int(bool(grid))}")
         # palette=[] retires the old always-on drag-chip strip (option a): adding pieces now
         # lives solely in the left rail (click a category item, or arm a draw tool). The JS
         # renderPalette() hides the strip when the palette is empty — no JS change needed.
+        board_state = {
+            "frames": [{"name": f.name or f"Frame {i + 1}"} for i, f in enumerate(board.frames)],
+            "frame_index": _frame_index(), "grid": bool(grid),
+            "orientation": board.pitch.orientation, "theme": board.meta.get("theme", ""),
+            "formations": ["4-3-3", "4-2-3-1", "4-4-2", "3-5-2"],
+            "templates": ["Set Pieces", "Pressing", "Build-up", "Transitions"],
+        }
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
             palette=[], selected_id=sel, selected_ids=multi,
-            snap=snap, editable=can_edit, nonce=nonce, draw_tool=draw_tool)
+            snap=snap, editable=can_edit, nonce=nonce, draw_tool=draw_tool,
+            board_state=board_state)
         if not rendered:
             # true fallback: the component could not mount, so draw the static SVG. The
             # interaction-agnostic core is still fully usable via Library + Properties.
@@ -673,9 +738,6 @@ class TacticalBoardPage(Page):
             # where the value wasn't in session_state yet — a graceful catch-up.
             if result is not None and _commit_canvas(result, can_edit):
                 st.rerun()
-            st.caption("Drag pieces to move · click to select · Delete removes. Add pieces "
-                       "from the left rail (click a category, or arm a draw tool to click-drag "
-                       "shapes). Fine-tune anything in Properties.")
 
     # ------------------------------------------------------------ objects / layers (Phase 3)
     def _objects_panel(self, board, can_edit) -> None:
