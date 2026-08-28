@@ -154,7 +154,29 @@ def parse_result(value: Any) -> dict[str, Any] | None:
 # typed params, exactly like the batch-op trust boundary.
 _ACTION_NAMES: frozenset[str] = frozenset(
     {"new", "grid", "snap", "orientation", "add_frame", "del_frame", "goto_frame",
-     "theme", "formation", "template", "set_colors"})
+     "theme", "formation", "template", "set_colors", "sync_board"})
+
+
+def _num(v: Any, d: float) -> float:
+    return float(v) if isinstance(v, (int, float)) else d
+
+
+def _clean_sync_objects(objs: Any) -> list[dict[str, Any]]:
+    """Validate the client's full object model (from the client-rendered board) before it
+    replaces the frame's objects. Tight per-object typing; caps the count."""
+    out: list[dict[str, Any]] = []
+    if not isinstance(objs, list):
+        return out
+    for o in objs[:400]:
+        if not isinstance(o, dict) or not isinstance(o.get("type"), str):
+            continue
+        props = o.get("props")
+        out.append({"id": str(o.get("id") or ""), "type": o["type"],
+                    "x": _num(o.get("x"), 50.0), "y": _num(o.get("y"), 50.0),
+                    "rotation": _num(o.get("rotation"), 0.0), "scale": _num(o.get("scale"), 1.0),
+                    "z": int(_num(o.get("z"), 0)),
+                    "props": {str(k): v for k, v in props.items()} if isinstance(props, dict) else {}})
+    return out
 
 
 def _clean_action(a: Any) -> dict[str, Any] | None:
@@ -181,6 +203,8 @@ def _clean_action(a: Any) -> dict[str, Any] | None:
             if isinstance(v, str) and v.strip():
                 cols[k] = v.strip()[:9]
         out["colors"] = cols
+    elif name == "sync_board":
+        out["objects"] = _clean_sync_objects(a.get("objects"))
     elif name == "formation":
         out["team"] = "away" if str(a.get("team")) == "away" else "home"
         out["formation"] = str(a.get("formation", ""))

@@ -419,6 +419,30 @@ def _object_svg(o: TacticalObject, colors: dict[str, str], fr: Frame, *, selecte
 
 
 # ---------------------------------------------------------------- public
+def board_pitch_svg(board: Board, *, colors: dict[str, str] | None = None,
+                    grid: bool = False) -> str:
+    """Pitch-ONLY SVG (no pieces) for the client-rendered live board. Carries a ``#tb-plane``
+    group that IS the 1050x680 pitch-coordinate space (rotated for a vertical pitch) and an
+    empty ``#tb-pieces`` group the JS component renders every piece into — so pieces are drawn
+    and manipulated entirely in the browser (instant), Python only owns the pitch + persistence.
+    ``board_svg`` (full, with pieces) stays unchanged for export and the no-component fallback."""
+    colors = {**DEFAULT_COLORS, **(colors or {})}
+    vertical = board.pitch.orientation == "vertical"
+    defs = (f'<defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" '
+            f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
+    pitch = _pitch_svg(board, colors, grid)
+    inner = f'{defs}{pitch}<g id="tb-pieces"></g>'
+    if vertical:
+        view = f'0 0 {_H} {_W}'
+        content = f'<g id="tb-plane" transform="translate({_H} 0) rotate(90)">{inner}</g>'
+    else:
+        view = f'0 0 {_W} {_H}'
+        content = f'<g id="tb-plane">{inner}</g>'
+    return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
+            f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '
+            f'style="display:block;border-radius:12px">{content}</svg>')
+
+
 def board_svg(board: Board, frame_index: int = 0, *, colors: dict[str, str] | None = None,
               grid: bool = False, selected_id: str | None = None,
               overlays: list[str] | None = None) -> str:

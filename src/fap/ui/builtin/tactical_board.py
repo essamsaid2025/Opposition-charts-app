@@ -20,7 +20,7 @@ from fap.tactical import (
 from fap.tactical import geometry as _tgeo
 from fap.tactical.ops import apply_command as _apply_command
 from fap.tactical.ops import default_props
-from fap.tactical.render import DEFAULT_COLORS
+from fap.tactical.render import DEFAULT_COLORS, board_pitch_svg
 from fap.tactical.theme_colors import tactical_colors_from_theme
 from fap.theme import components as C
 from fap.ui.builtin.tactical_canvas import parse_result, tactical_canvas
@@ -37,6 +37,13 @@ TB_CANVAS_TS = "_tb_canvas_ts"    # last processed canvas action (dedups Streaml
 TB_PROP_FOR = "_tb_prop_for"      # object id the Properties widgets are currently synced to
 TB_DRAW_TOOL = "_tb_draw_tool"    # armed click-drag draw tool ("select" = off); persistent/sticky
 TB_MULTI = "_tb_multisel"         # object ids selected in the Objects/Layers panel (Phase 3)
+TB_MODEL_REV = "_tb_model_rev"    # bumps ONLY when Python changes the frame's objects (undo/frame/
+#                                   formation/new/load/template) so the client-rendered board adopts
+#                                   the new model; a client sync_board does NOT bump it (client owns it)
+
+
+def _bump_model_rev() -> None:
+    st.session_state[TB_MODEL_REV] = int(st.session_state.get(TB_MODEL_REV, 0)) + 1
 
 # vector object types the arrow-style / arrowhead editors apply to (UI-side mirror of
 # ops._VECTOR_TYPES; kept local so the UI has no import-time coupling to ops internals)
@@ -141,6 +148,7 @@ def _undo() -> None:
         st.session_state[TB_BOARD] = b
         st.session_state[TB_SEL] = None
         st.session_state.pop(TB_MULTI, None)
+        _bump_model_rev()               # Python changed the model → client adopts it
 
 
 def _redo() -> None:
@@ -148,6 +156,7 @@ def _redo() -> None:
     if b is not None:
         st.session_state[TB_BOARD] = b
         st.session_state.pop(TB_MULTI, None)
+        _bump_model_rev()
 
 
 def _new_board() -> None:
@@ -155,6 +164,7 @@ def _new_board() -> None:
     st.session_state[TB_HIST] = History()
     st.session_state[TB_FRAME] = 0
     st.session_state[TB_SEL] = None
+    _bump_model_rev()
 
 
 def _load(board: Board) -> None:
@@ -162,6 +172,7 @@ def _load(board: Board) -> None:
     st.session_state[TB_HIST] = History()
     st.session_state[TB_FRAME] = 0
     st.session_state[TB_SEL] = None
+    _bump_model_rev()
 
 
 def _toggle(flag: str) -> None:
@@ -320,14 +331,29 @@ def _handle_action(act: dict) -> bool:
             st.session_state[TB_HIST].record(board)
             merged = dict(board.meta.get("colors") or {}); merged.update(cols)
             board.meta["colors"] = merged; board.touch()
+    elif name == "sync_board":
+        # the client-rendered board is authoritative for the CURRENT frame's pieces; persist its
+        # full object model. Debounced client-side so a burst of edits = one undo step. Never bumps
+        # model_rev (the client already shows exactly this) — so it is NOT echoed back as an adopt.
+        from fap.tactical.models import TacticalObject, new_id
+        fr = board.frame(_frame_index())
+        st.session_state[TB_HIST].record(board)
+        fr.objects = [TacticalObject(
+            id=(str(o.get("id")) or new_id()), type=str(o.get("type", "player")),
+            x=float(o.get("x", 50.0)), y=float(o.get("y", 50.0)),
+            rotation=float(o.get("rotation", 0.0)), scale=float(o.get("scale", 1.0)),
+            z=int(o.get("z", 0)), props=dict(o.get("props") or {}))
+            for o in (act.get("objects") or [])]
+        board.touch()
+        return True
     elif name == "goto_frame":
-        _set_frame(int(act.get("index", 0)))
+        _set_frame(int(act.get("index", 0))); _bump_model_rev()
     elif name == "add_frame":
         cur = _frame_index()
-        _apply({"op": "add_frame", "from": cur}); _set_frame(cur + 1)
+        _apply({"op": "add_frame", "from": cur}); _set_frame(cur + 1); _bump_model_rev()
     elif name == "del_frame":
         _apply({"op": "delete_frame", "index": _frame_index()})
-        _set_frame(max(0, _frame_index() - 1))
+        _set_frame(max(0, _frame_index() - 1)); _bump_model_rev()
     elif name == "template":
         try:
             from fap.tactical.templates import builtin_template
@@ -354,7 +380,7 @@ def _handle_action(act: dict) -> bool:
                 props={"number": number, "team": team, "name": str(r.get("name", "")),
                        "color": "", "role": str(r.get("pos", "")), "goalkeeper": bool(gk),
                        "captain": False}))
-        board.touch()
+        board.touch(); _bump_model_rev()
     else:
         return False
     return True
@@ -706,9 +732,11 @@ class TacticalBoardPage(Page):
         grid = st.session_state.get(TB_GRID, False)
         sel = st.session_state.get(TB_SEL)
         colors = _resolve_board_colors(shell, board)
-        # selection ring is now drawn CLIENT-SIDE by the component (selection is client-owned and
-        # instant — no round-trip), so the server SVG carries no ring. selected_id=None.
-        svg = board_svg(board, _frame_index(), colors=colors, grid=grid, selected_id=None)
+        # CLIENT-RENDERED board: Python draws ONLY the pitch (with a #tb-pieces group); the JS
+        # component renders + manipulates every piece itself for instant, Tacticalista-smooth
+        # control, and syncs the whole model back (debounced) via the sync_board action. board_svg
+        # (full) is kept for the no-component fallback + export.
+        svg = board_pitch_svg(board, colors=colors, grid=grid)
 
         # Phase 15: the JS drag-and-drop canvas is the primary renderer + interaction.
         # It reuses the Python SVG above and only reports intent (JSON commands); if it
@@ -728,15 +756,16 @@ class TacticalBoardPage(Page):
         # editability) are appended so arming a tool or changing selection still pushes a fresh
         # render.
         import hashlib as _hashlib
-        multi = [i for i in (st.session_state.get(TB_MULTI) or []) if board.frame(_frame_index()).object(i)]
-        if not multi and sel:
-            multi = [sel]
+        model_rev = int(st.session_state.get(TB_MODEL_REV, 0))
+        fr = board.frame(_frame_index())
+        model = [{"id": o.id, "type": o.type, "x": o.x, "y": o.y, "rotation": o.rotation,
+                  "scale": o.scale, "z": o.z, "props": dict(o.props or {})} for o in fr.objects]
+        # The component re-renders the PITCH only when its SVG changes (colours/grid/orientation/
+        # kind) and ADOPTS the Python model only when model_rev changes (undo / frame / formation /
+        # new / load). Client-side piece edits bump neither — they stay instant and are synced back
+        # via the debounced sync_board action, so the board never round-trips just to move a piece.
         _svg_sig = _hashlib.md5(svg.encode("utf-8")).hexdigest()[:16]
-        nonce = (f"{_svg_sig}|{tool}|{int(bool(snap))}|{','.join(multi)}|{int(bool(can_edit))}"
-                 f"|{_frame_index()}|{len(board.frames)}|{board.pitch.orientation}|{int(bool(grid))}")
-        # palette=[] retires the old always-on drag-chip strip (option a): adding pieces now
-        # lives solely in the left rail (click a category item, or arm a draw tool). The JS
-        # renderPalette() hides the strip when the palette is empty — no JS change needed.
+        nonce = f"{_svg_sig}|{tool}|{int(bool(snap))}|{int(bool(can_edit))}|{model_rev}"
         board_state = {
             "frames": [{"name": f.name or f"Frame {i + 1}"} for i, f in enumerate(board.frames)],
             "frame_index": _frame_index(), "grid": bool(grid),
@@ -745,16 +774,17 @@ class TacticalBoardPage(Page):
             "templates": ["Set Pieces", "Pressing", "Build-up", "Transitions"],
             "colors": {"home": colors.get("home", "#e23b3b"), "away": colors.get("away", "#2f6fd6"),
                        "grass": colors.get("grass", "#ffffff"), "line": colors.get("line", "#14181f")},
+            "model": model, "model_rev": model_rev,
         }
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tb_canvas", colors=colors,
-            palette=[], selected_id=sel, selected_ids=multi,
+            palette=[], selected_id=sel, selected_ids=(([sel] if sel else [])),
             snap=snap, editable=can_edit, nonce=nonce, draw_tool=draw_tool,
             board_state=board_state)
         if not rendered:
-            # true fallback: the component could not mount, so draw the static SVG. The
-            # interaction-agnostic core is still fully usable via Library + Properties.
-            st.markdown(f'<div class="tb-board">{svg}</div>', unsafe_allow_html=True)
+            # fallback: the component could not mount → draw the FULL static board (pitch + pieces).
+            full = board_svg(board, _frame_index(), colors=colors, grid=grid)
+            st.markdown(f'<div class="tb-board">{full}</div>', unsafe_allow_html=True)
             st.caption("Drag-and-drop canvas unavailable — use the Library to add pieces "
                        "and the Precise positioning controls in Properties.")
         else:

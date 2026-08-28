@@ -168,6 +168,8 @@
       <button class="tool" data-tool="away" title="Away player">$ic:jerseyO$</button>
       <button class="tool" data-tool="ball" title="Ball">$ic:ball$</button>
       <button class="tool" data-tool="cone" title="Cone">$ic:cone$</button>
+      <button class="tool" data-tool="goal" title="Goal">$ic:goal$</button>
+      <button class="tool" data-tool="mannequin" title="Mannequin">$ic:mannequin$</button>
       <button class="tool" data-tool="arrow" title="Arrow">$ic:arrow$</button>
       <button class="tool" data-tool="curved_arrow" title="Curved arrow">$ic:arrowC$</button>
       <button class="tool" data-tool="dashed_arrow" title="Dashed arrow">$ic:arrowD$</button>
@@ -208,29 +210,18 @@
   // undo / redo / draw) drains them in the SAME payload, or leaving the board (blur — e.g.
   // clicking Save / a toolbar button) flushes them. ``setComponentValue`` is a single value
   // slot, so everything travels in ONE payload (a second emit would overwrite the first).
-  var pendingCmds = [], pendingSel = "__keep__";
-  function flushSync() {
-    if (!pendingCmds.length && pendingSel === "__keep__") return;
-    var c = pendingCmds, s = pendingSel; pendingCmds = []; pendingSel = "__keep__";
-    send("streamlit:setComponentValue", { dataType: "json", value: { ts: nextTs(), commands: c, select: s } });
-  }
-  function queueMove(commands, sel) {                 // LOCAL ONLY: accumulate, never rerun on its own
-    if (commands && commands.length) pendingCmds = pendingCmds.concat(commands);
-    if (sel !== undefined) pendingSel = sel;
-  }
+  // Board edits are applied to the CLIENT model instantly (applyLocal) and synced to Python
+  // debounced; only undo/redo/actions round-trip. queueMove/emit are kept as the same seam the
+  // interaction handlers already call, now routed locally.
+  function queueMove(commands) { if (commands && commands.length) applyLocal(commands); }
+  function flushSync() { flushSyncNow(); }            // persist the model on blur / tab hide
   function emit(payload) {
-    // immediate action: drain any queued local edits into THIS payload first (single-slot safe),
-    // preserving order (moves applied before the new command) and Python-owns-state.
     payload = payload || {};
-    if (pendingCmds.length) {
-      payload.commands = pendingCmds.concat(payload.commands || []);
-      if (payload.select === undefined || payload.select === "__keep__") payload.select = pendingSel;
-      pendingCmds = []; pendingSel = "__keep__";
-    }
-    if (payload.ts == null) payload.ts = nextTs();
-    send("streamlit:setComponentValue", { dataType: "json", value: payload });
+    if (payload.commands && payload.commands.length) applyLocal(payload.commands);
+    if (payload.undo) sendIntent({ undo: true });
+    if (payload.redo) sendIntent({ redo: true });
+    if (payload.action) sendIntent({ action: payload.action });
   }
-  // never lose queued edits when focus/visibility leaves the board (e.g. clicking a Streamlit control)
   window.addEventListener("blur", flushSync);
   document.addEventListener("visibilitychange", function () { if (document.hidden) flushSync(); });
 
@@ -344,11 +335,15 @@
   // (drawSelectionDecor), the in-board Properties panel is already client-side, and delete /
   // duplicate / keyboard all read the local selection (selIds). Python no longer draws a ring
   // (board_svg is passed selected_id=None) and no longer needs the selection.
+  function updateSelButtons(){          // keep the top-bar delete/duplicate live with client selection
+    var n = selIds().length, del = document.getElementById('tb-del'), dup = document.getElementById('tb-dup');
+    if (del) del.disabled = !n; if (dup) dup.disabled = !n;
+  }
   function _applyLocalSel(ids){
     cfg.selectedIds = ids.slice();
     cfg.selectedId = ids.length ? ids[ids.length - 1] : null;
     focusStage();                       // ensure Delete/Backspace reach the keydown handler
-    clearSelectionDecor(); drawSelectionDecor(); renderCtx();
+    clearSelectionDecor(); drawSelectionDecor(); renderCtx(); updateSelButtons();
   }
   function emitSel(ids) { _applyLocalSel(ids); }
   function select(id) { _applyLocalSel(id != null ? [id] : []); }
@@ -937,18 +932,19 @@
 
   function render() {
     applyColors(cfg.colors || {});
-    stage.innerHTML = cfg.svg || "";
+    stage.innerHTML = cfg.svg || "";                     // pitch-only SVG (with #tb-plane/#tb-pieces)
     svg = stage.querySelector("svg");
     if (!svg) { setHeight(); return; }
-    wireObjects();
-    // empty-pitch pointerdown: draw a new object if a draw tool is armed, else clear selection
+    plane = svg.querySelector("#tb-plane") || svg;
+    // empty-pitch pointerdown: place / draw / marquee / clear (pieces have their own handlers)
     svg.addEventListener("pointerdown", function (e) {
-      if (!isEmptyPitch(e)) return;                       // on a piece/handle -> their own drags
+      if (!isEmptyPitch(e)) return;
       if (cfg.editable && cfg.placeTool) { placeAt(e); return; }   // point-object tool → click to place
       if (cfg.editable && cfg.drawTool) { beginDraw(e); return; }
       if (cfg.editable) { beginMarquee(e); return; }      // drag-to-select (click = clear)
       if (cfg.selectedId != null) select(null);
     });
+    renderPieces();                                       // draw all pieces client-side (instant)
     renderPalette();
     setHeight();
   }
@@ -1030,12 +1026,14 @@
     plus:'<svg '+TS+'><path d="M12 5v14M5 12h14"/></svg>',
     chevL:'<svg '+TS+'><path d="M15 6l-6 6 6 6"/></svg>',
     chevR:'<svg '+TS+'><path d="M9 6l6 6-6 6"/></svg>',
-    team:'<svg '+TS+'><circle cx="9" cy="9" r="2.5"/><circle cx="16" cy="10" r="2"/><path d="M4 18c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>'
+    team:'<svg '+TS+'><circle cx="9" cy="9" r="2.5"/><circle cx="16" cy="10" r="2"/><path d="M4 18c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>',
+    goal:'<svg '+TS+'><path d="M5 7v11M19 7v11M5 7h14"/><path d="M5 11h14M8 7v11M12 7v11M16 7v11" stroke-width="0.9"/></svg>',
+    mannequin:'<svg '+TS+'><circle cx="12" cy="7" r="2.4"/><rect x="9.6" y="10" width="4.8" height="9" rx="2"/></svg>'
   };
   function escH(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
-  var POINT={ home:1, away:1, ball:1, cone:1, text:1 };
+  var POINT={ home:1, away:1, ball:1, cone:1, text:1, goal:1, mannequin:1 };
   var DRAWT={ arrow:1, curved_arrow:1, dashed_arrow:1, line:1, circle:1, shape:1, zone:1 };
-  function labelFor(t){ return {home:'Home player',away:'Away player',ball:'Ball',cone:'Cone',arrow:'Arrow',curved_arrow:'Curved arrow',dashed_arrow:'Dashed arrow',line:'Line',circle:'Circle',shape:'Rectangle',zone:'Zone',text:'Text'}[t]||t; }
+  function labelFor(t){ return {home:'Home player',away:'Away player',ball:'Ball',cone:'Cone',goal:'Goal',mannequin:'Mannequin',arrow:'Arrow',curved_arrow:'Curved arrow',dashed_arrow:'Dashed arrow',line:'Line',circle:'Circle',shape:'Rectangle',zone:'Zone',text:'Text'}[t]||t; }
 
   function placeAt(e){                                    // click-to-place a point object
     var loc = toPlane(e.clientX, e.clientY); if (!loc) return;
@@ -1044,7 +1042,7 @@
                                       props: Object.assign({}, t.props || {}) }] });
   }
   function toolType(name){ return (name==="home"||name==="away") ? "player" : name; }
-  function hasDefaults(name){ return name!=="select" && name!=="ball" && name!=="cone"; }
+  function hasDefaults(name){ return name!=="select" && name!=="ball" && name!=="cone" && name!=="goal" && name!=="mannequin"; }
   function defaultsFor(name){                             // starting props for a tool's sticky defaults
     if (name==="home"||name==="away") return { team:(name==="away"?"away":"home"), number:0, name:"", color:"", goalkeeper:false, captain:false };
     if (name==="circle") return { color:"#2f7bd6", filled:false, opacity:0.28, stroke_width:2.5 };
@@ -1242,6 +1240,132 @@
     renderChrome();
   }
 
+  // ==================== CLIENT-SIDE RENDERER (Tacticalista-smooth) ====================
+  // Python draws only the pitch (#tb-pieces group inside #tb-plane). The component renders EVERY
+  // piece here from `objects` (the client-owned model) and manipulates it instantly — add / move /
+  // edit / delete / select never round-trip. The full model is synced back to Python debounced
+  // (sync_board), and adopted from Python only when model_rev changes (undo / frame / formation).
+  var piecesLayer = null, _adoptedRev = -1;
+  var syncTimer = null, syncDirty = false;
+  function emitToPython(payload){ payload.ts = nextTs(); send("streamlit:setComponentValue", { dataType: "json", value: payload }); }
+  function scheduleSync(){ syncDirty = true; if (syncTimer) clearTimeout(syncTimer); syncTimer = setTimeout(flushSyncNow, 350); }
+  function flushSyncNow(){
+    if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+    if (!syncDirty) return; syncDirty = false;
+    emitToPython({ action: { name: "sync_board", objects: objects.map(function(o){
+      return { id:o.id, type:o.type, x:o.x, y:o.y, rotation:o.rotation||0, scale:o.scale||1, z:o.z||0, props:o.props||{} }; }) } });
+  }
+  function sendIntent(payload){ flushSyncNow(); emitToPython(payload); }   // undo/redo/action see the latest model
+  function mirrorGeom(m){ ["x2","y2","curvature","w","h"].forEach(function(k){ if(m.props && m.props[k]!=null) m[k]=m.props[k]; }); }
+  function newOid(){ return "obj_" + Math.random().toString(36).slice(2, 12); }
+  function baseProps(type){
+    if(type==="player") return {number:0, team:"home", color:"", name:"", goalkeeper:false, captain:false};
+    if(type==="circle") return {w:14,h:14,color:"",opacity:0.28,shape:"ellipse",filled:false,stroke_width:2.5};
+    if(type==="zone"||type==="shape"||type==="highlight") return {w:20,h:16,color:"",opacity:0.28,shape:"rect",filled:true,stroke_width:2};
+    if(VECTOR[type]) return {x2:62,y2:50,curvature:0,variant:"",label:""};
+    if(type==="text"||type==="number") return {text:"T",size:14,color:""};
+    return {};
+  }
+  // ---- per-object SVG (mirrors render.py shapes; colours from cfg.colors) ----
+  function pxy(o){ return { x:o.x/100*PLANE_W, y:o.y/100*PLANE_H }; }
+  function inkFor(hex){ try{ var h=String(hex).replace('#',''); var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16); return (0.299*r+0.587*g+0.114*b)>150?'#111318':'#ffffff'; }catch(e){ return '#fff'; } }
+  function teamColor(o){ var p=o.props||{}; return p.color || (p.team==='away'?(cfg.colors.away||'#2f6fd6'):(cfg.colors.home||'#e23b3b')); }
+  function arrowHead(tip, from, col){
+    var ang=Math.atan2(tip.y-from.y, tip.x-from.x), L=13;
+    var x1=tip.x-L*Math.cos(ang-0.42), y1=tip.y-L*Math.sin(ang-0.42);
+    var x2=tip.x-L*Math.cos(ang+0.42), y2=tip.y-L*Math.sin(ang+0.42);
+    return '<path d="M'+tip.x+' '+tip.y+' L'+x1+' '+y1+' L'+x2+' '+y2+' Z" fill="'+col+'"/>';
+  }
+  function vectorSVG(o){
+    var p=o.props||{}, s=pxy(o), e=pxy({x:(p.x2!=null?p.x2:o.x+12), y:(p.y2!=null?p.y2:o.y)});
+    var col=(cfg.colors.line||'#14181f'), sw=3, dash=(o.type==='dashed_arrow')?' stroke-dasharray="9 7"':'', path, from=s;
+    if(o.type==='curved_arrow'){ var k=(p.curvature!=null?p.curvature:0.3), cp=curveControlPoint(s,e,k); path='M '+s.x+' '+s.y+' Q '+cp.x+' '+cp.y+' '+e.x+' '+e.y; from=cp; }
+    else path='M '+s.x+' '+s.y+' L '+e.x+' '+e.y;
+    var head=(o.type!=='line')?arrowHead(e, from, col):'';
+    return '<path d="'+path+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'"'+dash+' stroke-linecap="round"/>'+head;
+  }
+  function pieceSVG(o){
+    var p=o.props||{}, c=pxy(o), x=c.x, y=c.y, sc=o.scale||1, LN=(cfg.colors.line||'#14181f');
+    if(o.type==='player'){
+      var fill=teamColor(o), r=18*sc, s='';
+      s+='<ellipse cx="'+x+'" cy="'+(y+r*0.85)+'" rx="'+(r*0.9)+'" ry="'+(r*0.32)+'" fill="#000" fill-opacity="0.16"/>';
+      if(p.goalkeeper) s+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+3.5)+'" fill="none" stroke="'+LN+'" stroke-width="2" stroke-dasharray="3 3"/>';
+      s+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+1.2)+'" fill="#0d0f13" fill-opacity="0.5"/>';
+      s+='<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="'+fill+'" stroke="'+LN+'" stroke-width="2.2"/>';
+      var num=(p.number!=null&&p.number!=='')?p.number:'';
+      if(num!=='') s+='<text x="'+x+'" y="'+(y+r*0.34)+'" text-anchor="middle" font-size="'+(r*0.9).toFixed(0)+'" font-weight="800" fill="'+inkFor(fill)+'" font-family="Inter,Arial">'+escH(num)+'</text>';
+      if(p.captain) s+='<text x="'+(x+r*0.95)+'" y="'+(y-r*0.7)+'" font-size="'+(r*0.8).toFixed(0)+'" font-weight="800" fill="#c8a24a">C</text>';
+      if(p.name) s+='<text x="'+x+'" y="'+(y+r+14)+'" text-anchor="middle" font-size="13" font-weight="600" fill="'+(cfg.colors.text||LN)+'" font-family="Inter,Arial" paint-order="stroke" stroke="#fff" stroke-width="3" stroke-linejoin="round">'+escH(p.name)+'</text>';
+      return s;
+    }
+    if(o.type==='ball'){ var rb=8*sc; return '<circle cx="'+x+'" cy="'+y+'" r="'+rb+'" fill="#fff" stroke="#111318" stroke-width="1.4"/><circle cx="'+x+'" cy="'+y+'" r="'+(rb*0.42)+'" fill="#111318"/>'; }
+    if(o.type==='cone'){ var cs=8*sc; return '<path d="M'+x+' '+(y-cs*1.4)+' L'+(x+cs)+' '+(y+cs)+' L'+(x-cs)+' '+(y+cs)+' Z" fill="'+(cfg.colors.cone||'#f0a020')+'" stroke="#111318" stroke-width="1"/>'; }
+    if(VECTOR[o.type]) return vectorSVG(o);
+    if(o.type==='zone'||o.type==='shape'||o.type==='highlight'||o.type==='circle'){
+      var w=(p.w||14)/100*PLANE_W, h=(p.h||14)/100*PLANE_H, col=p.color||cfg.colors.accent||'#2f7bd6';
+      var op=(p.opacity==null?0.28:p.opacity), filled=p.filled!==false, swd=(p.stroke_width==null?2:p.stroke_width), scol=p.stroke_color||col;
+      var dash=(p.stroke_style==='dashed')?' stroke-dasharray="8 6"':(p.stroke_style==='dotted'?' stroke-dasharray="2 5"':'');
+      var fa=filled?(' fill="'+col+'" fill-opacity="'+op+'"'):' fill="none"';
+      if(o.type==='circle'||p.shape==='ellipse') return '<ellipse cx="'+x+'" cy="'+y+'" rx="'+(w/2)+'" ry="'+(h/2)+'"'+fa+' stroke="'+scol+'" stroke-width="'+swd+'"'+dash+'/>';
+      if(p.shape==='triangle') return '<path d="M'+x+' '+(y-h/2)+' L'+(x+w/2)+' '+(y+h/2)+' L'+(x-w/2)+' '+(y+h/2)+' Z"'+fa+' stroke="'+scol+'" stroke-width="'+swd+'"'+dash+'/>';
+      return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="4"'+fa+' stroke="'+scol+'" stroke-width="'+swd+'"'+dash+'/>';
+    }
+    if(o.type==='text'||o.type==='number') return '<text x="'+x+'" y="'+y+'" text-anchor="middle" font-size="'+(p.size||14)+'" font-weight="700" fill="'+(p.color||cfg.colors.text||LN)+'" font-family="Inter,Arial" paint-order="stroke" stroke="#fff" stroke-width="2.5" stroke-linejoin="round">'+escH(p.text||'T')+'</text>';
+    if(o.type==='goal'){ var gw=34*sc, gh=20*sc, gc=(cfg.colors.goal||'#c7ccd8');
+      return '<g stroke="'+gc+'" stroke-width="3" fill="none"><line x1="'+(x-gw/2)+'" y1="'+(y-gh)+'" x2="'+(x-gw/2)+'" y2="'+y+'"/><line x1="'+(x+gw/2)+'" y1="'+(y-gh)+'" x2="'+(x+gw/2)+'" y2="'+y+'"/><line x1="'+(x-gw/2)+'" y1="'+(y-gh)+'" x2="'+(x+gw/2)+'" y2="'+(y-gh)+'"/></g>'; }
+    if(o.type==='mannequin'){ var ms=13*sc, mc=(cfg.colors.mannequin||'#c9ccd2');
+      return '<circle cx="'+x+'" cy="'+(y-ms)+'" r="'+(ms*0.5)+'" fill="'+mc+'"/><rect x="'+(x-ms*0.4)+'" y="'+(y-ms*0.5)+'" width="'+(ms*0.8)+'" height="'+(ms*1.6)+'" rx="3" fill="'+mc+'"/>'; }
+    if(o.type==='freehand'){ var fp=(p.points||[]); if(fp.length<2) return '';
+      var dd='M '+fp.map(function(pt){ var q=pxy({x:pt[0],y:pt[1]}); return q.x.toFixed(1)+' '+q.y.toFixed(1); }).join(' L ')+(p.closed?' Z':'');
+      return '<path d="'+dd+'" fill="none" stroke="'+(p.color||LN)+'" stroke-width="'+(p.width||3)+'" stroke-linecap="round" stroke-linejoin="round"/>'; }
+    return '<circle cx="'+x+'" cy="'+y+'" r="6" fill="#888"/>';
+  }
+  function renderPieces(){
+    if(!svg) return;
+    plane = svg.querySelector('#tb-plane') || svg;
+    piecesLayer = svg.querySelector('#tb-pieces');
+    if(!piecesLayer) return;
+    piecesLayer.textContent = '';
+    objects.slice().sort(function(a,b){ return (a.z||0)-(b.z||0); }).forEach(function(o){
+      if(o.props && o.props.hidden) return;
+      var c=pxy(o), g=document.createElementNS("http://www.w3.org/2000/svg","g");
+      g.setAttribute("data-oid", o.id);
+      if(o.rotation) g.setAttribute("transform","rotate("+o.rotation+" "+c.x+" "+c.y+")");
+      if(o.props && o.props.locked) g.classList.add("locked");
+      g.style.cursor = (o.props && o.props.locked) ? "not-allowed" : "grab";
+      g.style.touchAction = "none";
+      g.innerHTML = pieceSVG(o);
+      (function(id, kind){ g.addEventListener("pointerdown", function(e){ beginObjectDrag(g, id, kind, e); }); })(o.id, o.type);
+      piecesLayer.appendChild(g);
+    });
+    clearSelectionDecor(); drawSelectionDecor();
+    setHeight();
+  }
+  // ---- apply the JSON commands the interaction layer emits to the LOCAL model (never Python) ----
+  function applyLocal(cmds){
+    var addedId=null;
+    (cmds||[]).forEach(function(cmd){
+      var op=cmd.op;
+      if(op==="add_object"){
+        var o={ id:newOid(), type:cmd.type, x:(cmd.x!=null?cmd.x:50), y:(cmd.y!=null?cmd.y:50),
+                rotation:cmd.rotation||0, scale:1, z:objects.length,
+                props:Object.assign({}, baseProps(cmd.type), cmd.props||{}) };
+        mirrorGeom(o); objects.push(o); addedId=o.id;
+      } else if(op==="update_object"){
+        var m=metaOf(cmd.id); if(m){ if(cmd.x!=null)m.x=cmd.x; if(cmd.y!=null)m.y=cmd.y; if(cmd.rotation!=null)m.rotation=cmd.rotation;
+          if(cmd.props){ m.props=Object.assign(m.props||{}, cmd.props); mirrorGeom(m); } }
+      } else if(op==="move_objects"){
+        (cmd.ids||[]).forEach(function(id){ var m=metaOf(id); if(m && !(m.props&&m.props.locked)){ m.x=clamp(m.x+(cmd.dx||0),0,100); m.y=clamp(m.y+(cmd.dy||0),0,100); } });
+      } else if(op==="delete_objects"){
+        objects = objects.filter(function(o){ return (cmd.ids||[]).indexOf(o.id)===-1; });
+      } else if(op==="duplicate_objects"){
+        (cmd.ids||[]).forEach(function(id){ var m=metaOf(id); if(m){ var cl=JSON.parse(JSON.stringify(m)); cl.id=newOid(); cl.x=clamp(cl.x+3,0,100); cl.y=clamp(cl.y+3,0,100); cl.z=objects.length; objects.push(cl); addedId=cl.id; } });
+      }
+    });
+    if(addedId){ cfg.selectedIds=[addedId]; cfg.selectedId=addedId; }   // auto-select a freshly added piece
+    renderPieces(); renderCtx(); updateSelButtons(); scheduleSync();
+  }
+
   var lastNonce = null;                     // the board version we last drew (see below)
   window.addEventListener("message", function (event) {
     var data = event.data || {};
@@ -1266,19 +1390,24 @@
     cfg.colors = args.colors || {};
     cfg.palette = args.palette || [];
     if (args.draw_tool) cfg.drawTool = args.draw_tool;   // Python-armed tool (kept in sync)
-    cfg.board = args.board_state || cfg.board || {};     // frames / grid / orientation for the chrome
-    objects = args.objects || [];
-    // Selection is client-owned (never sent to Python). On a re-render we KEEP the local
-    // selection — only dropping ids that no longer exist — and auto-select a freshly-added
-    // object (exactly one new id since the last render), so "place then set its number" works.
+    var b = args.board_state || {};
+    cfg.board = b;                                        // frames / grid / orientation / colours
+    // ADOPT the Python model ONLY when the server changed it (undo/redo/frame/formation/new/load →
+    // model_rev bumped). A client-side edit bumps neither model_rev nor the pitch nonce, so pieces
+    // stay instant & local and are never overwritten by a stale re-delivery.
+    if (b.model && b.model_rev !== undefined && b.model_rev !== _adoptedRev) {
+      objects = (b.model || []).map(function(o){
+        var m = { id:o.id, type:o.type, x:o.x, y:o.y, rotation:o.rotation||0, scale:o.scale||1,
+                  z:o.z||0, props:Object.assign({}, o.props||{}) };
+        mirrorGeom(m); return m; });
+      _adoptedRev = b.model_rev;
+    }
+    // client-owned selection: drop ids that no longer exist
     var curIds = {}; objects.forEach(function(o){ curIds[o.id] = 1; });
-    var added = objects.filter(function(o){ return !_prevIds[o.id]; });
     cfg.selectedIds = (cfg.selectedIds || []).filter(function(id){ return curIds[id]; });
-    if (added.length === 1) cfg.selectedIds = [added[0].id];
     cfg.selectedId = cfg.selectedIds.length ? cfg.selectedIds[cfg.selectedIds.length - 1] : null;
-    _prevIds = curIds;
-    render();
-    renderChrome();                          // refresh the in-board panels for the new state
+    render();                                            // re-draw pitch + pieces
+    renderChrome();                                      // refresh the in-board panels
   });
 
   window.addEventListener("resize", setHeight);
