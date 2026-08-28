@@ -40,13 +40,106 @@
   #ghost { position: fixed; pointer-events: none; z-index: 9; width: 30px; height: 30px;
     border-radius: 50%; border: 2px solid #fff; transform: translate(-50%, -50%);
     display: none; box-shadow: 0 2px 10px rgba(0,0,0,.4); }
+
+  /* ===================== Tacticalista-style in-board editor chrome (light) ============ */
+  #editor{ --e-bar:#2c2c30; --e-ink:#1c1e22; --e-mut:#8a8f99; --e-line:#e6e6ec; --e-panel:#fff;
+    --e-canvas:#e8e8ea; --e-chip:#e2e5ea; --e-sel:#4a90d9; --e-head:#2e9e5b; --e-home:#e23b3b;
+    --e-away:#2f6fd6; --e-pill:#1c1e22;
+    display:grid; grid-template-rows:44px auto; background:var(--e-canvas);
+    border:1px solid var(--e-line); border-radius:12px; overflow:hidden;
+    color:var(--e-ink); font-size:13px; }
+  #editor button{ font:inherit; color:inherit; cursor:pointer; }
+  #editor .lbl{ font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--e-mut); font-weight:600; }
+  #topbar{ background:var(--e-bar); color:#fff; display:flex; align-items:center; gap:2px; padding:0 8px; }
+  #topbar .ic{ width:32px; height:30px; display:grid; place-items:center; border-radius:6px; color:#e8e9ec; background:none; border:0; }
+  #topbar .ic:hover{ background:#3a3a40; }
+  #topbar .ic:disabled{ opacity:.35; cursor:default; }
+  #topbar .ic svg{ width:19px; height:19px; }
+  #topbar .sep{ width:1px; height:20px; background:#45454c; margin:0 5px; }
+  #topbar .frames{ display:flex; align-items:center; gap:8px; color:#cfd1d6; font-weight:600; font-size:12px; }
+  #topbar .spacer{ flex:1; }
+  #topbar .zoom{ font-weight:700; color:#fff; padding:0 6px; }
+  #topbar .b2d{ border:1px solid #55555c; border-radius:4px; padding:1px 6px; font-size:11px; font-weight:700; }
+  #editbody{ display:grid; grid-template-columns:214px 46px 1fr; min-height:560px; }
+  #ctxpanel{ background:var(--e-panel); border-right:1px solid var(--e-line); overflow-y:auto; padding:10px 12px 30px; }
+  #ctxpanel::-webkit-scrollbar{ width:9px; } #ctxpanel::-webkit-scrollbar-thumb{ background:#d7d9e0; border-radius:9px; }
+  #toolrail{ background:var(--e-panel); border-right:1px solid var(--e-line); display:flex; flex-direction:column;
+    align-items:center; padding:6px 0; gap:3px; overflow-y:auto; }
+  #toolrail::-webkit-scrollbar{ width:0; }
+  #toolrail .tool{ width:34px; height:32px; border-radius:6px; display:grid; place-items:center; color:#26282d; border:0; background:none; }
+  #toolrail .tool:hover{ background:#f1f2f5; } #toolrail .tool.on{ background:var(--e-chip); }
+  #toolrail .tool svg{ width:20px; height:20px; }
+  #stagewrap{ position:relative; display:grid; place-items:center; padding:18px; overflow:auto; background:var(--e-canvas); }
+  #stagewrap #stage{ border:0; border-radius:4px; background:#fff; box-shadow:0 6px 24px rgba(20,22,28,.14); max-width:100%; }
+  #stagewrap #stage svg.tb-board-svg{ width:min(70vw,1000px); }
+  #hint{ display:none !important; }
+
+  /* context panel controls */
+  #ctxpanel .fn .lbl{ margin-bottom:4px; }
+  #ctxpanel input[type=text],#ctxpanel input[type=number]{ width:100%; border:1px solid var(--e-line); border-radius:6px; padding:7px 9px; font-size:13px; background:#fff; color:var(--e-ink); }
+  #ctxpanel .chead{ display:flex; align-items:center; gap:8px; margin:12px 0 4px; padding:8px 0; border-top:1px solid var(--e-line); }
+  #ctxpanel .chead .q{ width:20px;height:20px;border-radius:50%;background:#e9ebf0;display:grid;place-items:center;color:#7b7f88;font-weight:700;font-size:11px;flex:none; }
+  #ctxpanel .chead b{ font-size:13px; font-weight:700; }
+  #ctxpanel .sec{ padding:11px 0; border-top:1px solid var(--e-line); }
+  #ctxpanel .sec:first-of-type{ border-top:0; }
+  #ctxpanel .row{ display:flex; align-items:center; gap:10px; }
+  #ctxpanel .between{ justify-content:space-between; }
+  #ctxpanel .note{ color:var(--e-mut); font-size:12px; padding:6px 0; }
+  #ctxpanel .seg{ display:flex; border:1px solid var(--e-line); border-radius:7px; overflow:hidden; }
+  #ctxpanel .seg button{ flex:1; border:0; background:#fff; padding:6px 4px; font-size:12px; font-weight:600; color:#4a4d55; border-left:1px solid var(--e-line); }
+  #ctxpanel .seg button:first-child{ border-left:0; } #ctxpanel .seg button.on{ background:var(--e-pill); color:#fff; }
+  #ctxpanel .pill{ display:block; width:100%; text-align:center; background:var(--e-pill); color:#fff; border:0; border-radius:22px; padding:9px; font-weight:700; font-size:12.5px; }
+  #ctxpanel .ghost{ display:block; width:100%; text-align:center; background:#fff; color:var(--e-ink); border:1px solid var(--e-line); border-radius:22px; padding:8px; font-weight:600; font-size:12px; }
+  #ctxpanel .toggle{ width:38px;height:22px;border-radius:22px;background:#cfd3db;position:relative;border:0;flex:none;transition:background .15s; }
+  #ctxpanel .toggle::after{ content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s; }
+  #ctxpanel .toggle.on{ background:var(--e-head); } #ctxpanel .toggle.on::after{ left:18px; }
+  #ctxpanel input[type=color]{ width:30px; height:26px; padding:0; border:1px solid var(--e-line); border-radius:6px; background:#fff; }
+  #ctxpanel input[type=range]{ -webkit-appearance:none; appearance:none; height:4px; border-radius:4px; background:#d9dce3; flex:1; }
+  #ctxpanel input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:#fff; border:1px solid #b9bdc6; }
+  #ctxpanel select{ border:1px solid var(--e-line); border-radius:7px; padding:7px; font-weight:600; background:#fff; flex:1; }
+  #ctxpanel .val{ min-width:26px; text-align:right; font-weight:700; }
+  #ctxpanel .plist{ display:flex; flex-direction:column; gap:2px; }
+  #ctxpanel .prow{ display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; }
+  #ctxpanel .prow:hover{ background:#f4f5f8; } #ctxpanel .prow.on{ background:#eef4fb; }
+  #ctxpanel .prow .dot{ width:16px; height:16px; border-radius:50%; flex:none; }
 </style>
 </head>
 <body>
-<div id="wrap">
-  <div id="palette"></div>
-  <div id="stage"></div>
-  <div id="hint">Drag pieces to move them. Drag a chip onto the pitch to add. Click to select · Delete removes.</div>
+<div id="editor">
+  <div id="topbar">
+    <div class="frames"><span id="tb-frames">1/1</span></div>
+    <span class="sep"></span>
+    <button class="ic" id="tb-undo" title="Undo">$ic:undo$</button>
+    <button class="ic" id="tb-redo" title="Redo">$ic:redo$</button>
+    <span class="sep"></span>
+    <button class="ic" id="tb-dup" title="Duplicate" disabled>$ic:paste$</button>
+    <button class="ic" id="tb-del" title="Delete" disabled>$ic:trash$</button>
+    <div class="spacer"></div>
+    <span class="zoom">100%</span>
+    <span class="b2d">2D</span>
+  </div>
+  <div id="editbody">
+    <aside id="ctxpanel"></aside>
+    <nav id="toolrail">
+      <button class="tool on" data-tool="select" title="Select / Move">$ic:cursor$</button>
+      <button class="tool" data-tool="home" title="Home player">$ic:jerseyF$</button>
+      <button class="tool" data-tool="away" title="Away player">$ic:jerseyO$</button>
+      <button class="tool" data-tool="ball" title="Ball">$ic:ball$</button>
+      <button class="tool" data-tool="cone" title="Cone">$ic:cone$</button>
+      <button class="tool" data-tool="arrow" title="Arrow">$ic:arrow$</button>
+      <button class="tool" data-tool="curved_arrow" title="Curved arrow">$ic:arrowC$</button>
+      <button class="tool" data-tool="dashed_arrow" title="Dashed arrow">$ic:arrowD$</button>
+      <button class="tool" data-tool="line" title="Line">$ic:line2$</button>
+      <button class="tool" data-tool="circle" title="Circle">$ic:circle$</button>
+      <button class="tool" data-tool="shape" title="Rectangle">$ic:square$</button>
+      <button class="tool" data-tool="zone" title="Zone">$ic:zone$</button>
+      <button class="tool" data-tool="text" title="Text">$ic:text$</button>
+    </nav>
+    <div id="stagewrap">
+      <div id="palette" hidden></div>
+      <div id="stage"></div>
+    </div>
+  </div>
 </div>
 <div id="ghost"></div>
 <script>
@@ -113,7 +206,8 @@
 
   var svg = null, plane = null;          // <svg> and the element whose local space == pitch plane
   var objects = [];                       // [{id,type,x,y,x2,y2,locked}] — metadata only, for handles
-  var cfg = { editable: true, snap: 0, selectedId: null, selectedIds: [], colors: {}, palette: [], drawTool: null };
+  var cfg = { editable: true, snap: 0, selectedId: null, selectedIds: [], colors: {}, palette: [], drawTool: null, placeTool: null };
+  var activeTool = "select";
   // strictly-increasing, session-unique action stamp. Date.now() only moves forward, so
   // even if Streamlit remounts the iframe (resetting JS state) a later action never
   // reuses an earlier stamp - this is what lets Python dedup re-delivered values without
@@ -800,6 +894,7 @@
     // empty-pitch pointerdown: draw a new object if a draw tool is armed, else clear selection
     svg.addEventListener("pointerdown", function (e) {
       if (!isEmptyPitch(e)) return;                       // on a piece/handle -> their own drags
+      if (cfg.editable && cfg.placeTool) { placeAt(e); return; }   // point-object tool → click to place
       if (cfg.editable && cfg.drawTool) { beginDraw(e); return; }
       if (cfg.editable) { beginMarquee(e); return; }      // drag-to-select (click = clear)
       if (cfg.selectedId != null) select(null);
@@ -851,6 +946,152 @@
     }
   });
 
+  // ===================== Tacticalista-style chrome (in-board panels) =====================
+  // Pure interaction/UI on top of the SAME command channel (emit) the core already uses — no
+  // business logic here, Python stays authoritative. Rail arms tools (point objects → click to
+  // place → add_object; shapes/vectors → the existing beginDraw); the context panel edits the
+  // SELECTED object's props → update_object; the top bar drives undo/redo/delete/duplicate.
+  var TS='xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
+  var TF='xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"';
+  var TB_IC={
+    undo:'<svg '+TS+'><path d="M9 7L4 12l5 5"/><path d="M4 12h11a5 5 0 010 10h-1"/></svg>',
+    redo:'<svg '+TS+'><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 000 10h1"/></svg>',
+    paste:'<svg '+TS+'><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4h6v3H9z"/></svg>',
+    trash:'<svg '+TS+'><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>',
+    cursor:'<svg '+TF+'><path d="M5 3l14 8-6 1.6L11 19z"/></svg>',
+    jerseyF:'<svg '+TF+'><path d="M8 3l4 2 4-2 4 3-2 4-2-1v10H8V9L6 10 4 6z"/></svg>',
+    jerseyO:'<svg '+TS+'><path d="M8 3l4 2 4-2 4 3-2 4-2-1v10H8V9L6 10 4 6z"/></svg>',
+    ball:'<svg '+TS+'><circle cx="12" cy="12" r="9"/><path d="M12 7l3 2-1 4h-4l-1-4z"/></svg>',
+    cone:'<svg '+TF+'><path d="M12 4l5 14H7z"/><rect x="5" y="18" width="14" height="2.4" rx="1"/></svg>',
+    arrow:'<svg '+TS+'><path d="M4 12h14"/><path d="M14 6l6 6-6 6"/></svg>',
+    arrowC:'<svg '+TS+'><path d="M4 15c5-8 11-8 16-6"/><path d="M16 5l4 4-5 1"/></svg>',
+    arrowD:'<svg '+TS+' stroke-dasharray="3 3"><path d="M4 12h14"/></svg><svg '+TS+' style="margin-left:-8px"><path d="M14 6l6 6-6 6"/></svg>',
+    line2:'<svg '+TS+'><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 16L16 8"/></svg>',
+    circle:'<svg '+TF+'><circle cx="12" cy="12" r="7"/></svg>',
+    square:'<svg '+TF+'><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>',
+    zone:'<svg '+TS+'><path d="M5 8V5h3M16 5h3v3M19 16v3h-3M8 19H5v-3"/></svg>',
+    text:'<svg '+TS+'><path d="M6 6h12M12 6v13M9 19h6"/></svg>'
+  };
+  function escH(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  var POINT={ home:1, away:1, ball:1, cone:1, text:1 };
+  var DRAWT={ arrow:1, curved_arrow:1, dashed_arrow:1, line:1, circle:1, shape:1, zone:1 };
+  function labelFor(t){ return {home:'Home player',away:'Away player',ball:'Ball',cone:'Cone',arrow:'Arrow',curved_arrow:'Curved arrow',dashed_arrow:'Dashed arrow',line:'Line',circle:'Circle',shape:'Rectangle',zone:'Zone',text:'Text'}[t]||t; }
+
+  function placeAt(e){                                    // click-to-place a point object
+    var loc = toPlane(e.clientX, e.clientY); if (!loc) return;
+    var p = toPitch(loc), t = cfg.placeTool;
+    emit({ ts: nextTs(), commands: [{ op: "add_object", type: t.type, x: p.x, y: p.y,
+                                      props: Object.assign({}, t.props || {}) }] });
+  }
+  function armTool(name){
+    cfg.placeTool = null; cfg.drawTool = null; activeTool = name;
+    if (POINT[name]){
+      var type = (name === "home" || name === "away") ? "player" : name;
+      var props = name === "home" ? { team: "home" } : name === "away" ? { team: "away" } : {};
+      cfg.placeTool = { type: type, props: props };
+      cfg.selectedId = null; cfg.selectedIds = [];
+    } else if (DRAWT[name]){
+      cfg.drawTool = { type: name, props: {} };
+      cfg.selectedId = null; cfg.selectedIds = [];
+    }
+    document.querySelectorAll('#toolrail .tool').forEach(function(b){ b.classList.toggle('on', b.dataset.tool === name); });
+    renderChrome();
+  }
+  function selIds(){ return (cfg.selectedIds && cfg.selectedIds.length) ? cfg.selectedIds.slice() : (cfg.selectedId ? [cfg.selectedId] : []); }
+  function emitUpdate(id, props){ emit({ ts: nextTs(), select: "__keep__", commands: [{ op: "update_object", id: id, props: props }] }); }
+
+  function editorPlayer(o){ var p=o.props||{}; var col=p.color||(p.team==='away'?'#2f6fd6':'#e23b3b');
+    return '<div class="fn"><div class="lbl">Player</div></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Number</div><input type="number" data-k="number" value="'+escH(p.number)+'"></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Name</div><input type="text" data-k="name" value="'+escH(p.name)+'" placeholder="name"></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Team</div><div class="seg" data-seg="team"><button data-v="home" '+(p.team!=='away'?'class="on"':'')+'>Home</button><button data-v="away" '+(p.team==='away'?'class="on"':'')+'>Away</button></div></div>'
+     +'<div class="sec"><div class="row between"><span>Colour</span><div class="row"><input type="color" data-k="color" value="'+col+'"><button class="ghost" style="width:auto;padding:5px 10px" data-reset="color">Reset</button></div></div></div>'
+     +'<div class="sec"><div class="row between"><span>Goalkeeper</span><button class="toggle '+(p.goalkeeper?'on':'')+'" data-toggle="goalkeeper"></button></div></div>'
+     +'<div class="sec"><div class="row between"><span>Captain</span><button class="toggle '+(p.captain?'on':'')+'" data-toggle="captain"></button></div></div>';
+  }
+  function editorVector(o){ var p=o.props||{};
+    var vs=['','pass','run','movement','pressing','defensive','dribble','shot'];
+    var opts=vs.map(function(v){ return '<option value="'+v+'" '+(p.variant===v?'selected':'')+'>'+(v||'plain')+'</option>'; }).join('');
+    var h='<div class="fn"><div class="lbl">'+labelFor(o.type)+'</div></div>'
+      +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Style</div><select data-k="variant">'+opts+'</select></div>';
+    if(o.type==='curved_arrow'){ var kv=Math.round((p.curvature||0)*100);
+      h+='<div class="sec"><div class="lbl" style="margin-bottom:6px">Curve</div><div class="row"><input type="range" min="-100" max="100" value="'+kv+'" data-krange="curvature" data-scale="0.01"><span class="val">'+kv+'</span></div></div>'; }
+    h+='<div class="sec"><div class="lbl" style="margin-bottom:6px">Label</div><input type="text" data-k="label" value="'+escH(p.label)+'" placeholder="optional"></div>';
+    return h;
+  }
+  function editorShape(o){ var p=o.props||{}; var op=Math.round((p.opacity==null?0.28:p.opacity)*100); var sw=(p.stroke_width==null?2:p.stroke_width);
+    return '<div class="fn"><div class="lbl">'+(o.type==='circle'?'Circle':o.type==='zone'?'Zone':'Shape')+'</div></div>'
+     +'<div class="sec"><div class="row between"><span>Colour</span><input type="color" data-k="color" value="'+(p.color||'#2f7bd6')+'"></div></div>'
+     +'<div class="sec"><div class="row between"><span>Filled</span><button class="toggle '+(p.filled?'on':'')+'" data-toggle="filled"></button></div></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Opacity</div><div class="row"><input type="range" min="0" max="100" value="'+op+'" data-krange="opacity" data-scale="0.01"><span class="val">'+op+'</span></div></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Stroke width</div><div class="row"><input type="range" min="0" max="10" step="0.5" value="'+sw+'" data-krange="stroke_width" data-scale="1"><span class="val">'+sw+'</span></div></div>';
+  }
+  function editorText(o){ var p=o.props||{};
+    return '<div class="fn"><div class="lbl">Text</div></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Text</div><input type="text" data-k="text" value="'+escH(p.text)+'"></div>'
+     +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Size</div><div class="row"><input type="range" min="8" max="40" value="'+(p.size||14)+'" data-krange="size" data-scale="1"><span class="val">'+(p.size||14)+'</span></div></div>'
+     +'<div class="sec"><div class="row between"><span>Colour</span><input type="color" data-k="color" value="'+(p.color||'#ffffff')+'"></div></div>';
+  }
+  function editorFor(o){
+    if(o.type==='player') return editorPlayer(o);
+    if(VECTOR[o.type]) return editorVector(o);
+    if(o.type==='zone'||o.type==='shape'||o.type==='circle'||o.type==='highlight') return editorShape(o);
+    if(o.type==='text'||o.type==='number') return editorText(o);
+    return '<div class="fn"><div class="lbl">'+escH(o.type)+'</div></div><div class="note">No editable settings for this object.</div>';
+  }
+  function placedList(){
+    if(!objects.length) return '<div class="fn"><div class="lbl">File name</div></div><div class="chead"><span class="q">?</span><b>Placed objects</b></div><div class="note">No objects yet. Pick a tool from the rail, then click the pitch to place — or drag to draw a shape/arrow.</div>';
+    var rows=objects.map(function(o){ var p=o.props||{};
+      var col=(o.type==='player')?(p.color||(p.team==='away'?'#2f6fd6':'#e23b3b')):'#8a8f99';
+      var lab=(o.type==='player')?('#'+(p.number!=null?p.number:'')+' '+(p.name||'player')):labelFor(o.type);
+      return '<div class="prow" data-id="'+o.id+'"><span class="dot" style="background:'+col+'"></span>'+escH(lab)+'</div>'; }).join('');
+    return '<div class="chead"><span class="q">?</span><b>Placed objects ('+objects.length+')</b></div><div class="plist">'+rows+'</div>';
+  }
+  function toolHint(tool){
+    var msg = POINT[tool] ? 'Click on the pitch to place. Keep clicking to add more.' : 'Drag on the pitch to draw, then fine-tune it here.';
+    return '<div class="chead"><span class="q">?</span><b>'+labelFor(tool)+'</b></div><div class="note">'+msg+'</div><button class="ghost" id="tb-done">Done</button>';
+  }
+  function renderCtx(){
+    var panel=document.getElementById('ctxpanel'); if(!panel) return;
+    var ids=selIds(), obj = ids.length===1 ? objects.find(function(o){return o.id===ids[0];}) : null;
+    var html = obj ? editorFor(obj) : (activeTool && activeTool!=='select' ? toolHint(activeTool) : placedList());
+    panel.innerHTML = html.replace(/\$ic:(\w+)\$/g,function(m,k){return TB_IC[k]||'';});
+    wireCtx(panel, obj);
+    var done=document.getElementById('tb-done'); if(done) done.onclick=function(){ armTool('select'); };
+  }
+  function wireCtx(panel, obj){
+    if(!obj){ panel.querySelectorAll('.prow[data-id]').forEach(function(r){ r.onclick=function(){ emit({ts:nextTs(),select:r.dataset.id,commands:[]}); }; }); return; }
+    var id=obj.id;
+    panel.querySelectorAll('input[data-k]').forEach(function(inp){ inp.onchange=function(){
+      var k=inp.dataset.k, v = inp.type==='number' ? (parseInt(inp.value||'0',10)||0) : inp.value;
+      var pr={}; pr[k]=v; emitUpdate(id,pr); }; });
+    panel.querySelectorAll('input[data-krange]').forEach(function(inp){ var out=inp.parentNode.querySelector('.val');
+      inp.oninput=function(){ if(out) out.textContent=inp.value; };
+      inp.onchange=function(){ var k=inp.dataset.krange, sc=parseFloat(inp.dataset.scale||'1'); var pr={}; pr[k]=Math.round(parseFloat(inp.value)*sc*1000)/1000; emitUpdate(id,pr); }; });
+    panel.querySelectorAll('select[data-k]').forEach(function(s){ s.onchange=function(){ var pr={}; pr[s.dataset.k]=s.value; emitUpdate(id,pr); }; });
+    panel.querySelectorAll('[data-seg]').forEach(function(seg){ seg.querySelectorAll('button').forEach(function(b){ b.onclick=function(){
+      seg.querySelectorAll('button').forEach(function(x){x.classList.remove('on');}); b.classList.add('on');
+      var pr={}; pr[seg.dataset.seg]=b.dataset.v; emitUpdate(id,pr); }; }); });
+    panel.querySelectorAll('[data-toggle]').forEach(function(t){ t.onclick=function(){ var on=!t.classList.contains('on'); t.classList.toggle('on',on); var pr={}; pr[t.dataset.toggle]=on; emitUpdate(id,pr); }; });
+    panel.querySelectorAll('[data-reset]').forEach(function(b){ b.onclick=function(){ var pr={}; pr[b.dataset.reset]=''; emitUpdate(id,pr); }; });
+  }
+  function renderChrome(){
+    var n=selIds().length, del=document.getElementById('tb-del'), dup=document.getElementById('tb-dup');
+    if(del) del.disabled=!n; if(dup) dup.disabled=!n;
+    renderCtx();
+  }
+  function initChrome(){
+    ['#topbar','#toolrail'].forEach(function(sel){ var el=document.querySelector(sel);
+      if(el) el.innerHTML=el.innerHTML.replace(/\$ic:(\w+)\$/g,function(m,k){return TB_IC[k]||'';}); });
+    document.querySelectorAll('#toolrail .tool').forEach(function(b){ b.addEventListener('click',function(){ armTool(b.dataset.tool); }); });
+    var U=document.getElementById('tb-undo'),R=document.getElementById('tb-redo'),D=document.getElementById('tb-del'),P=document.getElementById('tb-dup');
+    if(U) U.onclick=function(){ emit({ts:nextTs(),select:"__keep__",commands:[],undo:true}); };
+    if(R) R.onclick=function(){ emit({ts:nextTs(),select:"__keep__",commands:[],redo:true}); };
+    if(D) D.onclick=function(){ var ids=selIds(); if(ids.length) emit({ts:nextTs(),select:null,commands:[{op:"delete_objects",ids:ids}]}); };
+    if(P) P.onclick=function(){ var ids=selIds(); if(ids.length) emit({ts:nextTs(),select:"__keep__",commands:[{op:"duplicate_objects",ids:ids}]}); };
+    renderChrome();
+  }
+
   var lastNonce = null;                     // the board version we last drew (see below)
   window.addEventListener("message", function (event) {
     var data = event.data || {};
@@ -877,13 +1118,15 @@
                       : (cfg.selectedId != null ? [cfg.selectedId] : []);
     cfg.colors = args.colors || {};
     cfg.palette = args.palette || [];
-    cfg.drawTool = args.draw_tool || null;   // {type, props} arms click-drag draw mode, else null
+    if (args.draw_tool) cfg.drawTool = args.draw_tool;   // Python-armed tool (kept in sync)
     objects = args.objects || [];
     render();
+    renderChrome();                          // refresh the in-board panels for the new state
   });
 
   window.addEventListener("resize", setHeight);
   if (window.ResizeObserver) { new ResizeObserver(setHeight).observe(document.body); }
+  initChrome();                              // build the Tacticalista-style chrome once
   ready();
   window.addEventListener("load", setHeight);
 })();

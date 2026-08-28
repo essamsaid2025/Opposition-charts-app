@@ -247,7 +247,10 @@ def _canvas_objects(board: Board) -> list[dict]:
     for o in fr.objects:
         # rotation (every type) lets the canvas place a rotate handle + orient resize handles
         m = {"id": o.id, "type": o.type, "x": o.x, "y": o.y, "locked": o.locked,
-             "rotation": float(o.rotation)}
+             "rotation": float(o.rotation),
+             # full props so the in-board (Tacticalista-style) context panel can populate its
+             # controls for the selected object and emit update_object with the right keys.
+             "props": dict(o.props or {})}
         if o.type in ("arrow", "curved_arrow", "dashed_arrow", "line"):
             m["x2"] = float(o.props.get("x2", o.x + 12))
             m["y2"] = float(o.props.get("y2", o.y))
@@ -381,15 +384,13 @@ class TacticalBoardPage(Page):
 
         self._toolbar(shell, svc, board, hist, can_edit)
 
-        left, center, right = st.columns([1.9, 8.0, 2.3], gap="small")
-        with left:
-            self._rail(can_edit)
+        # The Tacticalista-style editor chrome (tool rail + context panels + top bar) now lives
+        # INSIDE the board component, so the board takes the full width. Formations / saved boards
+        # (which need Python) stay as a slim expander; the old Streamlit rail/properties/objects
+        # panels are retired — their capabilities moved in-board.
+        self._board_view(shell, board, can_edit)
+        with st.expander("Templates, formations & saved boards", expanded=False):
             self._templates_and_saved(shell, svc, board, can_edit)
-        with right:
-            self._properties(shell, board, can_edit)
-            self._objects_panel(board, can_edit)
-        with center:
-            self._board_view(shell, board, can_edit)
         self._timeline(board, can_edit)
 
     # ------------------------------------------------------------ toolbar
