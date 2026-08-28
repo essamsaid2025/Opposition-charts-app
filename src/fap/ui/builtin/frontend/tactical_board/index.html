@@ -224,6 +224,11 @@
   }
   window.addEventListener("blur", flushSync);
   document.addEventListener("visibilitychange", function () { if (document.hidden) flushSync(); });
+  // safety sweep: if a marquee/draw drag was interrupted (pointer left the frame, no pointerup on
+  // the element), clear any transient dashed preview so no stray blue dashes ever linger.
+  window.addEventListener("pointerup", function () {
+    if (svg) svg.querySelectorAll(".tb-preview").forEach(function (el) { if (el.parentNode) el.parentNode.removeChild(el); });
+  });
 
   // board is authored in a fixed 1050 x 680 plane (10px per pitch unit) — mirrors render.py
   var PLANE_W = 1050, PLANE_H = 680;
@@ -349,7 +354,7 @@
   function select(id) { _applyLocalSel(id != null ? [id] : []); }
   function clearSelectionDecor(){
     if(!plane) return;
-    plane.querySelectorAll('.tb-seldecor, .tb-handle, .tb-resize').forEach(function(el){
+    plane.querySelectorAll('.tb-seldecor, .tb-handle, .tb-handle-stem, .tb-resize, .tb-preview').forEach(function(el){
       if(el.parentNode) el.parentNode.removeChild(el); });
   }
   function drawSelectionDecor(){
@@ -968,6 +973,10 @@
       emit({ ts: nextTs(), select: "__keep__", commands: [], redo: true });
     } else if (ctrl && (key === "d" || key === "D")) {
       if (sel.length) { e.preventDefault(); emit({ ts: nextTs(), select: "__keep__", commands: [{ op: "duplicate_objects", ids: sel }] }); }
+    } else if (ctrl && (key === "c" || key === "C")) {
+      if (sel.length) { e.preventDefault(); copySelection(); }
+    } else if (ctrl && (key === "v" || key === "V")) {
+      if (_clipboard.length) { e.preventDefault(); pasteClipboard(); }
     } else if (key === "Delete" || key === "Backspace") {
       if (sel.length) {
         e.preventDefault();
@@ -1145,7 +1154,8 @@
     var ids=selIds(), obj = ids.length===1 ? objects.find(function(o){return o.id===ids[0];}) : null;
     var toolName=null, html, bulk = ids.length>1;
     if(bulk){ html=bulkEditor(ids); }
-    else if(obj){ html=editorFor(obj); }
+    else if(obj){ html=editorFor(obj)
+      +'<div class="sec"><div class="row" style="gap:8px"><button class="ghost" id="obj-dup" style="flex:1">Duplicate</button><button class="ghost" id="obj-copy" style="flex:1">Copy</button></div></div>'; }
     else if(activeTool && activeTool!=='select' && hasDefaults(activeTool)){
       toolName=activeTool;
       var synth={ id:null, type:toolType(activeTool), props: cfg.toolDefaults[activeTool] || defaultsFor(activeTool) };
@@ -1153,9 +1163,12 @@
                                   : 'Drag on the pitch to draw. These settings stick to every one you draw.';
       html='<div class="chead"><span class="q">?</span><b>New '+labelFor(activeTool)+'</b></div><div class="note">'+tip+'</div>'+editorFor(synth);
     } else if(activeTool && activeTool!=='select'){ html=toolHint(activeTool); }
-    else { html=placedList(); }
+    else { html=placedList() + (_clipboard.length ? '<div class="sec"><button class="ghost" id="obj-paste">Paste '+_clipboard.length+' item(s)</button></div>' : ''); }
     panel.innerHTML = html.replace(/\$ic:(\w+)\$/g,function(m,k){return TB_IC[k]||'';});
     if(bulk) wireBulk(panel, ids); else wireCtx(panel, obj, toolName);
+    var od=document.getElementById('obj-dup'); if(od) od.onclick=function(){ emit({commands:[{op:'duplicate_objects', ids:selIds()}]}); };
+    var oc=document.getElementById('obj-copy'); if(oc) oc.onclick=function(){ copySelection(); renderCtx(); };
+    var opb=document.getElementById('obj-paste'); if(opb) opb.onclick=function(){ pasteClipboard(); };
     var done=document.getElementById('tb-done'); if(done) done.onclick=function(){ armTool('select'); };
   }
   function wireCtx(panel, obj, toolName){
@@ -1381,7 +1394,7 @@
       var op=cmd.op;
       if(op==="add_object"){
         var o={ id:newOid(), type:cmd.type, x:(cmd.x!=null?cmd.x:50), y:(cmd.y!=null?cmd.y:50),
-                rotation:cmd.rotation||0, scale:1, z:objects.length,
+                rotation:cmd.rotation||0, scale:(cmd.scale!=null?cmd.scale:1), z:objects.length,
                 props:Object.assign({}, baseProps(cmd.type), cmd.props||{}) };
         mirrorGeom(o); objects.push(o); addedId=o.id;
       } else if(op==="update_object"){
@@ -1398,6 +1411,17 @@
     });
     if(addedId){ cfg.selectedIds=[addedId]; cfg.selectedId=addedId; }   // auto-select a freshly added piece
     renderPieces(); renderCtx(); updateSelButtons(); scheduleSync();
+  }
+  // ---- clipboard: copy / paste the selection (client-side) ----
+  var _clipboard = [];
+  function copySelection(){ _clipboard = selIds().map(function(id){ var m=metaOf(id); return m?JSON.parse(JSON.stringify(m)):null; }).filter(Boolean); }
+  function pasteClipboard(){
+    if(!_clipboard.length) return;
+    var n=_clipboard.length;
+    applyLocal(_clipboard.map(function(o){ return { op:"add_object", type:o.type,
+      x:clamp((o.x||50)+4,0,100), y:clamp((o.y||50)+4,0,100), rotation:o.rotation||0,
+      scale:o.scale||1, props:Object.assign({}, o.props||{}) }; }));
+    _applyLocalSel(objects.slice(-n).map(function(o){ return o.id; }));
   }
 
   var lastNonce = null;                     // the board version we last drew (see below)
