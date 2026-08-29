@@ -790,7 +790,8 @@ class TeamService:
         the whole cover; charts/QR/heat-map are already embedded as image bytes."""
         from datetime import date
         from fap.reports.renderer import ReportRenderer
-        from fap.teams.player_report import COVER_SENTINEL, build_player_report_document
+        from fap.teams.player_report import (COVER_SENTINEL, build_player_report_document,
+                                             premium_branding)
         options = options or {}
         generated_at = date.today().isoformat()
         bundle = self.player_report_data(team_id, member_id, generated_at=generated_at,
@@ -822,7 +823,7 @@ class TeamService:
             if iid == COVER_SENTINEL:
                 return cover_png
             return self._images.load(iid) if self._images is not None else None
-        rendered = ReportRenderer().render(doc, fmt, None, image_resolver=resolver)
+        rendered = ReportRenderer().render(doc, fmt, premium_branding(), image_resolver=resolver)
         self._record(user, "teams.player.report", team_id=team_id, member_id=member_id, fmt=fmt)
         return rendered
 

@@ -269,10 +269,15 @@ def _markdown_to_html(text: str) -> str:
 # ---------------------------------------------------------------- html builders
 def _palette(branding: Any) -> dict[str, str]:
     p = getattr(branding, "palette", None)
+    def g(k, d):
+        v = getattr(p, k, None) if p is not None else None
+        return v if isinstance(v, str) and v else d
+    # a report may carry its own inside palette (ink/muted/line/panel) on branding.palette;
+    # otherwise the platform defaults apply (unchanged for every existing report).
     return {
-        "primary": getattr(p, "primary", "#E07B2B"),
-        "ink": "#16181d", "muted": "#5b6472", "line": "#e6ebf2",
-        "panel": "#f4f6fa", "cover_ink": "#ffffff",
+        "primary": g("primary", "#E07B2B"),
+        "ink": g("ink", "#16181d"), "muted": g("muted", "#5b6472"), "line": g("line", "#e6ebf2"),
+        "panel": g("panel", "#f4f6fa"), "cover_ink": "#ffffff",
     }
 
 

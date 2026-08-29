@@ -34,6 +34,21 @@ RECOMMENDATIONS: dict[str, str] = {
 }
 
 
+#: the report-only inside theme — the SAME light-corporate gold/black/white as the bespoke
+#: cover, carried on a tiny branding object the report engine already understands. `premium=True`
+#: turns on the upgraded PDF section/KPI/table styling for THIS report only (others unchanged).
+_PREMIUM_PALETTE = {"primary": "#c8a24a", "ink": "#14181f", "muted": "#6b7280",
+                    "panel": "#faf6ea", "line": "#e6e6ec"}
+
+
+def premium_branding():
+    """A branding object for the Player Evaluation report: gold accent + dark ink inside pages,
+    matching the cover. Passed to ``ReportRenderer.render`` so PDF/HTML pick up the theme."""
+    from types import SimpleNamespace
+    return SimpleNamespace(palette=SimpleNamespace(**_PREMIUM_PALETTE), premium=True,
+                           primary_logo="")
+
+
 def _b64(png: bytes | None) -> str:
     return base64.b64encode(png).decode("ascii") if png else ""
 
