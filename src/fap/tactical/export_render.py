@@ -33,6 +33,53 @@ def _px(x: float, y: float) -> tuple[float, float]:
     return x / 100.0 * _W, y / 100.0 * _H
 
 
+class _Canvas:
+    """A thin matplotlib drawing adapter that keeps the (landscape-authored) draw code
+    orientation-agnostic.
+
+    Horizontal boards pass straight through, so their PNG/PDF output is byte-identical to
+    before. Vertical boards get a rotation transform applied to every GEOMETRY primitive — the
+    SAME ``translate(_H 0) rotate(90)`` the SVG renderer uses (``render.board_svg``), so the
+    exported board sits in the exact portrait layout the coach sees on screen — while TEXT is
+    anchored at the rotated point but drawn UPRIGHT, so numbers/names/labels stay readable.
+
+    This replaces the old "draw landscape, then rotate the whole raster" path, which rotated the
+    baked text sideways AND rotated the wrong way (PIL is counter-clockwise, the SVG clockwise),
+    so the download came out mirror-reversed from the live board."""
+
+    def __init__(self, ax, vertical: bool) -> None:
+        self.ax = ax
+        self._t = None
+        if vertical:
+            import numpy as np
+            from matplotlib.transforms import Affine2D
+            # landscape px (x, y) -> portrait px (_H - y, x): the exact mapping of the SVG's
+            # <g transform="translate(_H 0) rotate(90)"> (SVG rotate is clockwise in y-down space).
+            self._t = Affine2D(np.array([[0.0, -1.0, _H], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]))
+            self._gt = self._t + ax.transData
+
+    def add_patch(self, patch):
+        self.ax.add_patch(patch)
+        if self._t is not None:                     # override the transData add_patch just set
+            patch.set_transform(self._gt)
+
+    def plot(self, *args, **kw):
+        if self._t is not None:
+            kw["transform"] = self._gt
+        self.ax.plot(*args, **kw)
+
+    def annotate(self, s: str = "", **kw):
+        if self._t is not None:                     # arrow endpoints live in the rotated geometry
+            kw.setdefault("xycoords", self._gt)
+            kw.setdefault("textcoords", self._gt)
+        self.ax.annotate(s, **kw)
+
+    def text(self, x, y, s, **kw):
+        if self._t is not None:                     # move the anchor, but keep the glyphs upright
+            x, y = self._t.transform((x, y))
+        self.ax.text(x, y, s, **kw)
+
+
 def _draw_head(ax, geom: dict, col: str, sw: float, z: float) -> None:
     """Draw a renderer-neutral arrowhead spec (geometry.arrowhead_geometry) with matplotlib
     — the SAME primitives the SVG renderer draws, so PNG/PDF match the live board."""
@@ -304,9 +351,10 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
 # ---------------------------------------------------------------- public
 def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
                 colors: dict[str, str] | None = None, dpi: int = 150) -> bytes:
-    """Render one frame of ``board`` to PNG or PDF bytes via matplotlib. Vertical boards
-    are rotated to portrait to match the on-screen orientation. Raises if matplotlib is
-    unavailable — the caller import-guards and degrades to SVG."""
+    """Render one frame of ``board`` to PNG or PDF bytes via matplotlib. Vertical boards are
+    drawn NATIVELY in portrait (geometry rotated exactly like the on-screen SVG, text kept
+    upright) so the download matches the live board and labels stay readable. Raises if
+    matplotlib is unavailable — the caller import-guards and degrades to SVG."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -315,18 +363,22 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
     fr: Frame = board.frame(frame_index)
     vertical = board.pitch.orientation == "vertical"
 
-    fig, ax = plt.subplots(figsize=(_W / 100.0, _H / 100.0))
+    # vertical → a portrait figure/axes (the plane's width and height swap); the _Canvas adapter
+    # rotates the landscape-authored geometry into it. Horizontal is unchanged (byte-identical).
+    fw, fh = (_H, _W) if vertical else (_W, _H)
+    fig, ax = plt.subplots(figsize=(fw / 100.0, fh / 100.0))
     try:
-        ax.set_xlim(0, _W)
-        ax.set_ylim(_H, 0)                       # SVG y grows downward
+        ax.set_xlim(0, fw)
+        ax.set_ylim(fh, 0)                       # SVG y grows downward
         ax.set_aspect("equal")
         ax.axis("off")
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        _draw_pitch(ax, board, colors)
+        canvas = _Canvas(ax, vertical)
+        _draw_pitch(canvas, board, colors)
         for o in sorted(fr.objects, key=lambda o: o.z):
             if (o.props or {}).get("hidden"):               # hidden objects are not exported
                 continue
-            _draw_object(ax, o, colors, fr)
+            _draw_object(canvas, o, colors, fr)
 
         buf = io.BytesIO()
         fig.savefig(buf, format="pdf" if fmt == "pdf" else "png", dpi=dpi,
@@ -335,8 +387,6 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
     finally:
         plt.close(fig)
 
-    if vertical:
-        data = _rotate(data, fmt)
     return data
 
 
@@ -369,21 +419,6 @@ def board_gif(board: Board, *, colors: dict[str, str] | None = None,
     images[0].save(out, format="GIF", save_all=True, append_images=images[1:],
                    duration=durations, loop=0, disposal=2)
     return out.getvalue()
-
-
-def _rotate(data: bytes, fmt: str) -> bytes:
-    """Rotate a landscape export to portrait for vertical boards. PNG via Pillow; PDF is
-    left landscape if Pillow can't help (content is still correct)."""
-    if fmt == "pdf":
-        return data
-    try:
-        from PIL import Image
-        img = Image.open(io.BytesIO(data)).rotate(90, expand=True)
-        out = io.BytesIO()
-        img.save(out, format="PNG")
-        return out.getvalue()
-    except Exception:
-        return data
 
 
 def available() -> bool:
