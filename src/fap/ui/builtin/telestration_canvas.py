@@ -19,7 +19,8 @@ from typing import Any
 _DIR = Path(__file__).resolve().parent / "frontend" / "telestration_canvas"
 _impl: Any = None
 
-_ANN_TYPES = frozenset({"arrow", "line", "spotlight", "ellipse", "rect", "pen", "text"})
+_ANN_TYPES = frozenset({"arrow", "curvedarrow", "darrow", "line", "spotlight",
+                        "ellipse", "rect", "pen", "text"})
 
 
 def _component():
@@ -46,10 +47,14 @@ def _clean_ann(a: Any) -> dict[str, Any] | None:
     col = a.get("c")
     out["c"] = col if isinstance(col, str) and 0 < len(col) <= 9 else "#ffffff"
     out["w"] = max(0.5, min(80.0, _num(a.get("w"), 8.0)))
-    if a.get("g") and t in ("spotlight", "ellipse"):     # perspective (ground-plane) mark
+    if a.get("g") and t in ("spotlight", "ellipse", "rect"):   # perspective (ground-plane) mark
         out["g"] = True
-        out["gx"] = _num(a.get("gx")); out["gy"] = _num(a.get("gy"))
-        out["gr"] = max(0.0, _num(a.get("gr")))
+        if t == "spotlight":
+            out["gx"] = _num(a.get("gx")); out["gy"] = _num(a.get("gy"))
+            out["gr"] = max(0.0, _num(a.get("gr")))
+        else:                                            # ground box / circle: two ground corners
+            for k in ("gx1", "gy1", "gx2", "gy2"):
+                out[k] = _num(a.get(k))
         return out
     if t == "pen":
         pts = a.get("pts")
@@ -74,6 +79,8 @@ def _clean_ann(a: Any) -> dict[str, Any] | None:
     # geometric marks carry two endpoints
     for k in ("x1", "y1", "x2", "y2"):
         out[k] = _num(a.get(k))
+    if t == "curvedarrow":                               # + a bezier control point (the bend)
+        out["cx"] = _num(a.get("cx")); out["cy"] = _num(a.get("cy"))
     return out
 
 

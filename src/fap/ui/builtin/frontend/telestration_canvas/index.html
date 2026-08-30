@@ -101,6 +101,8 @@
   var TOOLS=[
     ["select","Select","M4 3l16 7-6 2-2 6z"],
     ["arrow","Arrow","M4 20L20 4 M12 4h8v8"],
+    ["curvedarrow","Curved arrow","M4 19 C 5 9 12 6 19 7 M19 7l-4-2 M19 7l-1 4"],
+    ["darrow","Dashed arrow","M4 20L20 4 M12 4h8v8"],
     ["line","Line","M4 20L20 4"],
     ["spotlight","Spotlight","M12 3v3 M12 18v3 M3 12h3 M18 12h3 M12 8a4 4 0 100 8 4 4 0 000-8z"],
     ["ellipse","Circle","M12 5c5 0 9 3 9 7s-4 7-9 7-9-3-9-7 4-7 9-7z"],
@@ -167,9 +169,11 @@
   }
   function updateHint(){
     if(calibrating){ hintEl.textContent="Perspective: drag the 4 yellow markers onto the pitch corners of a rectangle (e.g. a penalty box), then click the corners button again."; return; }
-    if(perspOn && tool==="spotlight"){ hintEl.textContent="3D spotlight: drag to place a spotlight that sits flat on the pitch in perspective."; return; }
-    var m={select:"Click a mark to select · drag to move · Delete to remove",
+    if(perspOn && (tool==="spotlight"||tool==="ellipse"||tool==="rect")){ hintEl.textContent="3D: drag to draw a "+(tool==="spotlight"?"spotlight":tool==="rect"?"box":"circle")+" that sits flat on the pitch in perspective."; return; }
+    var m={select:"Click a mark to select · drag to move · Delete to remove · (curved arrow: drag the blue dot to bend)",
       arrow:"Drag on the image to draw a press arrow",
+      curvedarrow:"Drag start→end, then switch to Select and drag the blue dot to bend it left/right/up",
+      darrow:"Drag to draw a dashed arrow (runs / off-ball movement)",
       line:"Drag to draw a connecting line",
       spotlight:"Drag to place a glowing player spotlight",
       ellipse:"Drag to draw a circle / highlight",
@@ -198,6 +202,31 @@
     ctx.fillStyle=a.c; ctx.beginPath();
     ctx.moveTo(a.x2,a.y2); ctx.lineTo(bx+px*hw, by+py*hw); ctx.lineTo(bx-px*hw, by-py*hw);
     ctx.closePath(); ctx.fill(); ctx.restore();
+  }
+  function arrowHead(ctx2, tipx, tipy, ux, uy, head, col){   // filled triangle head
+    var bx=tipx-ux*head, by=tipy-uy*head, px=-uy, py=ux, hw=head*0.62;
+    ctx2.fillStyle=col; ctx2.beginPath(); ctx2.moveTo(tipx,tipy);
+    ctx2.lineTo(bx+px*hw, by+py*hw); ctx2.lineTo(bx-px*hw, by-py*hw); ctx2.closePath(); ctx2.fill();
+    return {bx:bx, by:by};
+  }
+  function curveCtrl(a){ return { x:(a.cx!=null?a.cx:(a.x1+a.x2)/2), y:(a.cy!=null?a.cy:(a.y1+a.y2)/2) }; }
+  function drawCurvedArrow(a){
+    var c=curveCtrl(a), w=a.w||10, head=Math.max(14,w*2.6);
+    var dx=a.x2-c.x, dy=a.y2-c.y, len=Math.hypot(dx,dy)||1, ux=dx/len, uy=dy/len;   // tangent at the end
+    ctx.save(); ctx.shadowColor="rgba(0,0,0,.5)"; ctx.shadowBlur=6; ctx.shadowOffsetY=1;
+    ctx.strokeStyle=a.c; ctx.lineCap="round"; ctx.lineWidth=w;
+    var h=arrowHead(ctx, a.x2, a.y2, ux, uy, head, a.c);          // head first to get shaft stop
+    ctx.beginPath(); ctx.moveTo(a.x1,a.y1); ctx.quadraticCurveTo(c.x, c.y, h.bx, h.by); ctx.stroke();
+    ctx.restore();
+  }
+  function drawDashedArrow(a){
+    var dx=a.x2-a.x1, dy=a.y2-a.y1, len=Math.hypot(dx,dy); if(len<1) return;
+    var ux=dx/len, uy=dy/len, w=a.w||10, head=Math.max(14,w*2.6), bx=a.x2-ux*head, by=a.y2-uy*head;
+    ctx.save(); ctx.shadowColor="rgba(0,0,0,.5)"; ctx.shadowBlur=5;
+    ctx.strokeStyle=a.c; ctx.lineCap="round"; ctx.lineWidth=w;
+    ctx.setLineDash([w*1.7, w*1.3]);
+    ctx.beginPath(); ctx.moveTo(a.x1,a.y1); ctx.lineTo(bx,by); ctx.stroke(); ctx.setLineDash([]);
+    arrowHead(ctx, a.x2, a.y2, ux, uy, head, a.c); ctx.restore();
   }
   function drawLine(a){ ctx.save(); ctx.shadowColor="rgba(0,0,0,.5)"; ctx.shadowBlur=5;
     ctx.strokeStyle=a.c; ctx.lineCap="round"; ctx.lineWidth=a.w||8;
@@ -236,20 +265,27 @@
     poly.push(applyH(Hgi, gx+gr*mult*Math.cos(th), gy+gr*mult*Math.sin(th))); } return poly; }
   function pathPoly(poly){ ctx.beginPath(); ctx.moveTo(poly[0].x,poly[0].y);
     for(var i=1;i<poly.length;i++) ctx.lineTo(poly[i].x,poly[i].y); ctx.closePath(); }
+  function groundQuad(a){ return [applyH(Hgi,a.gx1,a.gy1),applyH(Hgi,a.gx2,a.gy1),
+                                  applyH(Hgi,a.gx2,a.gy2),applyH(Hgi,a.gx1,a.gy2)]; }
+  function groundEllipsePoly(a){ var cx=(a.gx1+a.gx2)/2, cy=(a.gy1+a.gy2)/2,
+    rx=Math.abs(a.gx2-a.gx1)/2, ry=Math.abs(a.gy2-a.gy1)/2, N=48, poly=[], k;
+    for(k=0;k<N;k++){ var th=k/N*6.28318530718; poly.push(applyH(Hgi, cx+rx*Math.cos(th), cy+ry*Math.sin(th))); }
+    return poly; }
   function drawGround(a){
-    if(!Hgi){ return; }
-    var ctr=applyH(Hgi,a.gx,a.gy), main=ringPoly(a.gx,a.gy,a.gr,1), i, rA=0;
-    for(i=0;i<main.length;i++){ var d=Math.hypot(main[i].x-ctr.x, main[i].y-ctr.y); if(d>rA) rA=d; }
+    if(!Hgi) return;
     ctx.save();
     if(a.type==="spotlight"){
+      var ctr=applyH(Hgi,a.gx,a.gy), main=ringPoly(a.gx,a.gy,a.gr,1), i, rA=0;
+      for(i=0;i<main.length;i++){ var d=Math.hypot(main[i].x-ctr.x, main[i].y-ctr.y); if(d>rA) rA=d; }
       var g=ctx.createRadialGradient(ctr.x,ctr.y,Math.max(1,rA*0.15),ctr.x,ctr.y,Math.max(2,rA*1.1));
       g.addColorStop(0,hexA(a.c,0.05)); g.addColorStop(0.72,hexA(a.c,0.34)); g.addColorStop(1,hexA(a.c,0));
       ctx.fillStyle=g; pathPoly(ringPoly(a.gx,a.gy,a.gr,1.22)); ctx.fill();
       ctx.lineWidth=Math.max(3,a.w||5); ctx.strokeStyle=a.c; pathPoly(main); ctx.stroke();
       ctx.lineWidth=1.6; ctx.strokeStyle="rgba(255,255,255,.8)"; pathPoly(ringPoly(a.gx,a.gy,a.gr,0.86)); ctx.stroke();
-    } else {
+    } else {                                             // ground box / circle in perspective
       ctx.shadowColor="rgba(0,0,0,.45)"; ctx.shadowBlur=5;
-      ctx.lineWidth=a.w||6; ctx.strokeStyle=a.c; pathPoly(main); ctx.stroke();
+      ctx.lineWidth=a.w||6; ctx.strokeStyle=a.c;
+      pathPoly(a.type==="rect" ? groundQuad(a) : groundEllipsePoly(a)); ctx.stroke();
     }
     ctx.restore();
   }
@@ -268,6 +304,8 @@
   function drawOne(a, active){
     if(a.g){ drawGround(a); return; }
     if(a.type==="arrow") drawArrow(a);
+    else if(a.type==="curvedarrow") drawCurvedArrow(a);
+    else if(a.type==="darrow") drawDashedArrow(a);
     else if(a.type==="line") drawLine(a);
     else if(a.type==="spotlight") drawSpot(a);
     else if(a.type==="ellipse") drawEllipse(a);
@@ -283,14 +321,21 @@
     for(var i=0;i<anns.length;i++) drawOne(anns[i], i===sel);
     if(drawing) drawOne(drawing, false);
     if(calibrating) drawPerspGuide();
-    if(sel>-1 && anns[sel]) drawSelBox(anns[sel]);
+    if(sel>-1 && anns[sel]){ drawSelBox(anns[sel]);
+      if(anns[sel].type==="curvedarrow"){ var cc=curveCtrl(anns[sel]);
+        ctx.save(); ctx.fillStyle="#3b82f6"; ctx.strokeStyle="#fff"; ctx.lineWidth=2;
+        ctx.beginPath(); ctx.arc(cc.x,cc.y,Math.max(6,cv.width/150),0,6.2832); ctx.fill(); ctx.stroke(); ctx.restore(); } }
     setHeight();
   }
   function bbox(a){
-    if(a.g){ if(!Hgi) return {x:0,y:0,w:0,h:0}; var poly=ringPoly(a.gx,a.gy,a.gr,1.1);
+    if(a.g){ if(!Hgi) return {x:0,y:0,w:0,h:0};
+      var poly = (a.gr!=null) ? ringPoly(a.gx,a.gy,a.gr,1.1) : groundQuad(a);
       var xs=poly.map(function(q){return q.x;}), ys=poly.map(function(q){return q.y;});
       var gx0=Math.min.apply(0,xs), gy0=Math.min.apply(0,ys);
       return {x:gx0,y:gy0,w:Math.max.apply(0,xs)-gx0,h:Math.max.apply(0,ys)-gy0}; }
+    if(a.type==="curvedarrow"){ var c=curveCtrl(a), xs=[a.x1,a.x2,c.x], ys=[a.y1,a.y2,c.y];
+      var x0=Math.min.apply(0,xs), y0=Math.min.apply(0,ys);
+      return {x:x0,y:y0,w:Math.max.apply(0,xs)-x0,h:Math.max.apply(0,ys)-y0}; }
     if(a.type==="text"){ var fs=a.size||34; var w=ctx.measureText?( (ctx.font="800 "+fs+"px Inter,Arial"), ctx.measureText(a.text||"").width):120;
       return {x:a.x1-6,y:a.y1-fs*0.7,w:w+12,h:fs*1.4}; }
     if(a.type==="pen"){ var xs=a.pts.map(function(p){return p[0];}), ys=a.pts.map(function(p){return p[1];});
@@ -327,15 +372,21 @@
       return;
     }
     if(tool==="select"){
+      if(sel>-1 && anns[sel] && anns[sel].type==="curvedarrow"){     // grab the bend handle first
+        var ca=anns[sel], cc=curveCtrl(ca), hr=Math.max(14, cv.width/90);
+        if(Math.hypot(p.x-cc.x, p.y-cc.y) < hr){ pushRedoSnapshot();
+          moving={i:sel, ctrl:true, ox:p.x, oy:p.y, snap:JSON.parse(JSON.stringify(ca))}; return; }
+      }
       var hit=hitTest(p); sel=hit;
       if(hit>-1){ pushRedoSnapshot(); moving={i:hit, ox:p.x, oy:p.y, snap:JSON.parse(JSON.stringify(anns[hit]))}; }
       render(); return;
     }
     if(tool==="text"){ startText(e,p); return; }
     pushRedoSnapshot();
-    if(perspOn && Hig && (tool==="spotlight"||tool==="ellipse")){   // ground-plane (3D) mark
+    if(perspOn && Hig && (tool==="spotlight"||tool==="ellipse"||tool==="rect")){   // ground-plane (3D) mark
       var g0=applyH(Hig,p.x,p.y);
-      drawing={type:tool, g:true, c:color, w:size, gx:g0.x, gy:g0.y, gr:0};
+      if(tool==="spotlight") drawing={type:"spotlight", g:true, c:color, w:size, gx:g0.x, gy:g0.y, gr:0};
+      else drawing={type:tool, g:true, c:color, w:size, gx1:g0.x, gy1:g0.y, gx2:g0.x, gy2:g0.y};
     }
     else if(tool==="pen"){ drawing={type:"pen", c:color, w:size, pts:[[p.x,p.y]]}; }
     else { drawing={type:tool, c:color, w:size, x1:p.x, y1:p.y, x2:p.x, y2:p.y}; }
@@ -345,9 +396,12 @@
     if(!editable) return; var p=pt(e);
     if(calDrag>-1 && persp){ persp[calDrag]=[p.x,p.y]; rebuildH(); render(); return; }
     if(moving){ var a=anns[moving.i], dx=p.x-moving.ox, dy=p.y-moving.oy;
-      moveAnn(a, moving.snap, dx, dy); render(); return; }
+      moveAnn(a, moving.snap, dx, dy, moving.ctrl); render(); return; }
     if(!drawing) return;
-    if(drawing.g){ var g1=applyH(Hig,p.x,p.y); drawing.gr=Math.hypot(g1.x-drawing.gx, g1.y-drawing.gy); render(); return; }
+    if(drawing.g){ var g1=applyH(Hig,p.x,p.y);
+      if(drawing.type==="spotlight") drawing.gr=Math.hypot(g1.x-drawing.gx, g1.y-drawing.gy);
+      else { drawing.gx2=g1.x; drawing.gy2=g1.y; }
+      render(); return; }
     if(drawing.type==="pen") drawing.pts.push([p.x,p.y]);
     else { drawing.x2=p.x; drawing.y2=p.y; }
     render();
@@ -357,15 +411,28 @@
     if(moving){ moving=null; sync(); return; }
     if(!drawing) return;
     var d=drawing; drawing=null;
-    var big = d.g ? (d.gr>0.012) : (d.type==="pen" ? d.pts.length>2 : (Math.hypot((d.x2-d.x1),(d.y2-d.y1))>6));
+    var big = d.g ? (d.gr>0.012 || Math.hypot((d.gx2-d.gx1)||0,(d.gy2-d.gy1)||0)>0.02)
+                  : (d.type==="pen" ? d.pts.length>2 : (Math.hypot((d.x2-d.x1),(d.y2-d.y1))>6));
+    if(d.type==="curvedarrow" && d.cx==null){                 // default a visible perpendicular bend
+      var mx=(d.x1+d.x2)/2, my=(d.y1+d.y2)/2, ex=d.x2-d.x1, ey=d.y2-d.y1, L=Math.hypot(ex,ey)||1;
+      d.cx=mx + (-ey/L)*L*0.22; d.cy=my + (ex/L)*L*0.22;
+    }
     if(big){ anns.push(d); sel=-1; render(); sync(); }
     else { if(undoStack.length) undoStack.pop(); render(); }   // discard a stray click
   });
-  function moveAnn(a, snap, dx, dy){
-    if(a.g){ var c0=applyH(Hgi,snap.gx,snap.gy), ng=applyH(Hig,c0.x+dx,c0.y+dy); a.gx=ng.x; a.gy=ng.y; return; }
+  function moveAnn(a, snap, dx, dy, ctrl){
+    if(ctrl && a.type==="curvedarrow"){ a.cx=snap.cx+dx; a.cy=snap.cy+dy; return; }
+    if(a.g){                                          // shift ground marks by an image-space delta
+      if(a.gr!=null){ var c0=applyH(Hgi,snap.gx,snap.gy), ng=applyH(Hig,c0.x+dx,c0.y+dy); a.gx=ng.x; a.gy=ng.y; }
+      else { var p1=applyH(Hgi,snap.gx1,snap.gy1), p2=applyH(Hgi,snap.gx2,snap.gy2),
+             q1=applyH(Hig,p1.x+dx,p1.y+dy), q2=applyH(Hig,p2.x+dx,p2.y+dy);
+             a.gx1=q1.x; a.gy1=q1.y; a.gx2=q2.x; a.gy2=q2.y; }
+      return;
+    }
     if(a.type==="pen"){ a.pts=snap.pts.map(function(q){ return [q[0]+dx,q[1]+dy]; }); }
     else if(a.type==="text"){ a.x1=snap.x1+dx; a.y1=snap.y1+dy; }
-    else { a.x1=snap.x1+dx; a.y1=snap.y1+dy; a.x2=snap.x2+dx; a.y2=snap.y2+dy; }
+    else { a.x1=snap.x1+dx; a.y1=snap.y1+dy; a.x2=snap.x2+dx; a.y2=snap.y2+dy;
+           if(a.type==="curvedarrow" && snap.cx!=null){ a.cx=snap.cx+dx; a.cy=snap.cy+dy; } }
   }
 
   // ---- text tool ----
