@@ -28,6 +28,28 @@ DEFAULT_COLORS: dict[str, str] = {
 # board is authored in a 1050 x 680 space (10 px per pitch unit); 0-100 -> 0-1050/680
 _W, _H = 1050.0, 680.0
 
+# The plane HEIGHT used by the current render. It is always ``_H`` (680) for pitch boards, so their
+# output is byte-identical. A telestration ("image") board overrides it per-render to match the
+# uploaded photo's aspect ratio (width stays 1050) via ``plane_height`` + a try/finally in the
+# public renderers — so a wide broadcast frame is shown FULLY (no crop / no distortion) and every
+# annotation maps to where it was drawn. Streamlit renders sequentially per session, so this
+# module-level override (always restored) is safe.
+_PLANE_H = _H
+
+
+def plane_height(board: "Board") -> float:
+    """Render-plane height for ``board`` (width is always ``_W``). ``_H`` for every pitch board;
+    for an image board it is ``_W / aspect`` where ``aspect`` (bg width/height) is stored in
+    ``board.meta['bg_aspect']`` — so the plane matches the photo and nothing is cropped."""
+    if getattr(board, "pitch", None) is not None and board.pitch.kind == "image":
+        try:
+            a = float((getattr(board, "meta", None) or {}).get("bg_aspect") or 0)
+            if a > 0:
+                return max(260.0, min(2400.0, _W / a))
+        except (TypeError, ValueError):
+            pass
+    return _H
+
 
 def _esc(t: Any) -> str:
     return _html.escape(str(t))
@@ -38,7 +60,7 @@ def _c(colors: dict[str, str], key: str) -> str:
 
 
 def _px(x: float, y: float) -> tuple[float, float]:
-    return x / 100.0 * _W, y / 100.0 * _H
+    return x / 100.0 * _W, y / 100.0 * _PLANE_H
 
 
 # ---------------------------------------------------------------- pitch
@@ -46,15 +68,15 @@ def _pitch_svg(board: Board, colors: dict[str, str], grid: bool) -> str:
     kind = board.pitch.kind
     line = _c(colors, "line")
     grass, grass2 = _c(colors, "grass"), _c(colors, "grass_alt")
-    out = [f'<rect x="0" y="0" width="{_W}" height="{_H}" fill="{_c(colors,"bg")}"/>']
+    out = [f'<rect x="0" y="0" width="{_W}" height="{_PLANE_H}" fill="{_c(colors,"bg")}"/>']
     if kind == "image":
-        # Telestration background: a raster photo/frame fills the whole 1050x680 plane, and
-        # every annotation object (arrows, spotlights, text, ...) is drawn on top of it exactly
-        # as on a pitch. The image src (a data URL or path) lives in board.meta["bg_image"] so
-        # the pitch stays a pure geometry description with no image bytes of its own.
+        # Telestration background: a raster photo/frame fills the whole plane (width _W, height
+        # _PLANE_H = _W/aspect so the photo keeps its shape), and every annotation object (arrows,
+        # spotlights, text, ...) is drawn on top of it. The image src (a data URL or path) lives in
+        # board.meta["bg_image"] so the pitch stays a pure geometry description with no image bytes.
         src = str((getattr(board, "meta", None) or {}).get("bg_image") or "")
         if src:
-            out.append(f'<image href="{_esc(src)}" x="0" y="0" width="{_W}" height="{_H}" '
+            out.append(f'<image href="{_esc(src)}" x="0" y="0" width="{_W}" height="{_PLANE_H}" '
                        f'preserveAspectRatio="xMidYMid slice"/>')
         if grid:
             out.append(_grid(line))
@@ -463,21 +485,26 @@ def board_pitch_svg(board: Board, *, colors: dict[str, str] | None = None,
     empty ``#tb-pieces`` group the JS component renders every piece into — so pieces are drawn
     and manipulated entirely in the browser (instant), Python only owns the pitch + persistence.
     ``board_svg`` (full, with pieces) stays unchanged for export and the no-component fallback."""
+    global _PLANE_H
     colors = {**DEFAULT_COLORS, **(colors or {})}
     vertical = board.pitch.orientation == "vertical"
-    defs = (f'<defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" '
-            f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
-    pitch = _pitch_svg(board, colors, grid)
-    inner = f'{defs}{pitch}<g id="tb-pieces"></g>'
-    if vertical:
-        view = f'0 0 {_H} {_W}'
-        content = f'<g id="tb-plane" transform="translate({_H} 0) rotate(90)">{inner}</g>'
-    else:
-        view = f'0 0 {_W} {_H}'
-        content = f'<g id="tb-plane">{inner}</g>'
-    return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
-            f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '
-            f'style="display:block;border-radius:12px">{content}</svg>')
+    _PLANE_H = plane_height(board)                        # image boards match the photo aspect
+    try:
+        defs = (f'<defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" '
+                f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
+        pitch = _pitch_svg(board, colors, grid)
+        inner = f'{defs}{pitch}<g id="tb-pieces"></g>'
+        if vertical:
+            view = f'0 0 {_H} {_W}'
+            content = f'<g id="tb-plane" transform="translate({_H} 0) rotate(90)">{inner}</g>'
+        else:
+            view = f'0 0 {_W} {_PLANE_H}'
+            content = f'<g id="tb-plane">{inner}</g>'
+        return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
+                f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '
+                f'style="display:block;border-radius:12px">{content}</svg>')
+    finally:
+        _PLANE_H = _H
 
 
 def board_svg(board: Board, frame_index: int = 0, *, colors: dict[str, str] | None = None,
@@ -485,24 +512,29 @@ def board_svg(board: Board, frame_index: int = 0, *, colors: dict[str, str] | No
               overlays: list[str] | None = None) -> str:
     """Render one frame of ``board`` to an SVG string. ``overlays`` is an extension
     point (future Open Play viz / heatmaps injected as extra SVG) - unused for now."""
+    global _PLANE_H
     colors = {**DEFAULT_COLORS, **(colors or {})}
     fr: Frame = board.frame(frame_index)
     vertical = board.pitch.orientation == "vertical"
-    defs = (f'<defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" '
-            f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
-    pitch = _pitch_svg(board, colors, grid)
-    objs = "".join(_object_svg(o, colors, fr, selected=(o.id == selected_id))
-                   for o in sorted(fr.objects, key=lambda o: o.z)
-                   if not (o.props or {}).get("hidden"))
-    extra = "".join(overlays or [])
-    inner = f'{defs}{pitch}{extra}{objs}'
-    if vertical:
-        # rotate the whole board 90deg for a vertical pitch
-        view = f'0 0 {_H} {_W}'
-        content = f'<g transform="translate({_H} 0) rotate(90)">{inner}</g>'
-    else:
-        view = f'0 0 {_W} {_H}'
-        content = inner
-    return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
-            f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '
-            f'style="display:block;border-radius:12px">{content}</svg>')
+    _PLANE_H = plane_height(board)                        # image boards match the photo aspect
+    try:
+        defs = (f'<defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" '
+                f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
+        pitch = _pitch_svg(board, colors, grid)
+        objs = "".join(_object_svg(o, colors, fr, selected=(o.id == selected_id))
+                       for o in sorted(fr.objects, key=lambda o: o.z)
+                       if not (o.props or {}).get("hidden"))
+        extra = "".join(overlays or [])
+        inner = f'{defs}{pitch}{extra}{objs}'
+        if vertical:
+            # rotate the whole board 90deg for a vertical pitch
+            view = f'0 0 {_H} {_W}'
+            content = f'<g transform="translate({_H} 0) rotate(90)">{inner}</g>'
+        else:
+            view = f'0 0 {_W} {_PLANE_H}'
+            content = inner
+        return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
+                f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '
+                f'style="display:block;border-radius:12px">{content}</svg>')
+    finally:
+        _PLANE_H = _H

@@ -21,6 +21,7 @@ so telestration boards never mix with tactical boards.
 from __future__ import annotations
 
 import base64
+import io
 
 import streamlit as st
 
@@ -62,6 +63,27 @@ _TELE_TOOL_DEFAULTS: dict[str, dict] = {
     "text": {"text": "Label", "size": 22, "color": "#ffffff", "outline": "#0c0e12",
              "outline_width": 3.5},
 }
+
+
+# ---------------------------------------------------------------- background image
+def _encode_bg(data: bytes, mime: str) -> tuple[str, float]:
+    """Turn uploaded image bytes into ``(data_url, aspect)`` where ``aspect = width/height``. The
+    image is downscaled (cap 1600px wide, JPEG q82) so the data URL stays small — a multi-MB photo
+    re-sent to the canvas on every rerun would choke the component and make drawing feel dead — but
+    its aspect ratio is KEPT (no crop), so the render plane matches the photo. Falls back to the raw
+    bytes + a 1.544 (1050/680) aspect if PIL is unavailable."""
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        iw, ih = img.size
+        aspect = (iw / ih) if ih else (1050.0 / 680.0)
+        if iw > 1600:
+            img = img.resize((1600, max(1, round(1600 / aspect))), Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=82, optimize=True)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii"), aspect
+    except Exception:
+        return (f"data:{mime};base64," + base64.b64encode(data).decode("ascii"), 1050.0 / 680.0)
 
 
 # ---------------------------------------------------------------- colours
@@ -259,8 +281,9 @@ class TelestrationPage(Page):
             data = up.getvalue()
             sig = f"{up.name}:{len(data)}"
             if st.session_state.get("_tl_bg_sig") != sig:      # only ingest each file once
-                mime = up.type or "image/png"
-                board.meta["bg_image"] = f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+                url, aspect = _encode_bg(data, up.type or "image/png")
+                board.meta["bg_image"] = url
+                board.meta["bg_aspect"] = aspect               # render plane matches the photo shape
                 board.pitch.kind = "image"
                 board.touch()
                 st.session_state["_tl_bg_sig"] = sig
@@ -269,23 +292,29 @@ class TelestrationPage(Page):
         if has_bg and can_edit:
             if cols[1].button("Remove background", key="tl_bg_clear", use_container_width=True):
                 board.meta.pop("bg_image", None)
+                board.meta.pop("bg_aspect", None)
                 board.touch()
                 st.session_state.pop("_tl_bg_sig", None)
                 _bump_model_rev()
                 st.rerun()
         if not has_bg:
             C.render_alert("Upload a background image to start drawing on it.", "info")
+        elif can_edit:
+            st.caption("Pick a tool from the left rail (arrow · spotlight · line · text), then "
+                       "**drag on the image** to draw. Press Esc to go back to Select.")
 
     # ---- interactive canvas ---------------------------------------------
     def _board_view(self, shell, board: Board, can_edit: bool) -> None:
         flash = st.session_state.pop("_tl_flash", "")
         if flash:
             C.render_alert(flash, "success")
+        from fap.tactical.render import plane_height
         colors = _tele_colors()
         sel = st.session_state.get(TL_SEL)
         # Python owns the pitch (here: the background photo); the JS component renders + edits every
         # annotation and syncs the model back. board_pitch_svg embeds the photo via _pitch_svg.
         svg = board_pitch_svg(board, colors=colors, grid=False)
+        plane_h = plane_height(board)                        # canvas coord height = photo-matched plane
 
         import hashlib as _hashlib
         model_rev = int(st.session_state.get(TL_MODEL_REV, 0))
@@ -303,6 +332,7 @@ class TelestrationPage(Page):
             "model": model, "model_rev": model_rev,
             "mode": "telestration",                      # hides tactical chrome, shows Spotlight tool
             "tool_defaults": _TELE_TOOL_DEFAULTS,        # seeds the sticky drawing presets
+            "plane_h": plane_h,                          # SVG viewBox height → correct coord mapping
         }
         rendered, result = tactical_canvas(
             svg, _canvas_objects(board), key="tl_canvas", colors=colors,

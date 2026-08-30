@@ -1473,6 +1473,10 @@
     cfg.board = b;                                        // frames / grid / orientation / colours
     cfg.mode = b.mode || "tactical";                     // "telestration" hides the tactical-only chrome
     document.body.classList.toggle('tele', cfg.mode === 'telestration');
+    // Telestration boards match the uploaded photo's aspect: the SVG viewBox is 1050 x plane_h, so
+    // the coordinate mapping (toPitch / pxy) must use the SAME height. Pitch boards never send it
+    // → PLANE_H stays 680 (unchanged, incl. the rotated vertical plane).
+    PLANE_H = (b.plane_h && Number(b.plane_h) > 0) ? Number(b.plane_h) : 680;
     if (b.tool_defaults && !_seededDefaults){            // telestration presets (white arrows, spotlight, captions)
       Object.keys(b.tool_defaults).forEach(function(k){ cfg.toolDefaults[k] = Object.assign({}, b.tool_defaults[k]); });
       _seededDefaults = true;

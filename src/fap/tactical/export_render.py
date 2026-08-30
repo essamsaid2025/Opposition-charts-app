@@ -22,6 +22,8 @@ from fap.tactical.render import DEFAULT_COLORS
 
 # same authoring plane as render.py (10 px per pitch unit)
 _W, _H = 1050.0, 680.0
+# current render-plane height (see render._PLANE_H): _H for pitch boards, _W/aspect for image boards
+_PLANE_H = _H
 _VECTOR = {"arrow", "curved_arrow", "dashed_arrow", "line"}
 
 
@@ -30,7 +32,7 @@ def _c(colors: dict[str, str], key: str) -> str:
 
 
 def _px(x: float, y: float) -> tuple[float, float]:
-    return x / 100.0 * _W, y / 100.0 * _H
+    return x / 100.0 * _W, y / 100.0 * _PLANE_H
 
 
 class _Canvas:
@@ -99,10 +101,11 @@ def _draw_head(ax, geom: dict, col: str, sw: float, z: float) -> None:
 
 
 def _bg_image_array(src: str):
-    """Decode a telestration background image (a ``data:`` URL, raw base64, or a file path) into
-    a numpy RGB array cropped to the board plane's aspect (``_W:_H``) so the exported PNG matches
-    the on-screen SVG's ``preserveAspectRatio="…slice"`` cover-crop. Returns ``None`` on any
-    failure (missing PIL, bad data) so export degrades to a plain background."""
+    """Decode a telestration background image (a ``data:`` URL, raw base64, or a file path) into a
+    numpy RGB array. The render plane already matches the photo's aspect (``_PLANE_H`` = ``_W`` /
+    aspect), so the whole image is drawn into the plane with no crop and no distortion — mirroring
+    the on-screen SVG. Returns ``None`` on any failure (missing PIL, bad data) so export degrades
+    to a plain background."""
     if not src:
         return None
     try:
@@ -117,18 +120,7 @@ def _bg_image_array(src: str):
             return None                                   # never fetch remote bytes at export time
         else:
             img = Image.open(src)
-        img = img.convert("RGB")
-        iw, ih = img.size
-        target = _W / _H
-        if iw / ih > target:                              # too wide → crop sides
-            nw = max(1, min(iw, int(ih * target)))
-            left = (iw - nw) // 2
-            img = img.crop((left, 0, left + nw, ih))
-        else:                                             # too tall → crop top/bottom
-            nh = max(1, min(ih, int(iw / target)))
-            top = (ih - nh) // 2
-            img = img.crop((0, top, iw, top + nh))
-        return np.asarray(img)
+        return np.asarray(img.convert("RGB"))
     except Exception:
         return None
 
@@ -139,7 +131,8 @@ def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
 
     kind = board.pitch.kind
     line = _c(colors, "line")
-    ax.add_patch(mp.Rectangle((0, 0), _W, _H, facecolor=_c(colors, "bg"), edgecolor="none", zorder=0))
+    ax.add_patch(mp.Rectangle((0, 0), _W, _PLANE_H, facecolor=_c(colors, "bg"), edgecolor="none",
+                              zorder=0))
     if kind == "image":
         # Telestration: draw the background photo/frame filling the whole plane; annotations are
         # drawn on top by _draw_object exactly as pitch pieces are. Degrades to the plain bg rect
@@ -147,7 +140,7 @@ def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
         arr = _bg_image_array(str((getattr(board, "meta", None) or {}).get("bg_image") or ""))
         if arr is not None:
             real_ax = getattr(ax, "ax", ax)               # imshow on the real axes (never rotated)
-            real_ax.imshow(arr, extent=(0, _W, _H, 0), zorder=0.05, aspect="auto",
+            real_ax.imshow(arr, extent=(0, _W, _PLANE_H, 0), zorder=0.05, aspect="auto",
                            interpolation="bilinear")
         return
     if kind == "blank":
@@ -420,13 +413,17 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    global _PLANE_H
+    from fap.tactical.render import plane_height
     colors = {**DEFAULT_COLORS, **(colors or {})}
     fr: Frame = board.frame(frame_index)
     vertical = board.pitch.orientation == "vertical"
+    _PLANE_H = plane_height(board)               # image boards match the photo aspect (no crop/distort)
 
     # vertical → a portrait figure/axes (the plane's width and height swap); the _Canvas adapter
-    # rotates the landscape-authored geometry into it. Horizontal is unchanged (byte-identical).
-    fw, fh = (_H, _W) if vertical else (_W, _H)
+    # rotates the landscape-authored geometry into it. Horizontal is unchanged for pitch boards
+    # (byte-identical); an image board uses the photo-matched plane height.
+    fw, fh = (_H, _W) if vertical else (_W, _PLANE_H)
     fig, ax = plt.subplots(figsize=(fw / 100.0, fh / 100.0))
     try:
         ax.set_xlim(0, fw)
@@ -447,6 +444,7 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
         data = buf.getvalue()
     finally:
         plt.close(fig)
+        _PLANE_H = _H                            # restore for the next (possibly pitch-board) export
 
     return data
 
