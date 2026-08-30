@@ -89,12 +89,12 @@ def _add(spec: DatasetSpec) -> None:
 
 
 # ---- Tier A (event data; CSV/Excel/JSON or manual) --------------------------
-_add(DatasetSpec("delivery", "Delivery landing", "A", 10, ("end_x", "end_y"),
+_add(DatasetSpec("delivery", "Delivery landing", "A", 5, ("end_x", "end_y"),
                  optional_inputs=("outcome", "delivery_type", "side"),
                  sources=_src("A"), demo="delivery",
                  reason="Plots where deliveries land. Needs delivery landing coordinates "
-                        "(end_x / end_y), which event import provides."))
-_add(DatasetSpec("delivery_success", "Delivery outcome split", "A", 10, ("end_x", "end_y"),
+                        "(end_x / end_y / x2 / y2), which event import provides."))
+_add(DatasetSpec("delivery_success", "Delivery outcome split", "A", 5, ("end_x", "end_y"),
                  optional_inputs=("shot", "goal"), derived_inputs=("success",),
                  sources=_src("A"), demo="delivery",
                  reason="Splits landings by whether they led to a shot/goal."))

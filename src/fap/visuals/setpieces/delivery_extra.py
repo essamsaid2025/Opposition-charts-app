@@ -27,13 +27,13 @@ ORIENT = Control("sp_orientation", "Pitch orientation", "select", default="verti
 # y=0 is the RIGHT touchline, so the low-y band is the right of the box (matching the
 # near/far-post naming for a right-side corner) and the high-y band is the left.
 _ZONES = (
-    ("Near post", 94.2, 21.0, 100.0, 39.0),
-    ("Far post", 94.2, 61.0, 100.0, 79.0),
-    ("6-yard centre", 94.2, 39.0, 100.0, 61.0),
-    ("Penalty spot", 88.0, 36.0, 94.2, 64.0),
-    ("Box right", 83.0, 21.0, 94.2, 36.0),
-    ("Box left", 83.0, 64.0, 94.2, 79.0),
-    ("Edge of box", 74.0, 21.0, 83.0, 79.0),
+    ("Near post", 94.2, 20.0, 100.0, 44.0),
+    ("Far post", 94.2, 56.0, 100.0, 80.0),
+    ("6-yard centre", 94.2, 44.0, 100.0, 56.0),
+    ("Penalty spot", 88.0, 44.0, 94.2, 56.0),
+    ("Box right", 83.0, 20.0, 94.2, 44.0),
+    ("Box left", 83.0, 56.0, 94.2, 80.0),
+    ("Edge of box", 74.0, 20.0, 83.0, 80.0),
 )
 _DELIVERY_COLORS = {
     "inswing": "accent", "outswing": "accent_2", "straight": "success",
@@ -124,12 +124,12 @@ def _ends(df):
 # named corner zones (canonical depth x0..x1, across y0..y1) + fixed zone colours
 # matching the standalone app's corner-zone map (independent of the chart theme).
 _CORNER_ZONES = (
-    ("Six Yard", 94.2, 39.0, 100.0, 61.0, "#B59B3A", 0.60),      # checked first (specific)
-    ("Penalty Spot", 83.0, 39.0, 94.2, 61.0, "#2E8B57", 0.55),
-    ("Near Post Short", 83.0, 2.0, 100.0, 21.0, "#2E6E8E", 0.30),
-    ("Near Post", 83.0, 21.0, 100.0, 39.0, "#2E6E8E", 0.48),
-    ("Far Post", 83.0, 61.0, 100.0, 79.0, "#3E5C8A", 0.48),
-    ("Far Post Long", 83.0, 79.0, 100.0, 98.0, "#3E5C8A", 0.30),
+    ("Six Yard", 94.2, 44.0, 100.0, 56.0, "#B59B3A", 0.60),      # checked first (specific)
+    ("Penalty Spot", 83.0, 44.0, 94.2, 56.0, "#2E8B57", 0.55),
+    ("Near Post Short", 83.0, 2.0, 100.0, 20.0, "#2E6E8E", 0.30),
+    ("Near Post", 83.0, 20.0, 100.0, 44.0, "#2E6E8E", 0.48),
+    ("Far Post", 83.0, 56.0, 100.0, 80.0, "#3E5C8A", 0.48),
+    ("Far Post Long", 83.0, 80.0, 100.0, 98.0, "#3E5C8A", 0.30),
     ("Box Front", 74.0, 30.0, 83.0, 70.0, "#5A6472", 0.28),
 )
 

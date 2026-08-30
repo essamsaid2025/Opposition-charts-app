@@ -51,6 +51,20 @@ def _int(value: Any):
     return int(f) if f is not None else None
 
 
+def _coord(row: dict[str, Any], *names: str):
+    """First numeric coordinate among ``names``, matched case-insensitively so every
+    set-piece chart accepts the landing columns whatever their casing — ``end_x``,
+    ``x2`` and ``X2`` all resolve here (the pipeline lower-cases columns, but a
+    set-piece frame that reaches derivation by another path may keep ``X2``/``Y2``)."""
+    for nm in names:
+        for key in (nm, nm.lower(), nm.upper()):
+            if key in row:
+                v = _num(row.get(key))
+                if v is not None:
+                    return v
+    return None
+
+
 def _did(row_key: Any, match_id: Any, minute: Any, second: Any, t: str,
          x: Any, y: Any, player: Any) -> str:
     # ``row_key`` is the source event's stable identity in the frame; it makes the id
@@ -159,7 +173,8 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
         outcome = str(row.get("outcome", "") or "").strip().lower()
         goal = shot_result in _GOALISH or outcome in _GOALISH
         shot = goal or shot_result in _SHOTISH or (shot_result not in ("", "nan"))
-        x, y = _num(row.get("x")), _num(row.get("y"))
+        x = _coord(row, "x", "start_x", "x1")
+        y = _coord(row, "y", "start_y", "y1")
         out.append(SetPiece(
             id=_did(row_key, row.get("match_id", ""), row.get("minute"), row.get("second"),
                     t, x, y, row.get("player", "")),
@@ -172,7 +187,9 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
             phase="offensive" if own else "defensive",
             type=t, taker=_s(row, "taker", "player", "delivered_by"),
             minute=_int(row.get("minute")), period=_int(row.get("period")),
-            start_x=x, start_y=y, end_x=_num(row.get("end_x")), end_y=_num(row.get("end_y")),
+            start_x=x, start_y=y,
+            end_x=_coord(row, "end_x", "x2", "target_x", "to_x", "dest_x"),
+            end_y=_coord(row, "end_y", "y2", "target_y", "to_y", "dest_y"),
             outcome=("goal" if goal else outcome), shot=shot, goal=goal, source=source,
             # delivery-level detail read straight from the canonical frame when present,
             # so the CSV/Data-Hub path powers the delivery/side/swing/first-contact charts
