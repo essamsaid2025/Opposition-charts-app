@@ -93,9 +93,9 @@
   var GSQ=[[0,0],[1,0],[1,1],[0,1]];       // ground unit square (TL,TR,BR,BL)
   function rebuildH(){ Hgi=null; Hig=null;
     if(persp && persp.length===4){ Hgi=homography(GSQ,persp); Hig=homography(persp,GSQ); } }
-  function defaultPersp(){                  // a trapezoid roughly matching a pitch camera; user drags to fit
-    var w=cv.width, h=cv.height;
-    return [[w*0.30,h*0.30],[w*0.70,h*0.30],[w*0.92,h*0.90],[w*0.08,h*0.90]];
+  function defaultPersp(){                  // a strong pitch-camera trapezoid (narrow far edge, wide near
+    var w=cv.width, h=cv.height;            // edge running off both sides) so ground shapes read as 3D at once
+    return [[w*0.36,h*0.32],[w*0.64,h*0.32],[w*1.06,h*1.00],[w*-0.06,h*1.00]];
   }
 
   var TOOLS=[
@@ -163,13 +163,17 @@
     if(sel>-1 && anns[sel]){ anns[sel].c=c; render(); syncSoon(); } }
   function togglePersp(){
     perspOn=!perspOn;
-    if(perspOn){ if(!persp){ persp=defaultPersp(); calibrating=true; } rebuildH(); }
+    // enabling 3D is frictionless: a sensible default ground plane is ready immediately, so the
+    // Spotlight / Circle / Box tools draw in perspective right away. Refining the 4 corners (the
+    // "corners" button) is optional, for matching a specific pitch.
+    if(perspOn){ if(!persp) persp=defaultPersp(); rebuildH(); }
     else calibrating=false;
     buildBar(); render(); updateHint();
   }
   function updateHint(){
     if(calibrating){ hintEl.textContent="Perspective: drag the 4 yellow markers onto the pitch corners of a rectangle (e.g. a penalty box), then click the corners button again."; return; }
-    if(perspOn && (tool==="spotlight"||tool==="ellipse"||tool==="rect")){ hintEl.textContent="3D: drag to draw a "+(tool==="spotlight"?"spotlight":tool==="rect"?"box":"circle")+" that sits flat on the pitch in perspective."; return; }
+    if(perspOn && (tool==="spotlight"||tool==="ellipse"||tool==="rect")){ hintEl.textContent="3D on: drag to draw a "+(tool==="spotlight"?"spotlight":tool==="rect"?"box":"circle")+" flat on the pitch. Tap the corners button to match your pitch lines."; return; }
+    if(!perspOn && (tool==="spotlight"||tool==="ellipse"||tool==="rect")){ hintEl.textContent="Drawing FLAT. Turn on 3D (top toolbar) to place this on the pitch in perspective."; return; }
     var m={select:"Click a mark to select · drag to move · Delete to remove · (curved arrow: drag the blue dot to bend)",
       arrow:"Drag on the image to draw a press arrow",
       curvedarrow:"Drag start→end, then switch to Select and drag the blue dot to bend it left/right/up",
