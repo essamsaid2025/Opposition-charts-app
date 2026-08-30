@@ -467,7 +467,7 @@ class SetPieceService:
         team). Falls back to the persisted store only when no dataset is active."""
         self._require(user, Capability.VIEW_SETPIECE)
         cols = ("team", "opponent", "competition", "season", "match_id",
-                "taker", "delivery_type", "outcome", "type", "side")
+                "taker", "delivery_type", "outcome", "type", "side", "phase")
         active = self._active_set_pieces(user, workspace_id)
         if active is not None:
             out: dict[str, list[str]] = {}

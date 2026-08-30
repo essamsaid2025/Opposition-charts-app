@@ -79,13 +79,16 @@ def _sp_render_note(inst, viz: dict, filt, controls: dict, *, key: str) -> None:
 def _sp_filter_chips(filt) -> list[str]:
     """Human chips for the active set-piece filter (its own vocabulary: type/side/
     phase/perspective/team), so the note reflects exactly what is filtered."""
+    _phase_label = {"offensive": "Attack", "defensive": "Defence"}
     chips: list[str] = []
-    for attr, label in (("set_piece_type", "Type"), ("side", "Side"), ("phase", "Phase"),
-                        ("perspective", "Perspective"), ("team", "Team"),
-                        ("delivery_type", "Delivery"), ("match_id", "Match")):
+    for attr, label in (("type", "Set piece"), ("phase", "Type"), ("side", "Side"),
+                        ("team", "Team"), ("opponent", "Opponent"),
+                        ("delivery_type", "Delivery"), ("taker", "Taker"),
+                        ("outcome", "Outcome"), ("match_id", "Match")):
         val = getattr(filt, attr, None)
         if val and str(val).lower() not in ("", "all", "none"):
-            chips.append(f"{label}: {val}")
+            shown = _phase_label.get(str(val).lower(), val) if attr == "phase" else val
+            chips.append(f"{label}: {shown}")
     return chips
 
 
@@ -208,7 +211,13 @@ class SetPieceAnalysisPage(Page):
         self._map_summaries(shell, svc, filt, phase)
         self._report_button(shell, svc, filt, key=phase, phase=phase)
 
+    # CSV ``Type`` = Attack/Defence -> derived ``phase`` = offensive/defensive.
+    _PHASE_DISPLAY = {"offensive": "Attack", "defensive": "Defence"}
+
     def _filter_bar(self, shell, svc, *, key: str) -> SetPieceFilter:
+        """One dropdown per source column, mirroring the tagging sheet's header:
+        Team, Opponent, Competition, Set piece (the kind), Type (Attack/Defence),
+        Side, Delivery, Taker, Outcome — plus Match / Half / Player (in box)."""
         opts = svc.filter_options(shell.user, workspace_id=shell.workspace_id)
 
         def pick(col_label, col, c):
@@ -216,22 +225,35 @@ class SetPieceAnalysisPage(Page):
             choice = c.selectbox(col_label, ["All", *values], key=f"spf_{key}_{col}")
             return "" if choice == "All" else choice
 
+        def pick_phase(c):
+            # the sheet's ``Type`` column: shown as Attack/Defence, filtered as phase.
+            raw = opts.get("phase", [])
+            disp = [self._PHASE_DISPLAY.get(v, v.title()) for v in raw]
+            choice = c.selectbox("Type (Attack/Defence)", ["All", *disp], key=f"spf_{key}_phase")
+            if choice == "All":
+                return ""
+            back = {self._PHASE_DISPLAY.get(v, v.title()): v for v in raw}
+            return back.get(choice, "")
+
         a, b, c, d = st.columns(4)
         team = pick("Team", "team", a)
-        competition = pick("Competition", "competition", b)
-        season = pick("Season", "season", c)
-        match_id = pick("Match", "match_id", d)
+        opponent = pick("Opponent", "opponent", b)
+        competition = pick("Competition", "competition", c)
+        sp_type = pick("Set piece", "type", d)          # Corner / Free kick / …
         e, f, g, h = st.columns(4)
-        taker = pick("Taker", "taker", e)
-        delivery_type = pick("Delivery", "delivery_type", f)
-        outcome = pick("Outcome", "outcome", g)
-        sp_type = pick("Type", "type", h)
-        i, j = st.columns(2)
-        half_choice = i.selectbox("Half", ["All", "1", "2"], key=f"spf_{key}_half")
-        player = j.text_input("Player (in box)", key=f"spf_{key}_player")
+        phase = pick_phase(e)                           # Attack / Defence
+        side = pick("Side", "side", f)                  # Right / Left / Central
+        delivery_type = pick("Delivery", "delivery_type", g)
+        taker = pick("Taker", "taker", h)
+        i, j, k, m = st.columns(4)
+        outcome = pick("Outcome", "outcome", i)
+        match_id = pick("Match", "match_id", j)
+        half_choice = k.selectbox("Half", ["All", "1", "2"], key=f"spf_{key}_half")
+        player = m.text_input("Player (in box)", key=f"spf_{key}_player")
         return SetPieceFilter(
-            team=team, competition=competition, season=season, match_id=match_id,
-            taker=taker, delivery_type=delivery_type, outcome=outcome, type=sp_type,
+            team=team, opponent=opponent, competition=competition, match_id=match_id,
+            type=sp_type, phase=phase, side=side, taker=taker,
+            delivery_type=delivery_type, outcome=outcome,
             half=int(half_choice) if half_choice != "All" else None, player=player.strip())
 
     def _render_analytics(self, bundle: dict) -> None:
