@@ -77,7 +77,7 @@ class _Canvas:
     def text(self, x, y, s, **kw):
         if self._t is not None:                     # move the anchor, but keep the glyphs upright
             x, y = self._t.transform((x, y))
-        self.ax.text(x, y, s, **kw)
+        return self.ax.text(x, y, s, **kw)
 
 
 def _draw_head(ax, geom: dict, col: str, sw: float, z: float) -> None:
@@ -98,6 +98,41 @@ def _draw_head(ax, geom: dict, col: str, sw: float, z: float) -> None:
         ax.add_patch(mp.Circle((cx, cy), r, fill=False, edgecolor=col, linewidth=sw, zorder=z + 0.01))
 
 
+def _bg_image_array(src: str):
+    """Decode a telestration background image (a ``data:`` URL, raw base64, or a file path) into
+    a numpy RGB array cropped to the board plane's aspect (``_W:_H``) so the exported PNG matches
+    the on-screen SVG's ``preserveAspectRatio="…slice"`` cover-crop. Returns ``None`` on any
+    failure (missing PIL, bad data) so export degrades to a plain background."""
+    if not src:
+        return None
+    try:
+        import base64
+        import numpy as np
+        from PIL import Image
+        if src.startswith("data:"):
+            src = src.split(",", 1)[1] if "," in src else ""
+            raw = base64.b64decode(src)
+            img = Image.open(io.BytesIO(raw))
+        elif src.startswith(("http://", "https://")):
+            return None                                   # never fetch remote bytes at export time
+        else:
+            img = Image.open(src)
+        img = img.convert("RGB")
+        iw, ih = img.size
+        target = _W / _H
+        if iw / ih > target:                              # too wide → crop sides
+            nw = max(1, min(iw, int(ih * target)))
+            left = (iw - nw) // 2
+            img = img.crop((left, 0, left + nw, ih))
+        else:                                             # too tall → crop top/bottom
+            nh = max(1, min(ih, int(iw / target)))
+            top = (ih - nh) // 2
+            img = img.crop((0, top, iw, top + nh))
+        return np.asarray(img)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------- pitch
 def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
     import matplotlib.patches as mp
@@ -105,6 +140,16 @@ def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
     kind = board.pitch.kind
     line = _c(colors, "line")
     ax.add_patch(mp.Rectangle((0, 0), _W, _H, facecolor=_c(colors, "bg"), edgecolor="none", zorder=0))
+    if kind == "image":
+        # Telestration: draw the background photo/frame filling the whole plane; annotations are
+        # drawn on top by _draw_object exactly as pitch pieces are. Degrades to the plain bg rect
+        # above when the image can't be decoded.
+        arr = _bg_image_array(str((getattr(board, "meta", None) or {}).get("bg_image") or ""))
+        if arr is not None:
+            real_ax = getattr(ax, "ax", ax)               # imshow on the real axes (never rotated)
+            real_ax.imshow(arr, extent=(0, _W, _H, 0), zorder=0.05, aspect="auto",
+                           interpolation="bilinear")
+        return
     if kind == "blank":
         return
 
@@ -320,6 +365,17 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         h = p.get("h", 16) / 100 * _H
         col = p.get("color") or _c(colors, "zone")
         op = float(p.get("opacity", 0.28))
+        if p.get("spotlight"):                              # glowing player-spotlight (mirrors render._spotlight_svg)
+            halo = max(0.10, min(0.45, op))
+            ax.add_patch(mp.Ellipse((x, y), w * 1.18, h * 1.18, facecolor=col, edgecolor="none",
+                                    alpha=halo * 0.55, zorder=z))
+            ax.add_patch(mp.Ellipse((x, y), w, h, facecolor=col, edgecolor="none",
+                                    alpha=halo, zorder=z + 0.001))
+            ax.add_patch(mp.Ellipse((x, y), w, h, fill=False, edgecolor=col, linewidth=5,
+                                    alpha=0.95, zorder=z + 0.002))
+            ax.add_patch(mp.Ellipse((x, y), w * 0.86, h * 0.86, fill=False, edgecolor="white",
+                                    linewidth=1.6, alpha=0.75, zorder=z + 0.003))
+            return
         filled = p.get("filled", True)
         face = col if filled else "none"
         edge = p.get("stroke_color") or col
@@ -339,8 +395,13 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
             ax.add_patch(mp.Rectangle((x - w / 2, y - h / 2), w, h, **kw))
     elif t in ("text", "number"):
         size = float(p.get("size", 14)) * o.scale
-        ax.text(x, y, str(p.get("text", "")), ha="center", va="center",
-                color=p.get("color") or _c(colors, "text"), fontsize=size, fontweight="bold", zorder=z)
+        txt = ax.text(x, y, str(p.get("text", "")), ha="center", va="center",
+                      color=p.get("color") or _c(colors, "text"), fontsize=size,
+                      fontweight="bold", zorder=z)
+        ow = float(p.get("outline_width", 0) or 0)       # readability halo (mirrors render._text)
+        if txt is not None and ow > 0:
+            import matplotlib.patheffects as pe
+            txt.set_path_effects([pe.withStroke(linewidth=ow, foreground=p.get("outline") or "#0c0e12")])
     elif t == "image":
         w = p.get("w", 12) / 100 * _W
         h = p.get("h", 12) / 100 * _H

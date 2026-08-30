@@ -18,6 +18,7 @@ KIND_BOARD = "tactical_board"
 KIND_TEMPLATE = "tactical_template"
 KIND_SESSION = "tactical_session"
 KIND_ANIMATION = "tactical_animation"
+KIND_TELESTRATION = "telestration_board"      # image-background annotation boards (Telestration page)
 FAV_SCOPE = "tactical_favorites"
 
 
@@ -78,6 +79,12 @@ class TacticalService:
 
     def list_animations(self, user) -> list:
         return self._list(user, KIND_ANIMATION)
+
+    def save_telestration(self, user, board: Board, *, name: str = "", preset_id: str | None = None):
+        return self._save(user, KIND_TELESTRATION, board, name=name, preset_id=preset_id)
+
+    def list_telestration(self, user) -> list:
+        return self._list(user, KIND_TELESTRATION)
 
     # -- favorites (autosave scope, not presets) ----------------------
     def favorites(self, user) -> list[str]:

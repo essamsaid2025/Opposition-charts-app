@@ -105,6 +105,10 @@
   #toolrail .tool{ width:34px; height:32px; border-radius:6px; display:grid; place-items:center; color:#26282d; border:0; background:none; }
   #toolrail .tool:hover{ background:#f1f2f5; } #toolrail .tool.on{ background:var(--e-chip); }
   #toolrail .tool svg{ width:20px; height:20px; }
+  /* Telestration mode ("body.tele"): hide the tactical-only chrome, reveal the spotlight tool. */
+  .tele-only{ display:none !important; }
+  body.tele .tele-only{ display:grid !important; }
+  body.tele .tac-only, body.tele #tb-form, body.tele #timeline{ display:none !important; }
   #stagewrap{ position:relative; display:grid; place-items:center; padding:18px; overflow:auto; background:var(--e-canvas); }
   #stagewrap #stage{ border:0; border-radius:4px; background:#fff; box-shadow:0 6px 24px rgba(20,22,28,.14); max-width:100%; }
   #stagewrap #stage svg.tb-board-svg{ width:min(70vw,1000px); }
@@ -164,16 +168,17 @@
     <aside id="ctxpanel"></aside>
     <nav id="toolrail">
       <button class="tool on" data-tool="select" title="Select / Move">$ic:cursor$</button>
-      <button class="tool" data-tool="home" title="Home player">$ic:jerseyF$</button>
-      <button class="tool" data-tool="away" title="Away player">$ic:jerseyO$</button>
-      <button class="tool" data-tool="ball" title="Ball">$ic:ball$</button>
-      <button class="tool" data-tool="cone" title="Cone">$ic:cone$</button>
-      <button class="tool" data-tool="goal" title="Goal">$ic:goal$</button>
-      <button class="tool" data-tool="mannequin" title="Mannequin">$ic:mannequin$</button>
+      <button class="tool tac-only" data-tool="home" title="Home player">$ic:jerseyF$</button>
+      <button class="tool tac-only" data-tool="away" title="Away player">$ic:jerseyO$</button>
+      <button class="tool tac-only" data-tool="ball" title="Ball">$ic:ball$</button>
+      <button class="tool tac-only" data-tool="cone" title="Cone">$ic:cone$</button>
+      <button class="tool tac-only" data-tool="goal" title="Goal">$ic:goal$</button>
+      <button class="tool tac-only" data-tool="mannequin" title="Mannequin">$ic:mannequin$</button>
       <button class="tool" data-tool="arrow" title="Arrow">$ic:arrow$</button>
       <button class="tool" data-tool="curved_arrow" title="Curved arrow">$ic:arrowC$</button>
       <button class="tool" data-tool="dashed_arrow" title="Dashed arrow">$ic:arrowD$</button>
       <button class="tool" data-tool="line" title="Line">$ic:line2$</button>
+      <button class="tool tele-only" data-tool="spotlight" title="Spotlight">$ic:target$</button>
       <button class="tool" data-tool="circle" title="Circle">$ic:circle$</button>
       <button class="tool" data-tool="shape" title="Rectangle">$ic:square$</button>
       <button class="tool" data-tool="zone" title="Zone">$ic:zone$</button>
@@ -1041,7 +1046,7 @@
   };
   function escH(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   var POINT={ home:1, away:1, ball:1, cone:1, text:1, goal:1, mannequin:1 };
-  var DRAWT={ arrow:1, curved_arrow:1, dashed_arrow:1, line:1, circle:1, shape:1, zone:1 };
+  var DRAWT={ arrow:1, curved_arrow:1, dashed_arrow:1, line:1, circle:1, shape:1, zone:1, spotlight:1 };
   function labelFor(t){ return {home:'Home player',away:'Away player',ball:'Ball',cone:'Cone',goal:'Goal',mannequin:'Mannequin',arrow:'Arrow',curved_arrow:'Curved arrow',dashed_arrow:'Dashed arrow',line:'Line',circle:'Circle',shape:'Rectangle',zone:'Zone',text:'Text'}[t]||t; }
 
   function placeAt(e){                                    // click-to-place a point object
@@ -1050,11 +1055,12 @@
     emit({ ts: nextTs(), commands: [{ op: "add_object", type: t.type, x: p.x, y: p.y,
                                       props: Object.assign({}, t.props || {}) }] });
   }
-  function toolType(name){ return (name==="home"||name==="away") ? "player" : name; }
+  function toolType(name){ if(name==="home"||name==="away") return "player"; if(name==="spotlight") return "circle"; return name; }
   function hasDefaults(name){ return name!=="select" && name!=="ball" && name!=="cone" && name!=="goal" && name!=="mannequin"; }
   function defaultsFor(name){                             // starting props for a tool's sticky defaults
     if (name==="home"||name==="away") return { team:(name==="away"?"away":"home"), number:0, name:"", color:"", goalkeeper:false, captain:false };
     if (name==="circle") return { color:"#2f7bd6", filled:false, opacity:0.28, stroke_width:2.5 };
+    if (name==="spotlight") return { spotlight:true, shape:"ellipse", filled:true, color:"#ffd23f", opacity:0.32, stroke_width:5, w:9, h:5 };
     if (name==="shape"||name==="zone"||name==="highlight") return { color:"#2f7bd6", filled:true, opacity:0.28, stroke_width:2 };
     if (VECTOR[name]) return { variant:"", curvature:0, label:"" };
     if (name==="text") return { text:"T", size:14, color:"#111318" };
@@ -1068,7 +1074,7 @@
       cfg.placeTool = { type: toolType(name), props: props };
       cfg.selectedId = null; cfg.selectedIds = [];
     } else if (DRAWT[name]){
-      cfg.drawTool = { type: name, props: props };
+      cfg.drawTool = { type: toolType(name), props: props };   // spotlight -> circle geometry
       cfg.selectedId = null; cfg.selectedIds = [];
     }
     document.querySelectorAll('#toolrail .tool').forEach(function(b){ b.classList.toggle('on', b.dataset.tool === name); });
@@ -1313,18 +1319,22 @@
   function pxy(o){ return { x:o.x/100*PLANE_W, y:o.y/100*PLANE_H }; }
   function inkFor(hex){ try{ var h=String(hex).replace('#',''); var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16); return (0.299*r+0.587*g+0.114*b)>150?'#111318':'#ffffff'; }catch(e){ return '#fff'; } }
   function teamColor(o){ var p=o.props||{}; return p.color || (p.team==='away'?(cfg.colors.away||'#2f6fd6'):(cfg.colors.home||'#e23b3b')); }
-  function arrowHead(tip, from, col){
-    var ang=Math.atan2(tip.y-from.y, tip.x-from.x), L=13;
+  function arrowHead(tip, from, col, sw, hs){
+    sw=(sw!=null?sw:3); hs=(hs!=null?hs:1);
+    var ang=Math.atan2(tip.y-from.y, tip.x-from.x), L=(10+sw)*hs;   // sw3,hs1 => 13 (unchanged for existing arrows)
     var x1=tip.x-L*Math.cos(ang-0.42), y1=tip.y-L*Math.sin(ang-0.42);
     var x2=tip.x-L*Math.cos(ang+0.42), y2=tip.y-L*Math.sin(ang+0.42);
     return '<path d="M'+tip.x+' '+tip.y+' L'+x1+' '+y1+' L'+x2+' '+y2+' Z" fill="'+col+'"/>';
   }
   function vectorSVG(o){
     var p=o.props||{}, s=pxy(o), e=pxy({x:(p.x2!=null?p.x2:o.x+12), y:(p.y2!=null?p.y2:o.y)});
-    var col=(cfg.colors.line||'#14181f'), sw=3, dash=(o.type==='dashed_arrow')?' stroke-dasharray="9 7"':'', path, from=s;
+    // honour per-object colour + stroke width (telestration white press arrows) — absent props
+    // fall back to the classic line-colour / 3px look, so existing boards are unchanged.
+    var col=(p.color||cfg.colors.line||'#14181f'), sw=(p.stroke_width!=null?p.stroke_width:3);
+    var dash=(o.type==='dashed_arrow')?' stroke-dasharray="9 7"':'', path, from=s;
     if(o.type==='curved_arrow'){ var k=(p.curvature!=null?p.curvature:0.3), cp=curveControlPoint(s,e,k); path='M '+s.x+' '+s.y+' Q '+cp.x+' '+cp.y+' '+e.x+' '+e.y; from=cp; }
     else path='M '+s.x+' '+s.y+' L '+e.x+' '+e.y;
-    var head=(o.type!=='line')?arrowHead(e, from, col):'';
+    var head=(o.type!=='line')?arrowHead(e, from, col, sw, (p.arrowhead_size!=null?p.arrowhead_size:1)):'';
     return '<path d="'+path+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'"'+dash+' stroke-linecap="round"/>'+head;
   }
   function pieceSVG(o){
@@ -1349,11 +1359,21 @@
       var op=(p.opacity==null?0.28:p.opacity), filled=p.filled!==false, swd=(p.stroke_width==null?2:p.stroke_width), scol=p.stroke_color||col;
       var dash=(p.stroke_style==='dashed')?' stroke-dasharray="8 6"':(p.stroke_style==='dotted'?' stroke-dasharray="2 5"':'');
       var fa=filled?(' fill="'+col+'" fill-opacity="'+op+'"'):' fill="none"';
+      if(p.spotlight){                                   // glowing player spotlight (matches render._spotlight_svg)
+        var srx=w/2, sry=h/2, halo=Math.max(0.10,Math.min(0.45,op));
+        return '<ellipse cx="'+x+'" cy="'+y+'" rx="'+(srx*1.18)+'" ry="'+(sry*1.18)+'" fill="'+col+'" fill-opacity="'+(halo*0.55)+'"/>'+
+               '<ellipse cx="'+x+'" cy="'+y+'" rx="'+srx+'" ry="'+sry+'" fill="'+col+'" fill-opacity="'+halo+'" stroke="'+col+'" stroke-width="5" stroke-opacity="0.95"/>'+
+               '<ellipse cx="'+x+'" cy="'+y+'" rx="'+(srx*0.86)+'" ry="'+(sry*0.86)+'" fill="none" stroke="#fff" stroke-width="1.6" stroke-opacity="0.75"/>';
+      }
       if(o.type==='circle'||p.shape==='ellipse') return '<ellipse cx="'+x+'" cy="'+y+'" rx="'+(w/2)+'" ry="'+(h/2)+'"'+fa+' stroke="'+scol+'" stroke-width="'+swd+'"'+dash+'/>';
       if(p.shape==='triangle') return '<path d="M'+x+' '+(y-h/2)+' L'+(x+w/2)+' '+(y+h/2)+' L'+(x-w/2)+' '+(y+h/2)+' Z"'+fa+' stroke="'+scol+'" stroke-width="'+swd+'"'+dash+'/>';
       return '<rect x="'+(x-w/2)+'" y="'+(y-h/2)+'" width="'+w+'" height="'+h+'" rx="4"'+fa+' stroke="'+scol+'" stroke-width="'+swd+'"'+dash+'/>';
     }
-    if(o.type==='text'||o.type==='number') return '<text x="'+x+'" y="'+y+'" text-anchor="middle" font-size="'+(p.size||14)+'" font-weight="700" fill="'+(p.color||cfg.colors.text||LN)+'" font-family="Inter,Arial" paint-order="stroke" stroke="#fff" stroke-width="2.5" stroke-linejoin="round">'+escH(p.text||'T')+'</text>';
+    if(o.type==='text'||o.type==='number'){              // outline props let telestration captions use a dark halo; defaults keep the classic white halo
+      var oc=(p.outline||'#fff'), ow=(p.outline_width!=null?p.outline_width:2.5);
+      var so=(ow>0)?(' paint-order="stroke" stroke="'+oc+'" stroke-width="'+ow+'" stroke-linejoin="round"'):'';
+      return '<text x="'+x+'" y="'+y+'" text-anchor="middle" font-size="'+(p.size||14)+'" font-weight="700" fill="'+(p.color||cfg.colors.text||LN)+'" font-family="Inter,Arial"'+so+'>'+escH(p.text||'T')+'</text>';
+    }
     if(o.type==='goal'){ var gw=34*sc, gh=20*sc, gc=(cfg.colors.goal||'#c7ccd8');
       return '<g stroke="'+gc+'" stroke-width="3" fill="none"><line x1="'+(x-gw/2)+'" y1="'+(y-gh)+'" x2="'+(x-gw/2)+'" y2="'+y+'"/><line x1="'+(x+gw/2)+'" y1="'+(y-gh)+'" x2="'+(x+gw/2)+'" y2="'+y+'"/><line x1="'+(x-gw/2)+'" y1="'+(y-gh)+'" x2="'+(x+gw/2)+'" y2="'+(y-gh)+'"/></g>'; }
     if(o.type==='mannequin'){ var ms=13*sc, mc=(cfg.colors.mannequin||'#c9ccd2');
@@ -1425,6 +1445,7 @@
   }
 
   var lastNonce = null;                     // the board version we last drew (see below)
+  var _seededDefaults = false;              // Python-provided sticky tool defaults are seeded once
   window.addEventListener("message", function (event) {
     var data = event.data || {};
     if (data.type !== "streamlit:render") return;
@@ -1450,6 +1471,12 @@
     if (args.draw_tool) cfg.drawTool = args.draw_tool;   // Python-armed tool (kept in sync)
     var b = args.board_state || {};
     cfg.board = b;                                        // frames / grid / orientation / colours
+    cfg.mode = b.mode || "tactical";                     // "telestration" hides the tactical-only chrome
+    document.body.classList.toggle('tele', cfg.mode === 'telestration');
+    if (b.tool_defaults && !_seededDefaults){            // telestration presets (white arrows, spotlight, captions)
+      Object.keys(b.tool_defaults).forEach(function(k){ cfg.toolDefaults[k] = Object.assign({}, b.tool_defaults[k]); });
+      _seededDefaults = true;
+    }
     // ADOPT the Python model ONLY when the server changed it (undo/redo/frame/formation/new/load →
     // model_rev bumped). A client-side edit bumps neither model_rev nor the pitch nonce, so pieces
     // stay instant & local and are never overwritten by a stale re-delivery.

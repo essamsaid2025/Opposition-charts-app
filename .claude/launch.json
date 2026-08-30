@@ -15,6 +15,15 @@
                       "--server.headless", "true", "--server.port", "8521",
                       "--browser.gatherUsageStats", "false"],
       "port": 8521
+    },
+    {
+      "name": "tele",
+      "runtimeExecutable": "C:\\Users\\Essam\\OneDrive\\Desktop\\python\\pythonw.exe",
+      "runtimeArgs": ["-m", "streamlit", "run",
+                      "C:\\Users\\Essam\\AppData\\Local\\Temp\\claude\\C--Users-Essam-OneDrive-Desktop-Github-Opposition-charts-app\\9ea5a605-991f-4449-b463-5e057266e190\\scratchpad\\tele_harness.py",
+                      "--server.headless", "true", "--server.port", "8522",
+                      "--browser.gatherUsageStats", "false"],
+      "port": 8522
     }
   ]
 }

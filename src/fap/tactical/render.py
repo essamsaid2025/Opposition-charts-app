@@ -47,6 +47,18 @@ def _pitch_svg(board: Board, colors: dict[str, str], grid: bool) -> str:
     line = _c(colors, "line")
     grass, grass2 = _c(colors, "grass"), _c(colors, "grass_alt")
     out = [f'<rect x="0" y="0" width="{_W}" height="{_H}" fill="{_c(colors,"bg")}"/>']
+    if kind == "image":
+        # Telestration background: a raster photo/frame fills the whole 1050x680 plane, and
+        # every annotation object (arrows, spotlights, text, ...) is drawn on top of it exactly
+        # as on a pitch. The image src (a data URL or path) lives in board.meta["bg_image"] so
+        # the pitch stays a pure geometry description with no image bytes of its own.
+        src = str((getattr(board, "meta", None) or {}).get("bg_image") or "")
+        if src:
+            out.append(f'<image href="{_esc(src)}" x="0" y="0" width="{_W}" height="{_H}" '
+                       f'preserveAspectRatio="xMidYMid slice"/>')
+        if grid:
+            out.append(_grid(line))
+        return "".join(out)
     if kind == "blank":
         if grid:
             out.append(_grid(line))
@@ -344,6 +356,21 @@ def _freehand(o: TacticalObject, colors: dict[str, str]) -> str:
             f'stroke-linecap="round" stroke-linejoin="round"/>')
 
 
+def _spotlight_svg(x: float, y: float, w: float, h: float, col: str, op: float) -> str:
+    """A broadcast-style player spotlight: a soft coloured halo, a bright crisp ring and a
+    thin white inner accent — the "glow under the player" from live-analysis overlays. Built
+    from plain ellipses (no SVG filters) so the matplotlib PNG/PDF export reproduces it exactly
+    (see export_render._spotlight). ``op`` scales the halo intensity."""
+    rx, ry = w / 2, h / 2
+    halo = max(0.10, min(0.45, op))
+    return (f'<ellipse cx="{x}" cy="{y}" rx="{rx*1.18:.1f}" ry="{ry*1.18:.1f}" fill="{col}" '
+            f'fill-opacity="{halo*0.55:.3f}"/>'
+            f'<ellipse cx="{x}" cy="{y}" rx="{rx:.1f}" ry="{ry:.1f}" fill="{col}" '
+            f'fill-opacity="{halo:.3f}" stroke="{col}" stroke-width="5" stroke-opacity="0.95"/>'
+            f'<ellipse cx="{x}" cy="{y}" rx="{rx*0.86:.1f}" ry="{ry*0.86:.1f}" fill="none" '
+            f'stroke="#ffffff" stroke-width="1.6" stroke-opacity="0.75"/>')
+
+
 def _zone(o: TacticalObject, colors: dict[str, str]) -> str:
     x, y = _px(o.x, o.y); w = o.props.get("w", 20) / 100 * _W; h = o.props.get("h", 16) / 100 * _H
     col = o.props.get("color") or _c(colors, "zone"); op = float(o.props.get("opacity", 0.28))
@@ -356,6 +383,8 @@ def _zone(o: TacticalObject, colors: dict[str, str]) -> str:
     # reuse the dashed_arrow dash-array so a dashed border matches dashed arrows visually
     dash = ' stroke-dasharray="10 8"' if o.props.get("stroke_style") == "dashed" else ""
     style = f'fill="{fill}" fill-opacity="{op}" stroke="{stroke}" stroke-width="{sw_s}"{dash}'
+    if o.props.get("spotlight"):                             # glowing player-spotlight ellipse
+        return _spotlight_svg(x, y, w, h, col, op)
     shape = o.props.get("shape")
     if shape == "triangle" and o.type != "highlight":       # isoceles, pointing up (cone-glyph style)
         pts = f"{x},{y-h/2} {x-w/2},{y+h/2} {x+w/2},{y+h/2}"
@@ -368,8 +397,16 @@ def _zone(o: TacticalObject, colors: dict[str, str]) -> str:
 def _text(o: TacticalObject, colors: dict[str, str]) -> str:
     x, y = _px(o.x, o.y); size = float(o.props.get("size", 14)) * o.scale
     col = o.props.get("color") or _c(colors, "text")
+    # optional readability outline (telestration captions over a photo). Absent / width 0 =>
+    # byte-identical to before. paint-order="stroke" draws the halo behind the glyph fill.
+    ow = float(o.props.get("outline_width", 0) or 0)
+    outline = ""
+    if ow > 0:
+        oc = o.props.get("outline") or "#0c0e12"
+        outline = (f' paint-order="stroke" stroke="{oc}" stroke-width="{ow:.1f}" '
+                   f'stroke-linejoin="round"')
     return (f'<text x="{x}" y="{y}" text-anchor="middle" font-size="{size:.0f}" '
-            f'font-weight="700" fill="{col}" font-family="Inter,Arial">'
+            f'font-weight="700" fill="{col}" font-family="Inter,Arial"{outline}>'
             f'{_esc(o.props.get("text", ""))}</text>')
 
 

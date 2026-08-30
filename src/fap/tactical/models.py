@@ -20,7 +20,7 @@ OBJECT_TYPES: tuple[str, ...] = (
     "arrow", "curved_arrow", "dashed_arrow", "line", "freehand",
     "zone", "highlight", "circle", "text", "number", "shape", "image",
 )
-PITCH_KINDS: tuple[str, ...] = ("full", "half", "thirds", "blank", "futsal", "custom")
+PITCH_KINDS: tuple[str, ...] = ("full", "half", "thirds", "blank", "futsal", "custom", "image")
 ORIENTATIONS: tuple[str, ...] = ("horizontal", "vertical")
 
 
