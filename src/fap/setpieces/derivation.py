@@ -134,15 +134,24 @@ def derive_set_pieces(frame: pd.DataFrame, *, workspace_id: str | None = "",
         # explicit perspective/phase in the frame wins over the team heuristic — a
         # single-team export (team always the analysed side) distinguishes attack vs
         # defence by a perspective/phase column, not by the team name.
+        # ``type``/``phase_of_play`` carry Attack/Defence in many manual set-piece
+        # exports (one row = one set piece, tagged from the analysed team's view).
         persp_raw = _norm(row.get("perspective"))
         phase_raw = _norm(row.get("phase"))
-        if persp_raw in ("own", "attack", "attacking", "offensive"):
+        type_raw = _norm(row.get("type") or row.get("phase_of_play") or row.get("set_piece_type"))
+        _ATTACK = ("own", "attack", "attacking", "offensive")
+        _DEFEND = ("opposition", "opponent", "defence", "defense", "defending", "defensive")
+        if persp_raw in _ATTACK:
             own = True
-        elif persp_raw in ("opposition", "opponent", "defence", "defense", "defending", "defensive"):
+        elif persp_raw in _DEFEND:
             own = False
         elif phase_raw in ("offensive", "attack", "attacking"):
             own = True
         elif phase_raw in ("defensive", "defence", "defense", "defending"):
+            own = False
+        elif type_raw in _ATTACK:
+            own = True
+        elif type_raw in _DEFEND:
             own = False
         else:
             own = bool(primary) and team == primary

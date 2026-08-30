@@ -23,14 +23,16 @@ ORIENT = Control("sp_orientation", "Pitch orientation", "select", default="verti
                  options=("vertical", "horizontal"),
                  help="Draw the set-piece box vertically (goal at top) or horizontally.")
 
-# named delivery zones inside the box (canonical x depth, y across; 0-100).
+# named delivery zones inside the box (canonical x depth, y across; 0-100). Canonical
+# y=0 is the RIGHT touchline, so the low-y band is the right of the box (matching the
+# near/far-post naming for a right-side corner) and the high-y band is the left.
 _ZONES = (
     ("Near post", 94.2, 21.0, 100.0, 39.0),
     ("Far post", 94.2, 61.0, 100.0, 79.0),
     ("6-yard centre", 94.2, 39.0, 100.0, 61.0),
     ("Penalty spot", 88.0, 36.0, 94.2, 64.0),
-    ("Box left", 83.0, 21.0, 94.2, 36.0),
-    ("Box right", 83.0, 64.0, 94.2, 79.0),
+    ("Box right", 83.0, 21.0, 94.2, 36.0),
+    ("Box left", 83.0, 64.0, 94.2, 79.0),
     ("Edge of box", 74.0, 21.0, 83.0, 79.0),
 )
 _DELIVERY_COLORS = {
@@ -96,14 +98,17 @@ def _pitch(ctx):
     ctx.ax.set_facecolor(c.get("bg", c["panel"]))
     ax = ctx.ax
     # zoom to the attacking third (box + edge) so the set-piece area fills the frame,
-    # and put "across" in natural orientation (low y = left) so a left corner reads on
-    # the left — mplsoccer inverts the width axis for the attacking view by default.
+    # and orient "across" to the canonical convention (y=0 = RIGHT touchline) so a
+    # Right-side corner reads on the RIGHT — matching the sheet's ``side`` and the
+    # tagging tool. Vertical: across is the x-axis, so y=0 must sit on the right
+    # (descending xlim). Horizontal (attack →): across is the y-axis, y=0 at the
+    # bottom (ascending ylim), which is the right touchline for a left→right attack.
     if orient == "horizontal":
         ax.set_xlim(74.0, 101.0)
         y0, y1 = ax.get_ylim(); ax.set_ylim(min(y0, y1), max(y0, y1))
     else:
         ax.set_ylim(73.5, 101.0)
-        x0, x1 = ax.get_xlim(); ax.set_xlim(min(x0, x1), max(x0, x1))
+        x0, x1 = ax.get_xlim(); ax.set_xlim(max(x0, x1), min(x0, x1))
     return p
 
 
@@ -139,10 +144,104 @@ def _corner_zone_of(x, y):
     return ""
 
 
+def _canon_zone(s):
+    """Collapse any zone wording (a drawn-zone name or a sheet ``target_zone`` label)
+    to a stable token, so the analyst's own zone labels drive the zone charts."""
+    t = str(s or "").strip().lower()
+    if not t or t == "nan":
+        return ""
+    if "near" in t:
+        return "near"
+    if "far" in t:
+        return "far"
+    if "spot" in t:
+        return "spot"
+    if "six" in t or "6" in t or "middle" in t or "central" in t \
+            or "centre" in t or "center" in t:
+        return "middle"                                 # 6-yard / central band
+    if "short" in t:
+        return "short"
+    if "edge" in t or "front" in t or "top" in t:
+        return "edge"
+    if "left" in t:
+        return "left"
+    if "right" in t:
+        return "right"
+    if "penalty" in t or "pen" in t or "box" in t:
+        return "middle"
+    return t
+
+
+def _match_drawn_zone(label, zone_names):
+    """Best drawn-zone name for a sheet ``target_zone`` label (token match). Prefers
+    the base zone over a qualified variant (``Near Post`` over ``Near Post Short``);
+    returns "" when the label names no drawn box zone."""
+    tok = _canon_zone(label)
+    if not tok:
+        return ""
+    cands = [z for z in zone_names if _canon_zone(z) == tok]
+    return min(cands, key=len) if cands else ""
+
+
+def _resolved_zone(row, zone_names, coord_fn):
+    """The zone a delivery belongs to. The sheet's ``target_zone`` label wins (this
+    is the analyst's intent); only when a row carries no usable label — or a label
+    that names no box zone (e.g. a short-corner routine) — do we fall back to the
+    landing coordinates."""
+    label = str(row.get("target_zone") or "").strip()
+    if label and label.lower() != "nan":
+        z = _match_drawn_zone(label, zone_names)
+        if z:
+            return z
+    return coord_fn(row.get("end_x"), row.get("end_y"))
+
+
 def _axy(p, x_depth, y_across):
     """Canonical (depth, across) -> the mplsoccer axes data coords for the pitch."""
     from mplsoccer import VerticalPitch
     return (y_across, x_depth) if isinstance(p, VerticalPitch) else (x_depth, y_across)
+
+
+# straight deliveries that carry no meaningful swing (drawn as a straight arrow)
+_STRAIGHT_DELIVERIES = frozenset({"", "short", "straight", "driven", "ground", "lofted", "long"})
+
+
+def _swing_arrow(ax, p, x, y, ex, ey, dt, col, *, scale=13, lw=2.4):
+    """Draw a corner/set-piece delivery as an arrow that swings the correct way and
+    NEVER leaves the pitch. ``inswing`` bends toward the goal line, ``outswing`` bends
+    away from it; the bend direction is derived from the ball's own path so it is
+    automatically correct for either corner side (no left/right special-casing). The
+    curve's control point is clamped inside the pitch, so the arc — which is bounded
+    by the triangle (start, control, end) — can never bulge past the goal line or a
+    touchline the way a fixed-``rad`` arc does for a target sitting on the goal line."""
+    import math
+
+    from matplotlib.patches import FancyArrowPatch
+    from matplotlib.path import Path as _Path
+
+    vd, va = ex - x, ey - y                              # chord in canonical (depth, across)
+    clen = math.hypot(vd, va) or 1.0
+    # unit perpendicular to the chord, oriented toward the goal line (higher depth)
+    nd, na = va, -vd
+    if nd < 0:
+        nd, na = -nd, -na
+    nnorm = math.hypot(nd, na) or 1.0
+    nd, na = nd / nnorm, na / nnorm
+    swing = str(dt).strip().lower()
+    if swing in _STRAIGHT_DELIVERIES:
+        mag = 0.0                                       # no swing -> straight arrow
+    else:
+        s = -1.0 if swing == "outswing" else 1.0        # inswing toward goal, outswing away
+        mag = s * min(0.30 * clen, 14.0)
+    cd = (x + ex) / 2 + mag * nd
+    ca = (y + ey) / 2 + mag * na
+    cd = min(max(cd, 74.0), 99.3)                       # keep the control point in the box view
+    ca = min(max(ca, 1.0), 99.0)
+    a, cc, b = _axy(p, x, y), _axy(p, cd, ca), _axy(p, ex, ey)
+    path = _Path([a, cc, b], [_Path.MOVETO, _Path.CURVE3, _Path.CURVE3])
+    ax.add_patch(FancyArrowPatch(path=path, arrowstyle="-|>", mutation_scale=scale,
+                                 lw=lw, color=col, alpha=0.9, zorder=5))
+    ax.scatter(*a, s=16, color=col, zorder=5)
 
 
 def _zone_backdrop(ctx, p, df=None):
@@ -153,9 +252,10 @@ def _zone_backdrop(ctx, p, df=None):
     ax = ctx.ax
     counts = {z[0]: 0 for z in _CORNER_ZONES}
     total = 0
+    names = [z[0] for z in _CORNER_ZONES]
     if df is not None and not df.empty:
         for _, r in df.iterrows():
-            z = _corner_zone_of(r.get("end_x"), r.get("end_y"))
+            z = _resolved_zone(r, names, _corner_zone_of)   # sheet target_zone wins
             if z:
                 counts[z] += 1; total += 1
     for name, x0, y0, x1, y1, col, alpha in _CORNER_ZONES:
@@ -182,8 +282,9 @@ def _delivery_zones(ctx):
     accent = ctx.controls.get("primary_color") or c["accent"]
     counts = {z[0]: 0 for z in _ZONES}
     total = 0
+    names = [z[0] for z in _ZONES]
     for _, r in df.iterrows():
-        z = _zone_of(r.get("end_x"), r.get("end_y"))
+        z = _resolved_zone(r, names, _zone_of)          # sheet target_zone wins
         if z:
             counts[z] += 1; total += 1
     mx = max(counts.values()) or 1
@@ -200,7 +301,6 @@ def _delivery_zones(ctx):
 
 
 def _delivery_trajectories(ctx):
-    from matplotlib.patches import FancyArrowPatch
     df = _df(ctx)
     if df.empty or "end_x" not in df.columns:
         return _no_data(ctx)
@@ -215,13 +315,9 @@ def _delivery_trajectories(ctx):
             continue
         dt = str(r.get("delivery_type") or "").strip().lower()
         col = _dcolor(ctx, dt)
-        # curve the arc the way the ball swings: inswing bends toward goal, outswing away
-        base = 0.28 if dt != "outswing" else -0.22
-        rad = base if y < 50 else -base                # mirror for the opposite corner side
-        a, b = _axy(p, x, y), _axy(p, ex, ey)
-        ax.add_patch(FancyArrowPatch(a, b, connectionstyle=f"arc3,rad={rad}", arrowstyle="-|>",
-                                     mutation_scale=13, lw=2.4, color=col, alpha=0.9, zorder=5))
-        ax.scatter(*a, s=16, color=col, zorder=5)
+        # swing the arc the way the ball moves (inswing toward goal, outswing away) and
+        # keep it inside the pitch — direction and bounds handled by the helper.
+        _swing_arrow(ax, p, x, y, ex, ey, dt, col)
         if dt and dt not in seen:
             seen[dt] = col
     sides = {str(s).strip().lower() for s in df.get("side", []) if str(s).strip()}

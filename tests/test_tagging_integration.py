@@ -196,9 +196,42 @@ def test_tagging_page_is_a_first_class_analysis_tab():
 
 
 def test_interior_bbox_maps_corners_exactly():
+    """A click on a pitch corner must resolve to the exact canonical corner. The pitch
+    renderer pins aspect='equal', which letterboxes the data inside the figure; the
+    bbox is derived from the real axes transform so the mapping stays exact through
+    that margin (a naive xlim/ylim ratio put a corner click at x≈95.7 instead of 100)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from fap.tagging.coordinates import canonical_from_pitch_fraction
+    from fap.themes import ThemeManager
     from fap.ui.builtin.tagging import TaggingStudioPage
-    # a pitch drawn with a 4-unit pad: interior corners map to known image fractions
-    bbox = TaggingStudioPage._interior_bbox((-4.0, 104.0), (-4.0, 72.0), 0.0, 100.0, 0.0, 68.0)
-    assert bbox["left"] == pytest.approx(4 / 108)
-    assert bbox["right"] == pytest.approx(104 / 108)
-    assert 0.0 < bbox["top"] < bbox["bottom"] < 1.0
+    from fap.visuals.pitch import DISPLAY_WIDTH, PitchFactory, get_spec
+
+    theme = ThemeManager("assets/themes").get("opta_light")
+    fig = plt.figure(figsize=(11.5, 7.4))
+    ax = fig.add_axes([0, 0, 1, 1])
+    PitchFactory().draw_pitch(ax, theme, get_spec("uefa"), vertical=False)
+    ax.set_xlim(-4, 104); ax.set_ylim(-4, DISPLAY_WIDTH + 4); ax.axis("off")
+    fig.canvas.draw()
+    bbox = TaggingStudioPage._interior_bbox(fig, ax, 0.0, 100.0, 0.0, DISPLAY_WIDTH)
+    assert 0.0 <= bbox["left"] < bbox["right"] <= 1.0
+    assert 0.0 <= bbox["top"] < bbox["bottom"] <= 1.0
+
+    tf = fig.transFigure.inverted()
+
+    def img_frac(x, y):                                  # data -> saved-image fraction
+        fx, fy = tf.transform(ax.transData.transform((x, y)))
+        return fx, 1.0 - fy
+
+    # each visual pitch corner/goal-line point must round-trip to its canonical value
+    for dx, dy, cx, cy in [(100.0, 0.0, 100.0, 0.0), (0.0, 0.0, 0.0, 0.0),
+                           (100.0, DISPLAY_WIDTH, 100.0, 100.0)]:
+        ifx_img, ify_img = img_frac(dx, dy)
+        ifx = (ifx_img - bbox["left"]) / (bbox["right"] - bbox["left"])
+        ify = (ify_img - bbox["top"]) / (bbox["bottom"] - bbox["top"])
+        gx, gy = canonical_from_pitch_fraction(ifx, ify)
+        assert gx == pytest.approx(cx, abs=0.4)
+        assert gy == pytest.approx(cy, abs=0.4)
+    plt.close(fig)

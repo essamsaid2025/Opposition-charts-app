@@ -384,10 +384,15 @@ class TaggingStudioPage(Page):
         fig = plt.figure(figsize=(11.5, 7.4))
         ax = fig.add_axes([0, 0, 1, 1])
         if space == "goal":
-            bbox, overlay = self._draw_goal(ax, theme, session, sel)
+            interior, overlay = self._draw_goal(ax, theme, session, sel)
         else:
-            bbox, overlay = self._draw_pitch(ax, theme, session, sel, toggles)
+            interior, overlay = self._draw_pitch(ax, theme, session, sel, toggles)
         fig.patch.set_facecolor(theme.colors.get("bg", "#ECECEC"))
+        # Resolve the interior→image mapping from the REAL axes transform, after a
+        # draw applies the pitch's aspect='equal'. A raw xlim/ylim ratio would ignore
+        # the equal-aspect letterbox and shift every tag off the pitch lines.
+        fig.canvas.draw()
+        bbox = self._interior_bbox(fig, ax, *interior)
         buf = io.BytesIO()
         fig.savefig(buf, format="png", dpi=120, facecolor=fig.get_facecolor())
         plt.close(fig)
@@ -395,11 +400,22 @@ class TaggingStudioPage(Page):
         return uri, bbox, overlay
 
     @staticmethod
-    def _interior_bbox(xlim, ylim, ix0, ix1, iy0, iy1) -> dict[str, float]:
-        xr = (xlim[1] - xlim[0]) or 1.0
-        yr = (ylim[1] - ylim[0]) or 1.0
-        return {"left": (ix0 - xlim[0]) / xr, "right": (ix1 - xlim[0]) / xr,
-                "top": 1 - (iy1 - ylim[0]) / yr, "bottom": 1 - (iy0 - ylim[0]) / yr}
+    def _interior_bbox(fig, ax, ix0, ix1, iy0, iy1) -> dict[str, float]:
+        """Playing-area rectangle as a fraction of the SAVED IMAGE (top-left origin).
+
+        Computed from the live data→figure transform, so it stays exact under the
+        equal-aspect letterboxing the pitch/goal renderers apply — a naive xlim/ylim
+        ratio assumes the data fills the figure edge-to-edge and is off by the margin,
+        which is what shifted a tagged corner off the corner. ``fig.canvas.draw()``
+        must have run first so the aspect is applied to the transform. The image has
+        no ``bbox_inches='tight'`` crop, so figure fraction == image fraction (y up →
+        y down flip only)."""
+        tf = fig.transFigure.inverted()
+        fx0, fy0 = tf.transform(ax.transData.transform((ix0, iy0)))
+        fx1, fy1 = tf.transform(ax.transData.transform((ix1, iy1)))
+        lo_y, hi_y = min(fy0, fy1), max(fy0, fy1)
+        return {"left": min(fx0, fx1), "right": max(fx0, fx1),
+                "top": 1.0 - hi_y, "bottom": 1.0 - lo_y}
 
     def _draw_pitch(self, ax, theme, session, sel, toggles):
         from fap.visuals.pitch import DISPLAY_WIDTH, PitchFactory, get_spec
@@ -453,8 +469,7 @@ class TaggingStudioPage(Page):
         if sel_pt is not None:
             ax.scatter([sel_pt[0]], [sel_pt[1]], s=210, facecolors="none",
                        edgecolors=c["text"], linewidths=2.0, zorder=9)
-        bbox = self._interior_bbox(xlim, ylim, 0.0, 100.0, 0.0, DISPLAY_WIDTH)
-        return bbox, overlay
+        return (0.0, 100.0, 0.0, DISPLAY_WIDTH), overlay
 
     def _draw_goal(self, ax, theme, session, sel):
         from fap.visuals import goal as G
@@ -479,6 +494,4 @@ class TaggingStudioPage(Page):
                     gy = e.goal_y / 100.0 * G.GOAL_HEIGHT
                     ax.scatter([gx], [gy], s=260, facecolors="none",
                                edgecolors=theme.colors["text"], linewidths=2.0, zorder=9)
-        xlim, ylim = ax.get_xlim(), ax.get_ylim()
-        bbox = self._interior_bbox(xlim, ylim, 0.0, G.GOAL_WIDTH, 0.0, G.GOAL_HEIGHT)
-        return bbox, ov
+        return (0.0, G.GOAL_WIDTH, 0.0, G.GOAL_HEIGHT), ov
