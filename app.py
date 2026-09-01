@@ -2153,6 +2153,22 @@ def run_app():
         categories = ["All"] + sorted({v["category"] for v in VIZ_REGISTRY.values()})
         cat_sel = st.selectbox("Category", categories, index=0)
         names = [n for n, v in VIZ_REGISTRY.items() if cat_sel in ("All", v["category"])]
+        # Offer only the charts the loaded dataset can actually draw (a Shot Map needs
+        # shot events, arrow maps need end coordinates, ...). Best-effort peek at the
+        # active frame; on any issue we fall back to showing every chart.
+        try:
+            from fap.openplay.viz_support import available_viz_names, unsupported_viz_names
+            # The gate only reads event_type + end coordinates, both present on the
+            # raw active frame, so we skip the (heavier) derived-column build here.
+            _peek = _active_dataset_frame(user)[1] if uploaded is None else None
+            if _peek is not None:
+                _hidden = unsupported_viz_names(names, _peek)
+                names = available_viz_names(names, _peek)
+                if _hidden:
+                    st.caption("Hidden for this dataset (no matching events): "
+                               + ", ".join(_hidden))
+        except Exception:  # noqa: BLE001 - a gating failure must never block the picker
+            pass
         names = names + ["Data Table"]
         chart_type = st.selectbox("Choose visualization", names)
 

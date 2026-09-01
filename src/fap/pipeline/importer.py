@@ -29,6 +29,25 @@ def _reshape_statsbomb(frame):
         logger.exception("statsbomb-csv reshape skipped")
         return frame
 
+
+def _reshape_tagged_events(frame):
+    """Canonicalise a video-tagging export (free-text ``tag_name`` -> event_type/outcome/
+    shot_result) before detection/classification, so each tag becomes its real action
+    instead of every row collapsing to ``pass``. Guarded + never raises; any other format
+    passes through untouched."""
+    try:
+        from fap.pipeline.tagged_events import reshape
+        return reshape(frame)
+    except Exception:
+        logger.exception("tagged-events reshape skipped")
+        return frame
+
+
+def _canonicalise_raw(frame):
+    """Apply every format-specific reshape (mutually exclusive by guard) that turns a
+    known non-canonical export into canonical event columns before the pipeline runs."""
+    return _reshape_tagged_events(_reshape_statsbomb(frame))
+
 from fap.cache import CacheManager
 from fap.core.exceptions import ProviderError
 from fap.pipeline import schema
@@ -142,7 +161,7 @@ class ImportService:
         import will use, without running or duplicating the pipeline."""
         provider, reported_id, detection = self._detect_and_resolve(data, filename, provider_id)
         raw = provider.load(BytesIO(data), filename, options=options)
-        _rf = _reshape_statsbomb(raw.frame)           # same canonicalisation the import applies,
+        _rf = _canonicalise_raw(raw.frame)             # same canonicalisation the import applies,
         if _rf is not raw.frame:                       # so classify() sees an EVENT dataset.
             raw = replace(raw, frame=_rf)              # RawDataset is frozen -> replace, don't assign
         _detected, template_used = self.detect(raw.frame)
@@ -195,7 +214,7 @@ class ImportService:
                 return replace(hit, cache_hit=True)
 
         raw = provider.load(BytesIO(data), filename, options=options)
-        _rf = _reshape_statsbomb(raw.frame)           # flattened-StatsBomb CSV -> canonical event cols
+        _rf = _canonicalise_raw(raw.frame)             # known non-canonical exports -> canonical event cols
         if _rf is not raw.frame:                       # RawDataset is frozen -> replace, don't assign
             raw = replace(raw, frame=_rf)
 

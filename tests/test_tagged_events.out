@@ -1,0 +1,10 @@
+PASS test_event_type_keyword_rules
+PASS test_guard_fires_only_on_tag_exports
+PASS test_non_tag_frame_passes_through_unchanged
+PASS test_outcome_from_wording
+PASS test_real_file_distribution_if_present
+PASS test_reshape_adds_canonical_columns_and_preserves_original
+PASS test_shot_result_only_for_shots
+PASS test_unknown_tag_kept_not_dropped
+
+8/8 passed

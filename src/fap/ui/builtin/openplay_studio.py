@@ -592,11 +592,20 @@ def _panel_inspector(w: Studio) -> None:
     with st.expander("Visualization", expanded=True):
         cats = ["All", *eng.categories()]
         st.session_state[CAT] = _sel("Category", cats, st.session_state.get(CAT, "All"), "ops_cat")
-        names = eng.viz_names(st.session_state[CAT])
+        all_names = eng.viz_names(st.session_state[CAT])
+        # Offer only the charts THIS dataset can actually draw: a Shot Map needs shot
+        # events, arrow maps need end coordinates, etc. Charts the loaded frame can't
+        # produce are hidden (mirrors each renderer's data predicate, never renders).
+        from fap.openplay.viz_support import available_viz_names, unsupported_viz_names
+        names = available_viz_names(all_names, w.frame)
+        hidden = unsupported_viz_names(all_names, w.frame)
         if not names:
             C.render_alert("No visualizations in this category.", "info")
         else:
             st.session_state[VIZ] = _sel("Visualization", names, st.session_state.get(VIZ), "ops_viz")
+            if hidden:
+                st.caption("Hidden for this dataset (no matching events): "
+                           + ", ".join(hidden))
         themes = list(md.get("themes", {})) + list(md.get("club_custom_names", []))
         st.session_state[THEME] = _sel("Theme", themes, st.session_state.get(THEME), "ops_theme")
         ctl["attack_arrow"] = st.checkbox(
@@ -1890,7 +1899,8 @@ def _panel_dashboard(w: Studio) -> None:
         C.render_alert("Activate a dataset and set filters, then pick charts to build a "
                        "dashboard.", "info")
         return
-    names = w.engine.viz_names("All")
+    from fap.openplay.viz_support import available_viz_names
+    names = available_viz_names(w.engine.viz_names("All"), w.frame)
     picked = st.multiselect(
         "Charts & maps in this dashboard (order = selection order)", names,
         default=[v for v in st.session_state.get(DASH_ITEMS, []) if v in names],

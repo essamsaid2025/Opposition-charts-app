@@ -1,0 +1,10 @@
+PASS test_defensive_events_gate_defensive_map
+PASS test_has_end_coordinates_both_vocabularies
+PASS test_inferred_pass_only_file_hides_action_charts
+PASS test_no_frame_or_empty_never_gates
+PASS test_present_event_types_normalizes
+PASS test_rich_file_offers_everything
+PASS test_shot_file_offers_shot_charts_only
+PASS test_unknown_and_generic_names_always_supported
+
+8/8 passed
