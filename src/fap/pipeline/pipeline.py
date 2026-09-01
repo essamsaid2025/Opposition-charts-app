@@ -31,6 +31,7 @@ class DataPipeline:
         )
 
     def run(self, raw: RawDataset, *, flip_direction: bool = False,
+            auto_orient: bool = True,
             column_mapping: dict[str, str] | None = None,
             coord_system: str | None = None,
             constants: dict[str, str] | None = None) -> pd.DataFrame:
@@ -42,7 +43,13 @@ class DataPipeline:
         df = schema.coerce_schema(df)  # coercion only fills in the optional remainder
         system = coord_system or raw.native_coord_system
         df = coord_registry.create(system).to_canonical(df)
+        # A manual flip always wins. Otherwise auto-orient: single-direction tagged
+        # feeds often attack toward x=0, which would leave every shot ~90m from the
+        # model's goal (xG ~ 0) and mirror the attacking maps. Detection is
+        # conservative and only flips on a clear reverse signal.
         if flip_direction:
+            df = transforms.flip_left_to_right(df)
+        elif auto_orient and transforms.detect_reverse_attack(df)[0]:
             df = transforms.flip_left_to_right(df)
         for step in self._steps:
             df = step(df)

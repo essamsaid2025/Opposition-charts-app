@@ -154,9 +154,9 @@ def detect_coordinate_system(df: pd.DataFrame) -> tuple[str, float]:
     # Corner-origin systems below. Tolerate a small off-pitch overshoot on both
     # axes so a handful of events just outside the touchlines/byline don't bump the
     # frame into the wrong bucket.
-    if xmax > 110 and ymax <= 90:                       # StatsBomb 120 x 80
+    if xmax > 108 and ymax <= 90:                       # StatsBomb 120 x 80
         return "statsbomb", 0.85
-    if xmax > 90 and xmax <= 110 and ymax <= 78:        # 105 x 68 meters
+    if xmax > 90 and xmax <= 108 and ymax <= 78:        # 105 x 68 meters
         return "105x68", 0.85
     if xmax <= 100 and ymax <= 100:
         return "0-100", 0.9 if xmax > 68 or ymax > 68 else 0.6

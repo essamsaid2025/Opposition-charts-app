@@ -23,6 +23,43 @@ def flip_left_to_right(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def detect_reverse_attack(df: pd.DataFrame) -> tuple[bool, str]:
+    """Decide whether the analysed team attacks RIGHT-TO-LEFT in this already-
+    canonical frame, so it must be flipped to the platform convention (attacked
+    goal at x=100).
+
+    Signal: shots (and goals) cluster hard at the goal being attacked. We look at
+    the dominant team's shots — the dominant team is the one being tagged/analysed
+    (it owns most of the events) — and ask which side they cluster on.
+
+    Deliberately CONSERVATIVE. A flip is returned only when the shots are clearly
+    one-sided toward x < 50 (an attack on the left goal). When the signal is
+    absent (no shots) or mixed (e.g. raw per-half data where a team shoots at both
+    ends), it returns ``False`` so correctly-oriented data is never disturbed and a
+    problem a whole-frame flip cannot fix is not papered over. Pure, no mutation.
+    """
+    if "event_type" not in df.columns or "x" not in df.columns:
+        return False, "no event_type/x column"
+    shots = df[df["event_type"].astype(str).str.lower().eq("shot")]
+    # Restrict to the dominant (analysed) team so a handful of opponent shots at
+    # the far end don't muddy the signal.
+    if "team" in df.columns:
+        teams = df["team"].astype(str).str.strip()
+        teams = teams[teams.ne("") & teams.str.lower().ne("nan")]
+        if not teams.empty:
+            dominant = teams.value_counts().idxmax()
+            team_shots = shots[shots["team"].astype(str).str.strip().eq(dominant)]
+            if len(team_shots) >= 3:
+                shots = team_shots
+    xs = pd.to_numeric(shots["x"], errors="coerce").dropna()
+    if len(xs) < 3:
+        return False, f"too few shots to orient ({len(xs)})"
+    left = float((xs < 50).mean())          # fraction attacking the x=0 goal
+    if left >= 0.7:
+        return True, f"{left:.0%} of shots attack the left goal — flipping to left->right"
+    return False, f"{1 - left:.0%} of shots attack the right goal — already left->right"
+
+
 def derive_movement(df: pd.DataFrame) -> pd.DataFrame:
     dx, dy = df["end_x"] - df["x"], df["end_y"] - df["y"]
     df["distance"] = np.sqrt(dx ** 2 + dy ** 2)
