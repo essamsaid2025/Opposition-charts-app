@@ -143,11 +143,20 @@ def detect_coordinate_system(df: pd.DataFrame) -> tuple[str, float]:
         return "metrica", 0.95
     if xmin < -200 or xmax > 200:                       # centimeter magnitudes
         return "tracab", 0.9
-    if xmin < -1 or ymin < -1:                          # centered meters
+    # Centered meters (origin at the centre spot) is identified by a SMALL span
+    # around zero (x roughly ±52.5, y roughly ±34), NOT merely by the presence of
+    # a negative value. Real corner-origin data routinely dips a metre or two below
+    # zero for off-pitch events (throw-ins, clearances); those few stray negatives
+    # must not be mistaken for a centre-origin system, which would shift every
+    # point half a pitch to the right.
+    if xmin < -5 and xmax <= 60 and ymax <= 45:         # centered meters
         return "skillcorner", 0.8
-    if xmax > 105 and xmax <= 121 and ymax <= 81:
+    # Corner-origin systems below. Tolerate a small off-pitch overshoot on both
+    # axes so a handful of events just outside the touchlines/byline don't bump the
+    # frame into the wrong bucket.
+    if xmax > 110 and ymax <= 90:                       # StatsBomb 120 x 80
         return "statsbomb", 0.85
-    if xmax > 100 and xmax <= 106 and ymax <= 69:
+    if xmax > 90 and xmax <= 110 and ymax <= 78:        # 105 x 68 meters
         return "105x68", 0.85
     if xmax <= 100 and ymax <= 100:
         return "0-100", 0.9 if xmax > 68 or ymax > 68 else 0.6
