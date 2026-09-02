@@ -2730,6 +2730,38 @@ def _controls_from_legacy_ctx(ctx: Dict) -> Dict:
         out["cmap"] = heat["cmap"]
     if heat.get("alpha") is not None:
         out["heat_alpha"] = float(heat["alpha"])
+    out.update(_heat_type_to_framework(heat))
+    return out
+
+
+def _heat_type_to_framework(heat: Dict) -> Dict:
+    """Translate the native Heatmap 'Type' (+ its resolution/bandwidth) onto the
+    framework's density controls, so the Studio's Type control also drives the bridged
+    density-map plugins. The framework offers a binned heatmap (blocky when unblurred,
+    smooth when blurred) and a hexbin; the two native-only types (KDE *contour* and Zone%
+    grid) have no framework equivalent, so they render as the closest smooth heatmap.
+    Keys map: density_kind -> layer kind, heat_bins -> resolution, heat_blur -> gaussian
+    sigma, hex_gridsize -> hexbin resolution."""
+    htype = str(heat.get("type", "Gaussian KDE"))
+    out: Dict = {}
+    if "Hexbin" in htype:
+        out["density_kind"] = "hexbin"
+        out["hex_gridsize"] = int(heat.get("gridsize", 22) or 22)
+        return out
+    out["density_kind"] = "heatmap"
+    if htype == "Grid Heatmap":
+        cell = float(heat.get("cell_size", 10) or 10)
+        out["heat_bins"] = max(3, int(round(100 / max(cell, 1.0))))
+        out["heat_blur"] = 0.0
+    elif htype == "Classic Histogram":
+        out["heat_bins"] = int(heat.get("bins", 13) or 13)
+        out["heat_blur"] = 0.0
+    elif htype.startswith("Zone Heatmap"):
+        out["heat_bins"] = 3
+        out["heat_blur"] = 0.0
+    else:                                      # Gaussian KDE, Adaptive KDE, Smooth Density
+        out["heat_bins"] = 36
+        out["heat_blur"] = max(0.8, float(heat.get("bandwidth", 3.0) or 3.0) * 0.6)
     return out
 
 

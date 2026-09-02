@@ -188,7 +188,13 @@ def density_map(id: str, name: str, selector: Selector, *, category: str,
                 d = d.loc[gains.index]
                 reps = np.clip((gains * 400).round().astype(int), 1, 40)
                 d = d.loc[d.index.repeat(reps)]
-            return [layer_registry.create(kind, df=d,
+            # "density_kind" (heatmap|hexbin) lets a caller switch the encoding — the Open
+            # Play Studio maps its Heatmap "Type" control onto it so Type finally drives
+            # these maps too; unset -> the map's own default kind.
+            use_kind = ctx.controls.get("density_kind") or kind
+            if use_kind not in ("heatmap", "hexbin"):
+                use_kind = kind
+            return [layer_registry.create(use_kind, df=d,
                                           cmap=ctx.controls.get("cmap"))]
 
     _DensityMap.__name__ = f"Viz_{id}"
