@@ -684,14 +684,23 @@ def draw_thirds(ax, vt: Dict, spec: PitchSpec, ctx: Dict):
         ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=col, lw=lwd, ls="--", alpha=alp, zorder=2.5)
 
     def lane_line(yv):
+        # Dashed (not dotted) and at the length-line's own weight so lanes read as clearly
+        # as the length thirds; drawn above the heat/stripe layers so they never wash out.
         p1 = pc(0, yv, vertical)
         p2 = pc(100, yv, vertical)
-        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=col, lw=max(0.8, lwd - 0.3), ls=":", alpha=alp, zorder=2.5)
+        ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color=col, lw=max(1.0, lwd - 0.2),
+                ls=(0, (6, 4)), alpha=alp, zorder=2.5)
 
     def highlight(x0, x1, label):
+        # A translucent tint ABOVE the heat (so the third stays visible over a heatmap)
+        # plus a crisp dashed border, instead of a faint fill hidden beneath it.
         px, py = pc(x0, 0, vertical)
         wdt, hgt = (W, x1 - x0) if vertical else (x1 - x0, W)
-        ax.add_patch(Rectangle((px, py), wdt, hgt, color=col, alpha=min(0.35, alp * 0.4), zorder=1.5, lw=0))
+        ax.add_patch(Rectangle((px, py), wdt, hgt, facecolor=col, edgecolor="none",
+                               alpha=min(0.28, alp * 0.4), zorder=2.28, lw=0))
+        ax.add_patch(Rectangle((px, py), wdt, hgt, facecolor="none", edgecolor=col,
+                               alpha=min(0.95, alp + 0.2), lw=max(1.2, lwd),
+                               ls=(0, (6, 4)), zorder=2.55))
         if spec.thirds_labels:
             cx, cy = pc((x0 + x1) / 2, W / 2, vertical)
             ax.text(cx, cy, label, ha="center", va="center", color=vt["text"],
@@ -802,13 +811,17 @@ def new_pitch_fig(vt: Dict, spec: PitchSpec, ctx: Dict, fig_scale: float = 1.0,
             ax.add_patch(Rectangle((13.84, 0), 40.32, 16.5, fill=False, edgecolor=lc, lw=lw, zorder=2))
             ax.add_patch(Rectangle((13.84, 83.5), 40.32, 16.5, fill=False, edgecolor=lc, lw=lw, zorder=2))
 
-    # stripes under lines (line_zorder=2), above pitch face
-    if spec.stripes and vt["stripe"] != vt["pitch"]:
+    # stripes under lines (line_zorder=2), above pitch face. Colour and strength may be
+    # overridden via ctx (the Studio exposes these so the on/off toggle is clearly visible
+    # on low-contrast themes); absent -> the theme stripe at 0.55, i.e. byte-identical.
+    stripe_col = ctx.get("stripe_color") or vt["stripe"]
+    stripe_alpha = float(ctx.get("stripe_alpha", 0.55))
+    if spec.stripes and stripe_col != vt["pitch"] and stripe_alpha > 0:
         for i in range(0, 100, 20):
             if (i // 20) % 2 == 0:
                 px, py = pc(i, 0, vertical)
                 wdt, hgt = (W, 20) if vertical else (20, W)
-                ax.add_patch(Rectangle((px, py), wdt, hgt, color=vt["stripe"], alpha=0.55, zorder=1, lw=0))
+                ax.add_patch(Rectangle((px, py), wdt, hgt, color=stripe_col, alpha=stripe_alpha, zorder=1, lw=0))
 
     draw_thirds(ax, vt, spec, ctx)
 
@@ -1142,8 +1155,33 @@ def register_viz(name: str, category: str, renderer: Callable, uses_pitch: bool 
     VIZ_REGISTRY[name] = {"category": category, "render": renderer, "uses_pitch": uses_pitch}
 
 
+def _place_logo(fig, logo, ctx: Dict) -> None:
+    """Draw a club logo (an HxWx(3|4) RGBA/RGB ndarray) in a figure corner. Additive and
+    opt-in: only called when ctx carries 'logo_img', so default output is unaffected."""
+    try:
+        ih, iw = int(logo.shape[0]), int(logo.shape[1])
+        if ih <= 0 or iw <= 0:
+            return
+        fw, fh = fig.get_size_inches()
+        w_frac = float(ctx.get("logo_size", 0.12))          # fraction of figure WIDTH
+        h_frac = w_frac * (ih / iw) * (fw / fh)             # keep the logo's pixel aspect
+        pos = str(ctx.get("logo_pos", "top-right"))
+        pad = 0.012
+        left = pad if "left" in pos else 1 - w_frac - pad
+        bottom = pad if "bottom" in pos else 1 - h_frac - pad
+        ax_logo = fig.add_axes((left, bottom, w_frac, h_frac), zorder=20)
+        ax_logo.imshow(logo, interpolation="antialiased")
+        ax_logo.axis("off")
+    except Exception:                                        # never let branding break a render
+        pass
+
+
 def finalize_fig(fig, title: str, subtitle: str, ctx: Dict):
     vt = ctx["vt"]
+    # subtitle: an explicit ctx override wins (empty string hides it); absent -> the
+    # engine-generated subtitle, so default output is byte-identical.
+    if "subtitle" in ctx and ctx["subtitle"] is not None:
+        subtitle = str(ctx["subtitle"])
     if ctx.get("show_title", True):
         fig.suptitle(title, fontsize=ctx.get("title_size", 20), color=vt["text"],
                      fontweight=vt["title_weight"], fontfamily=vt["font"], y=0.985)
@@ -1151,6 +1189,14 @@ def finalize_fig(fig, title: str, subtitle: str, ctx: Dict):
             fig.text(0.5, 0.94, subtitle, ha="center",
                      fontsize=max(8, ctx.get("title_size", 20) - 8),
                      color=vt["muted"], fontfamily=vt["font"])
+    # footer + logo: opt-in branding, drawn only when supplied. Both absent -> unchanged.
+    footer = ctx.get("footer")
+    if footer:
+        fig.text(0.5, 0.008, str(footer), ha="center", va="bottom",
+                 fontsize=max(7, ctx.get("title_size", 20) - 11),
+                 color=vt["muted"], fontfamily=vt["font"], alpha=0.9)
+    if ctx.get("logo_img") is not None:
+        _place_logo(fig, ctx["logo_img"], ctx)
     return fig
 
 
@@ -1174,9 +1220,13 @@ def outcome_color(row, ctx) -> str:
 HEAT_TYPES = ["Gaussian KDE", "Adaptive KDE", "Smooth Density", "Grid Heatmap",
               "Hexbin Count", "Hexbin Mean Distance", "Zone Heatmap (thirds x lanes)",
               "Zone Heatmap (custom grid)", "Classic Histogram"]
+# On-ball touch events, so "Touch density" is a real subset (not a duplicate of
+# "All selected events", which also includes off-ball/defensive rows).
+TOUCH_EVENTS = ["pass", "carry", "dribble", "shot", "cross", "take_on", "touch",
+                "reception", "ball_receipt", "control", "clearance", "interception"]
 HEAT_PRESETS = {
     "All selected events": None,
-    "Touch density": None,
+    "Touch density": lambda d: d[d["event_type"].str.lower().isin(TOUCH_EVENTS)],
     "Pass density": lambda d: d[d["event_type"].str.lower() == "pass"],
     "Shot density": lambda d: d[d["event_type"].str.lower() == "shot"],
     "Recovery density": lambda d: d[d["event_type"].str.lower() == "recovery"],

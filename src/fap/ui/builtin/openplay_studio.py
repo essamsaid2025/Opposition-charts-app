@@ -183,16 +183,47 @@ def _build_ctx(w: Studio) -> dict:
     viz = st.session_state.get(VIZ) or ""
     overrides: dict[str, Any] = {"aux": {**dict(ctl.get("aux") or {}), "df_all": w.df_all}}
     for k in ("title", "show_title", "title_size", "label_size", "legend_size",
-              "respect_filter", "attack_arrow", "show_xg_values"):
+              "respect_filter", "attack_arrow", "show_xg_values", "stripe_alpha", "stripe_color"):
         if k in ctl:
             overrides[k] = ctl[k]
     overrides["title"] = ctl.get("title") or viz          # default title = viz name (as run_app)
     for group in ("marker", "arrow", "labels", "legend", "heat", "colors"):
         if ctl.get(group):
             overrides[group] = dict(ctl[group])
+    _apply_branding(overrides, ctl)                       # subtitle / footer / logo (opt-in)
     if _selections().get("event_types"):                  # event filter toggles respect_filter (run_app)
         overrides["respect_filter"] = True
     return w.engine.default_ctx(w.vt, w.spec, **overrides)
+
+
+def _decode_logo(data: bytes):
+    """Decode uploaded logo bytes -> an RGB(A) ndarray for the engine. None on failure."""
+    try:
+        import io
+        import matplotlib.image as mpimg
+        return mpimg.imread(io.BytesIO(data))
+    except Exception:
+        return None
+
+
+def _apply_branding(overrides: dict, ctl: dict) -> None:
+    """Fold the Branding panel (subtitle / footer / club logo) into the render context.
+    Every key is opt-in: 'Auto' subtitle + no footer + no logo => nothing added, so the
+    engine's default (byte-identical) output is preserved."""
+    br = ctl.get("brand") or {}
+    mode = br.get("subtitle_mode", "Auto")
+    if mode == "Custom":
+        overrides["subtitle"] = br.get("subtitle", "")
+    elif mode == "None":
+        overrides["subtitle"] = ""
+    if br.get("footer"):
+        overrides["footer"] = br["footer"]
+    if br.get("logo_on"):
+        arr = st.session_state.get(K + "logo_arr")
+        if arr is not None:
+            overrides["logo_img"] = arr
+            overrides["logo_pos"] = br.get("logo_pos", "top-right")
+            overrides["logo_size"] = float(br.get("logo_size", 0.12))
 
 
 # ---- theme resolution (named + Club/Custom + font) — mirrors run_app's theme block ----
@@ -650,6 +681,16 @@ def _panel_inspector(w: Studio) -> None:
         p["mirror"] = c1.checkbox("Mirror X", value=p.get("mirror", sd.mirror), key="ops_mirror")
         p["flip_y"] = c2.checkbox("Flip Y", value=p.get("flip_y", sd.flip_y), key="ops_flipy")
         p["stripes"] = c3.checkbox("Stripes", value=p.get("stripes", sd.stripes), key="ops_stripes")
+        if p["stripes"]:
+            s1, s2 = st.columns(2)
+            ctl["stripe_alpha"] = s1.slider(
+                "Stripe strength", 0.0, 1.0, float(ctl.get("stripe_alpha", 0.55)), key="ops_stripe_a",
+                help="Higher = clearer bands. On low-contrast themes the default stripe barely "
+                     "differs from the pitch, so turning stripes off looks like nothing changed — "
+                     "raise this and/or pick a stripe colour to make the on/off state obvious.")
+            ctl["stripe_color"] = s2.color_picker(
+                "Stripe color", ctl.get("stripe_color", w.vt.get("stripe", w.vt.get("pitch", "#EDF0F4"))),
+                key="ops_stripe_c")
 
     # ---- Markers ------------------------------------------------------------------
     with st.expander("Markers", expanded=True):
@@ -704,6 +745,37 @@ def _panel_inspector(w: Studio) -> None:
         lb["offset"] = st.slider("Offset", 0.5, 5.0, float(lb.get("offset", d["labels"]["offset"])), key="ops_lboff")
         lb["rotation"] = st.slider("Rotation", 0, 90, int(lb.get("rotation", d["labels"]["rotation"])), key="ops_lbrot")
         lb["max_labels"] = st.slider("Max labels (0 = all)", 0, 60, int(lb.get("max_labels", d["labels"]["max_labels"])), key="ops_lbmax")
+
+    # ---- Branding & Footer --------------------------------------------------------
+    with st.expander("Branding & Footer", expanded=False):
+        br = grp("brand")
+        br["subtitle_mode"] = _sel("Subtitle", ["Auto", "Custom", "None"],
+                                   br.get("subtitle_mode", "Auto"), "ops_submode",
+                                   help="Auto = the engine's summary line under the title. "
+                                        "Custom = your own text. None = hide it.")
+        if br["subtitle_mode"] == "Custom":
+            br["subtitle"] = st.text_input("Subtitle text", value=br.get("subtitle", ""),
+                                           key="ops_subtxt", placeholder="e.g. Open play · 1st half")
+        br["footer"] = st.text_input("Footer text", value=br.get("footer", ""), key="ops_footer",
+                                     placeholder="e.g. Prepared by RTD Analysis · Confidential")
+        st.divider()
+        up = st.file_uploader("Club logo (PNG / JPG)", type=["png", "jpg", "jpeg"], key="ops_logo_up")
+        if up is not None:
+            sig = f"{up.name}:{up.size}"
+            if st.session_state.get(K + "logo_sig") != sig:
+                st.session_state[K + "logo_arr"] = _decode_logo(up.getvalue())
+                st.session_state[K + "logo_sig"] = sig
+            br["logo_ref"] = sig                          # in ctl so the render signature tracks it
+        has_logo = st.session_state.get(K + "logo_arr") is not None
+        br["logo_on"] = st.checkbox("Show logo on chart", value=br.get("logo_on", False),
+                                    key="ops_logo_on", disabled=not has_logo,
+                                    help="Upload a logo first." if not has_logo else None)
+        if br.get("logo_on") and has_logo:
+            c1, c2 = st.columns(2)
+            br["logo_pos"] = c1.selectbox("Position", ["top-right", "top-left", "bottom-right", "bottom-left"],
+                                          index=["top-right", "top-left", "bottom-right", "bottom-left"].index(
+                                              br.get("logo_pos", "top-right")), key="ops_logo_pos")
+            br["logo_size"] = c2.slider("Logo size", 0.05, 0.25, float(br.get("logo_size", 0.12)), key="ops_logo_sz")
 
     # ---- Heatmap ------------------------------------------------------------------
     with st.expander("Heatmap", expanded=True):
