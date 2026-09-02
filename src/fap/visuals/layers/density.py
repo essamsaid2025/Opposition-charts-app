@@ -8,8 +8,14 @@ from fap.visuals.layers.base import Layer, layer_registry
 from fap.visuals.pitch import DISPLAY_LENGTH, DISPLAY_WIDTH
 
 
-def _xy(ctx: LayerContext) -> tuple[np.ndarray, np.ndarray]:
-    df = ctx.df.dropna(subset=["x", "y"])
+def _xy(layer: "Layer", ctx: LayerContext) -> tuple[np.ndarray, np.ndarray]:
+    # Honour the layer's own df (the map's selector output — shots, progressive passes,
+    # …) exactly like every other data layer; fall back to the full frame only when a
+    # layer is created without one. Reading ctx.df unconditionally made every density
+    # map render the WHOLE dataset, so all heatmaps looked identical regardless of map.
+    df = layer.params.get("df")
+    df = ctx.df if df is None else df
+    df = df.dropna(subset=["x", "y"])
     return ctx.to_display(df["x"], df["y"])
 
 
@@ -21,7 +27,7 @@ class HeatmapLayer(Layer):
     zorder = 2
 
     def draw(self, ctx: LayerContext) -> None:
-        x, y = _xy(ctx)
+        x, y = _xy(self, ctx)
         if not len(x):
             return
         bins = int(self.p("heat_bins", ctx))
@@ -52,7 +58,7 @@ class HexbinLayer(Layer):
     zorder = 2
 
     def draw(self, ctx: LayerContext) -> None:
-        x, y = _xy(ctx)
+        x, y = _xy(self, ctx)
         if not len(x):
             return
         ctx.ax.hexbin(x, y, gridsize=int(self.p("hex_gridsize", ctx)),

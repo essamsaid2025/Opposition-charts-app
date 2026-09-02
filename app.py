@@ -2712,7 +2712,7 @@ def _controls_from_legacy_ctx(ctx: Dict) -> Dict:
     particular the color pickers are left unset so the derived Theme drives every
     color (the whole point: theme-driven, nothing hardcoded)."""
     legend = ctx.get("legend") or {}
-    return {
+    out = {
         "title": ctx.get("title", "") or "",
         "show_title": bool(ctx.get("show_title", True)),
         "title_size": int(ctx.get("title_size", 20)),
@@ -2720,6 +2720,17 @@ def _controls_from_legacy_ctx(ctx: Dict) -> Dict:
         "legend_size": int(ctx.get("legend_size", 10)),
         "legend": bool(legend.get("show", True)),
     }
+    # Forward the Heatmap palette + opacity so the Inspector's Palette/Alpha controls
+    # actually drive the density-map plugins (Overview / Ball Progression / Shot Heatmap
+    # …). Without this the plugin falls back to the theme default and every heatmap looks
+    # identically green regardless of the picker. Only set when chosen, so an unset picker
+    # still keeps the theme default.
+    heat = ctx.get("heat") or {}
+    if heat.get("cmap"):
+        out["cmap"] = heat["cmap"]
+    if heat.get("alpha") is not None:
+        out["heat_alpha"] = float(heat["alpha"])
+    return out
 
 
 def _make_plugin_adapter(plugin_cls) -> Callable:
