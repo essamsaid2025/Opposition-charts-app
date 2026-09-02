@@ -34,7 +34,11 @@ class HeatmapLayer(Layer):
         blur = float(self.p("heat_blur", ctx))
         extent = ((0, DISPLAY_WIDTH, 0, DISPLAY_LENGTH) if ctx.vertical
                   else (0, DISPLAY_LENGTH, 0, DISPLAY_WIDTH))
-        key = f"heat::{self.signature()}::{len(x)}"
+        # bins/blur/orientation come from controls, not the layer signature, so they MUST
+        # be in the (process-global) memo key — otherwise switching Type between Grid
+        # (bins/no-blur) and Smooth (finer/blurred) returns the first cached histogram and
+        # the render never changes.
+        key = f"heat::{self.signature()}::{len(x)}::b{bins}::g{blur:.3f}::v{int(ctx.vertical)}"
 
         def compute() -> np.ndarray:
             h, _, _ = np.histogram2d(
