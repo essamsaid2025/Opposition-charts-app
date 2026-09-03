@@ -2101,6 +2101,100 @@ def build_insights(df: pd.DataFrame) -> List[str]:
 
 
 # =============================
+# PASSING COMBINATION MATRIX (sender x receiver)
+# =============================
+def _matrix_short_name(name: str) -> str:
+    """'Emiliano Martinez' -> 'E. Martinez'; single-token names kept as-is."""
+    parts = str(name).split()
+    if len(parts) >= 2 and parts[0]:
+        return f"{parts[0][0]}. {parts[-1]}"
+    return str(name)
+
+
+def panel_pass_matrix(ax, df, ctx, max_players: int = 16) -> str:
+    """Sender (rows) x receiver (columns) grid of successful-pass counts between
+    team-mates — the classic passing-combination matrix. Reuses the canonical
+    receiver column, inferring it from the next touch when the feed carries none."""
+    from matplotlib.colors import LinearSegmentedColormap
+    try:
+        from fap.visuals.analysis import infer_receivers
+    except Exception:  # pragma: no cover - defensive; matrix still works with a receiver col
+        infer_receivers = None
+    vt = ctx["vt"]
+    ax.set_facecolor(vt["panel"])
+    d = df[df["event_type"].astype(str).str.lower() == "pass"].copy()
+    if "outcome" in d.columns:
+        d = d[is_success(d["outcome"])]
+    d = d[d["player"].astype(str).str.strip().ne("")]
+    if ("receiver" not in d.columns) or (not d["receiver"].astype(str).str.strip().ne("").any()):
+        d = d.assign(receiver=(infer_receivers(df).reindex(d.index).fillna("")
+                               if infer_receivers is not None else ""))
+    d = d[d["receiver"].astype(str).str.strip().ne("")]
+    if d.empty:
+        ax.axis("off")
+        ax.text(0.5, 0.5, "No passing combinations with a known receiver",
+                ha="center", va="center", color=vt["muted"], fontfamily=vt["font"],
+                fontsize=ctx["label_size"])
+        return "Passing combinations"
+    d = d.assign(_s=d["player"].astype(str).str.strip(),
+                 _r=d["receiver"].astype(str).str.strip())
+    combo = pd.crosstab(d["_s"], d["_r"])
+    involve = combo.sum(axis=1).add(combo.sum(axis=0), fill_value=0).sort_values(ascending=False)
+    order = list(involve.index)[:max(2, int(max_players))]
+    M = combo.reindex(index=order, columns=order, fill_value=0).astype(float)
+    n = len(order)
+    arr = M.values.copy()
+    np.fill_diagonal(arr, np.nan)                       # a player never passes to themselves
+    finite = arr[np.isfinite(arr) & (arr > 0)]
+    vmax = float(finite.max()) if finite.size else 1.0
+    masked = np.ma.masked_where(~(arr > 0), arr)
+    hi = ctx["colors"].get("bar", vt.get("accent", "#3b82f6"))
+    cmap = LinearSegmentedColormap.from_list("passmatrix", [vt["panel"], hi])
+    cmap.set_bad(color=vt["panel"])
+    ax.imshow(masked, cmap=cmap, aspect="equal", origin="upper", vmin=0, vmax=vmax)
+    labels = [_matrix_short_name(p) for p in order]
+    lab_sz = max(6, ctx["label_size"] - 2)
+    ax.set_xticks(np.arange(n))
+    ax.set_yticks(np.arange(n))
+    ax.set_xticklabels(labels, rotation=45, ha="left", fontsize=lab_sz,
+                       color=vt["text"], fontfamily=vt["font"])
+    ax.set_yticklabels(labels, fontsize=lab_sz, color=vt["text"], fontfamily=vt["font"])
+    ax.xaxis.set_ticks_position("top")
+    ax.xaxis.set_label_position("top")
+    ax.set_xticks(np.arange(-0.5, n, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, n, 1), minor=True)
+    ax.grid(which="minor", color=vt["bg"], linewidth=1.4)
+    ax.tick_params(which="minor", length=0)
+    ax.tick_params(which="major", length=0, colors=vt["text"])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    for i in range(n):
+        for j in range(n):
+            v = arr[i, j]
+            if not np.isfinite(v) or v <= 0:
+                ax.text(j, i, "·", ha="center", va="center", color=vt["muted"],
+                        fontsize=lab_sz, fontfamily=vt["font"], alpha=0.55)
+                continue
+            r, g, b, _ = cmap(v / vmax if vmax else 0.0)
+            lum = 0.299 * r + 0.587 * g + 0.114 * b
+            ax.text(j, i, f"{int(v)}", ha="center", va="center",
+                    color=("#ffffff" if lum < 0.55 else "#111111"),
+                    fontweight="bold", fontsize=lab_sz, fontfamily=vt["font"])
+    ax.set_xlabel("RECEIVER", color=vt["muted"], fontfamily=vt["font"],
+                  fontsize=ctx["label_size"], labelpad=12)
+    ax.set_ylabel("SENDER", color=vt["muted"], fontfamily=vt["font"], fontsize=ctx["label_size"])
+    return f"{int(M.values.sum())} passes between {n} players"
+
+
+def viz_pass_matrix(df, ctx):
+    vt = ctx["vt"]
+    fig, ax = plt.subplots(figsize=(9.6, 9.2))
+    fig.patch.set_facecolor(vt["bg"])
+    sub = panel_pass_matrix(ax, df, ctx, max_players=int(ctx["aux"].get("matrix_players", 16)))
+    return finalize_fig(fig, ctx["title"], sub, ctx)
+
+
+# =============================
 # REGISTRATIONS (all v3 names preserved; new plugins added, nothing edited)
 # =============================
 register_viz("Overview Heatmap", "Heatmaps", viz_heat_studio)
@@ -2120,6 +2214,7 @@ register_viz("Pass Direction Bar", "Charts", viz_pass_direction, uses_pitch=Fals
 register_viz("Shot Result Bar", "Charts", viz_shot_summary, uses_pitch=False)
 register_viz("Timeline Line Chart", "Charts", viz_timeline, uses_pitch=False)
 register_viz("Match Trend Line Chart", "Charts", viz_match_trend, uses_pitch=False)
+register_viz("Passing Combination Matrix", "Charts", viz_pass_matrix, uses_pitch=False)
 register_viz("Statistical Table", "Tables & Cards", viz_stat_table, uses_pitch=False)
 register_viz("Match Summary Cards", "Tables & Cards", viz_summary_cards, uses_pitch=False)
 for _name in DASHBOARD_PRESETS:

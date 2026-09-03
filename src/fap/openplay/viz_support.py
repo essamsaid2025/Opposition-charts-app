@@ -68,6 +68,7 @@ _REQUIREMENTS: dict[str, VizRequirement] = {
     "Shot Map": VizRequirement(events=("shot",)),
     "Shot Result Bar": VizRequirement(events=("shot",)),
     "Pass Direction Bar": VizRequirement(events=("pass",), end_coords=True),
+    "Passing Combination Matrix": VizRequirement(events=("pass",)),
     "Defensive Actions Map": VizRequirement(
         events=tuple(e.lower() for e in DEF_EVENTS)),
 }
