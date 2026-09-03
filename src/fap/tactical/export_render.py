@@ -175,6 +175,15 @@ def _draw_pitch(ax, board: Board, colors: dict[str, str]) -> None:
             rect(sx, _H / 2 - sh / 2, sw2, sh)
             spot = x0 + bw * 0.65 if left else x1 - bw * 0.65
             ax.add_patch(mp.Circle((spot, _H / 2), 3, facecolor=line, edgecolor="none", zorder=1))
+        # goals + penalty "D" arcs + corner arcs (shared geometry so screen + export match)
+        from fap.tactical import geometry as _geo
+        mk = _geo.pitch_markings(x0, y0, x1, y1)
+        for gx, gy, gw, gh in mk["goals"]:
+            ax.add_patch(mp.Rectangle((gx, gy), gw, gh, facecolor=line, edgecolor="none",
+                                      alpha=0.9, zorder=1))
+        for pts in mk["arcs"]:
+            ax.plot([a for a, _ in pts], [b for _, b in pts], color=line, linewidth=lw,
+                    solid_capstyle="round", zorder=1)
     else:
         ax.add_patch(mp.Circle(((x0 + x1) / 2, _H / 2), (y1 - y0) * 0.12, fill=False,
                                edgecolor=line, linewidth=lw, zorder=1))

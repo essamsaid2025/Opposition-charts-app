@@ -142,6 +142,16 @@ def _pitch_svg(board: Board, colors: dict[str, str], grid: bool) -> str:
             out.append(f'<rect x="{sx}" y="{_H/2-sh/2}" width="{sw2}" height="{sh}" {st}/>')
             spot = x0 + bw * 0.65 if left else x1 - bw * 0.65
             out.append(f'<circle cx="{spot}" cy="{_H/2}" r="3" fill="{line}"/>')
+        # goals + penalty "D" arcs + corner arcs (shared geometry so export matches)
+        from fap.tactical import geometry as _geo
+        mk = _geo.pitch_markings(x0, y0, x1, y1)
+        for gx, gy, gw, gh in mk["goals"]:
+            out.append(f'<rect x="{gx:.1f}" y="{gy:.1f}" width="{gw:.1f}" height="{gh:.1f}" '
+                       f'fill="{line}" fill-opacity="0.9"/>')
+        for pts in mk["arcs"]:
+            d = "M " + " L ".join(f"{a:.1f} {b:.1f}" for a, b in pts)
+            out.append(f'<path d="{d}" fill="none" stroke="{line}" stroke-width="{lw}" '
+                       f'stroke-linecap="round"/>')
     else:  # futsal: box + centre circle + small goals, no penalty boxes
         out.append(f'<circle cx="{(x0+x1)/2}" cy="{_H/2}" r="{(y1-y0)*0.12:.1f}" {st}/>')
     if kind == "thirds":

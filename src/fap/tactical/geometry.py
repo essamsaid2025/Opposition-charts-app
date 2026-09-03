@@ -180,6 +180,40 @@ def freehand_points(props: dict[str, Any]) -> list[tuple[float, float]]:
     return out
 
 
+def pitch_markings(x0: float, y0: float, x1: float, y1: float) -> dict[str, Any]:
+    """Extra pitch markings a real football pitch needs but the base draw omitted: the two GOALS
+    (small frames just outside each goal line), the two penalty ARCS (the "D" outside each box) and
+    the four CORNER arcs. Pure geometry in the caller's pixel plane (``x0,y0``-``x1,y1`` = the pitch
+    rectangle), shared by both renderers so screen + export match. These are barely visible on the
+    full pitch but essential once the view is cropped to the box (att_third), where their absence
+    reads as an unfinished pitch. Ellipse-sampled (rx from the pitch's x-scale, ry from its y-scale)
+    so the arcs sit correctly on the non-square plane. Returns ``goals`` (x, y, w, h rects) and
+    ``arcs`` (each a list of (x, y) points → a polyline)."""
+    W, H = x1 - x0, y1 - y0
+    cy = (y0 + y1) / 2
+    # goals: 7.32 m wide, ~2 m deep, centred on each goal line, sticking just outside the pitch
+    gh, gd = H * (7.32 / 68), W * (2.0 / 105)
+    goals = [(x0 - gd, cy - gh / 2, gd, gh), (x1, cy - gh / 2, gd, gh)]
+    arcs: list[list[tuple[float, float]]] = []
+    # penalty "D": 9.15 m radius from the penalty spot, only the part OUTSIDE the 16.5 m box
+    bw = W * (16.5 / 105)
+    rx, ry = W * (9.15 / 105), H * (9.15 / 68)
+    for left in (True, False):
+        spot_x = x0 + bw * 0.65 if left else x1 - bw * 0.65
+        a = max(-1.0, min(1.0, (bw * 0.35) / rx))        # cos of the box-edge angle
+        th = math.acos(a)
+        t0, t1 = (-th, th) if left else (math.pi - th, math.pi + th)
+        arcs.append([(spot_x + rx * math.cos(t0 + (t1 - t0) * i / 20),
+                      cy + ry * math.sin(t0 + (t1 - t0) * i / 20)) for i in range(21)])
+    # corner quarter-circles: 1 m radius, bulging into the pitch
+    rcx, rcy = W * (1.0 / 105), H * (1.0 / 68)
+    for cx, cyc, t0, t1 in ((x0, y0, 0.0, math.pi / 2), (x1, y0, math.pi / 2, math.pi),
+                            (x0, y1, -math.pi / 2, 0.0), (x1, y1, math.pi, 1.5 * math.pi)):
+        arcs.append([(cx + rcx * math.cos(t0 + (t1 - t0) * i / 8),
+                      cyc + rcy * math.sin(t0 + (t1 - t0) * i / 8)) for i in range(9)])
+    return {"goals": goals, "arcs": arcs}
+
+
 __all__ = ["ARROW_VARIANTS", "ARROW_VARIANT_KEYS", "variant_spec", "wave_points",
            "arrowhead_points", "freehand_points", "ARROWHEAD_KINDS", "ARROWHEAD_LABELS",
-           "ARROWHEAD_DEFAULT", "arrowhead_geometry"]
+           "ARROWHEAD_DEFAULT", "arrowhead_geometry", "pitch_markings"]
