@@ -344,10 +344,15 @@ def _rename_frame(board: Board, c: dict[str, Any]) -> dict[str, Any]:
 
 
 def _set_pitch(board: Board, c: dict[str, Any]) -> dict[str, Any]:
+    from fap.tactical.models import PITCH_AREAS
     if "kind" in c:
         board.pitch.kind = str(c["kind"])
     if "orientation" in c:
         board.pitch.orientation = str(c["orientation"])
+    if "area" in c:                                       # viewBox crop preset; ignore unknown values
+        area = str(c["area"])
+        if area in PITCH_AREAS:
+            board.pitch.area = area
     return {}
 
 

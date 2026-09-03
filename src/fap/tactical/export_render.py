@@ -203,29 +203,22 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         fill = _v.player_fill(colors, p)
         ink = _v.ink_for(fill)
         edge = _c(colors, "line")
-        # soft ground shadow (matches render.py's _player ellipse)
-        ax.add_patch(mp.Ellipse((x, y + r * 0.86), r * 1.64, r * 0.60, facecolor="black",
-                                alpha=0.22, edgecolor="none", zorder=z - 0.02))
+        # clean flat marker (lockstep with render.py _player): no ground shadow / sheen / double
+        # separation ring — just a GK ring, a facing nub, a solid disc with one thin ring.
         if p.get("goalkeeper"):
-            ax.add_patch(mp.Circle((x, y), r + 3.5, fill=False, edgecolor=edge, linewidth=2,
+            ax.add_patch(mp.Circle((x, y), r + 3, fill=False, edgecolor=edge, linewidth=1.6,
                                    linestyle=(0, (3, 3)), zorder=z))
-        # facing-direction wedge (lockstep with render.py). The SVG rotates the whole <g>; the
-        # export rotates the three wedge vertices about (x,y) by o.rotation — same y-down sense
-        # (set_ylim(_H,0)) and same 0deg=up. Drawn under the disc so only the nub shows.
+        # facing-direction wedge. The SVG rotates the whole <g>; the export rotates the three wedge
+        # vertices about (x,y) by o.rotation — same y-down sense (set_ylim(_H,0)) and same 0deg=up.
         th = math.radians(o.rotation or 0.0)
         ct, st_ = math.cos(th), math.sin(th)
-        wr = r * 0.32
-        local = ((0.0, -r - r * 0.5), (-wr, -r * 0.6), (wr, -r * 0.6))
+        wr = r * 0.28
+        local = ((0.0, -r - r * 0.36), (-wr, -r * 0.5), (wr, -r * 0.5))
         wpts = [(x + lx * ct - ly * st_, y + lx * st_ + ly * ct) for lx, ly in local]
-        ax.add_patch(mp.Polygon(wpts, closed=True, facecolor=edge, edgecolor="none",
+        ax.add_patch(mp.Polygon(wpts, closed=True, facecolor=fill, edgecolor="none",
                                 zorder=z - 0.005))
-        # dark separation ring + team disc + top sheen
-        ax.add_patch(mp.Circle((x, y), r + 1.2, facecolor="#0d0f13", alpha=0.55,
-                               edgecolor="none", zorder=z))
-        ax.add_patch(mp.Circle((x, y), r, facecolor=fill, edgecolor=edge, linewidth=2.4,
+        ax.add_patch(mp.Circle((x, y), r, facecolor=fill, edgecolor=edge, linewidth=2,
                                zorder=z + 0.002))
-        ax.add_patch(mp.Ellipse((x, y - r * 0.42), r * 1.24, r * 0.68, facecolor="white",
-                                alpha=0.16, edgecolor="none", zorder=z + 0.003))
         num = p.get("number", "")
         if num not in ("", None):
             ax.text(x, y, str(num), ha="center", va="center", color=ink,
@@ -234,8 +227,10 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
             ax.text(x + r * 0.95, y - r * 0.7, "C", ha="left", va="center", color=_c(colors, "accent"),
                     fontsize=r * 0.6, fontweight="bold", zorder=z + 0.02)
         if p.get("name"):
-            ax.text(x, y + r + 12, str(p["name"]), ha="center", va="top", color=_c(colors, "text"),
-                    fontsize=9, zorder=z + 0.02)
+            import matplotlib.patheffects as pe
+            nm = ax.text(x, y + r + 12, str(p["name"]), ha="center", va="top",
+                         color=_c(colors, "text"), fontsize=9, zorder=z + 0.02)
+            nm.set_path_effects([pe.withStroke(linewidth=2.5, foreground=_c(colors, "bg"))])
     elif t == "ball":
         from fap.tactical import visual as _v
         import math
@@ -414,7 +409,7 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
     import matplotlib.pyplot as plt
 
     global _PLANE_H
-    from fap.tactical.render import plane_height
+    from fap.tactical.render import area_window_display, plane_height
     colors = {**DEFAULT_COLORS, **(colors or {})}
     fr: Frame = board.frame(frame_index)
     vertical = board.pitch.orientation == "vertical"
@@ -424,10 +419,16 @@ def board_image(board: Board, frame_index: int = 0, *, fmt: str = "png",
     # rotates the landscape-authored geometry into it. Horizontal is unchanged for pitch boards
     # (byte-identical); an image board uses the photo-matched plane height.
     fw, fh = (_H, _W) if vertical else (_W, _PLANE_H)
+    # AREA crop: frame only the pitch slice (same window the on-screen viewBox uses), so the export
+    # is tight with no wasted space. ``None`` => full view (figure + limits below are byte-identical).
+    win = area_window_display(board, vertical)
+    ox, oy = (0.0, 0.0)
+    if win is not None:
+        ox, oy, fw, fh = win
     fig, ax = plt.subplots(figsize=(fw / 100.0, fh / 100.0))
     try:
-        ax.set_xlim(0, fw)
-        ax.set_ylim(fh, 0)                       # SVG y grows downward
+        ax.set_xlim(ox, ox + fw)
+        ax.set_ylim(oy + fh, oy)                 # SVG y grows downward
         ax.set_aspect("equal")
         ax.axis("off")
         fig.subplots_adjust(left=0, right=1, top=1, bottom=0)

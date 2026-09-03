@@ -722,6 +722,33 @@ class TacticalBoardPage(Page):
             board.touch()                            # bump updated_at so the canvas re-renders
             st.rerun()
 
+    # ------------------------------------------------------------ area bar
+    @staticmethod
+    def _area_bar(board, can_edit) -> None:
+        """Always-visible pitch AREA + orientation control (Tacticalista-style field-area picker).
+        Each preset just calls the existing ``set_pitch`` op — changing ``board.pitch.area`` changes
+        the pitch SVG's viewBox, whose signature drives the component to re-render the framed view.
+        The default ``full`` keeps the whole pitch (unchanged)."""
+        areas = [("full", "Full"), ("att_half", "Att half"), ("def_half", "Def half"),
+                 ("att_third", "Att third"), ("def_third", "Def third")]
+        cur_area = getattr(board.pitch, "area", "full") or "full"
+        is_vertical = getattr(board.pitch, "orientation", "horizontal") == "vertical"
+        with st.container(key="tb_areabar"):
+            cols = st.columns([0.7, 1, 1, 1, 1, 1, 0.9], gap="small")
+            cols[0].markdown('<div class="tb-cluster">Area</div>', unsafe_allow_html=True)
+            for i, (val, lab) in enumerate(areas):
+                cols[i + 1].button(
+                    lab, key=f"tb_area_{val}", use_container_width=True, disabled=not can_edit,
+                    type=("primary" if val == cur_area else "secondary"),
+                    help=f"Frame the {lab.lower()} of the pitch",
+                    on_click=lambda v=val: _apply({"op": "set_pitch", "area": v}))
+            cols[6].button(
+                "↕ Vert" if not is_vertical else "↔ Horz", key="tb_area_orient",
+                use_container_width=True, disabled=not can_edit,
+                help="Switch pitch orientation (horizontal / vertical)",
+                on_click=lambda t=("vertical" if not is_vertical else "horizontal"):
+                    _apply({"op": "set_pitch", "orientation": t}))
+
     # ------------------------------------------------------------ board
     def _board_view(self, shell, board, can_edit) -> None:
         flash = st.session_state.pop("_tb_flash", "")
@@ -729,6 +756,7 @@ class TacticalBoardPage(Page):
             C.render_alert(flash, "success")
         # (board name + theme now live in the collapsed File expander — the board itself is
         # the full-bleed editor, with no Streamlit header above it.)
+        self._area_bar(board, can_edit)
         grid = st.session_state.get(TB_GRID, False)
         sel = st.session_state.get(TB_SEL)
         colors = _resolve_board_colors(shell, board)

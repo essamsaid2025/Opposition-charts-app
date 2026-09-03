@@ -51,6 +51,35 @@ def plane_height(board: "Board") -> float:
     return _H
 
 
+# View AREA presets — a viewBox crop that FRAMES one slice of the pitch (Tacticalista-style),
+# so a set-piece scene fills the panel with no wasted space. Coordinates stay 0-100 over the FULL
+# pitch (nothing moves); only the visible window shrinks. Rects are in the landscape authoring plane
+# (attacking direction = +x, right). "full" is handled by returning None below (byte-identical path).
+_AREAS: dict[str, tuple[float, float, float, float]] = {
+    "att_half":  (525.0, 0.0, 525.0, _H),      # attacking (right) half
+    "def_half":  (0.0,   0.0, 525.0, _H),      # defensive (left) half
+    "att_third": (700.0, 0.0, 350.0, _H),      # attacking third + penalty box
+    "def_third": (0.0,   0.0, 350.0, _H),      # defensive third + penalty box
+}
+
+
+def area_window_display(board: "Board", vertical: bool) -> tuple[float, float, float, float] | None:
+    """The viewBox window (x, y, w, h) in DISPLAY space for ``board``'s pitch area, or ``None`` for
+    the un-cropped full view (so the caller keeps the exact old, byte-identical viewBox). Pieces are
+    never moved — this only zooms the frame. A vertical board rotates the landscape plane 90° via an
+    ancestor <g>, so the landscape rect is mapped to portrait space with the SAME transform the SVG
+    uses (``portrait = (_H - y - h, x, h, w)``). Image (telestration) boards are never cropped."""
+    area = getattr(getattr(board, "pitch", None), "area", "full") or "full"
+    kind = getattr(getattr(board, "pitch", None), "kind", "full")
+    rect = _AREAS.get(area)
+    if rect is None or kind == "image":
+        return None
+    vx, vy, vw, vh = rect
+    if vertical:
+        return (_H - vy - vh, vx, vh, vw)
+    return (vx, vy, vw, vh)
+
+
 def _esc(t: Any) -> str:
     return _html.escape(str(t))
 
@@ -137,36 +166,29 @@ def _grid(line: str) -> str:
 
 # ---------------------------------------------------------------- objects
 def _player(o: TacticalObject, colors: dict[str, str]) -> str:
-    """Professional football marker (Phase 5C): grounded (soft shadow), a strong
-    dark separation ring so it reads on any grass, the team/GK disc, a subtle jersey
-    sheen, a contrast-aware centred number and an outlined name — one coherent piece.
-    Sizing/colour roles come from ``fap.tactical.visual`` (single source of truth)."""
+    """Clean flat football marker (Tacticalista-style): a solid team/GK disc with a single thin
+    ring, a small facing nub, a contrast-aware centred number and a tidy name label — no heavy
+    ground shadow, jersey sheen or double separation ring, so it reads crisp on the white pitch and
+    in exports. Sizing/colour roles come from ``fap.tactical.visual`` (single source of truth)."""
     x, y = _px(o.x, o.y); r = _v.PLAYER_R * o.scale
     p = o.props
     fill = _v.player_fill(colors, p)
     ink = _v.ink_for(fill)
     edge = _c(colors, "line")
     parts: list[str] = []
-    # soft ground shadow (depth)
-    parts.append(f'<ellipse cx="{x}" cy="{y+r*0.86}" rx="{r*0.82}" ry="{r*0.30}" '
-                 f'fill="#000000" fill-opacity="0.22"/>')
-    # goalkeeper: a dashed outer ring — clearly of the same marker family, but distinct
+    # goalkeeper: a thin dashed ring — of the same marker family, but distinct
     if p.get("goalkeeper"):
-        parts.append(f'<circle cx="{x}" cy="{y}" r="{r+3.5}" fill="none" stroke="{edge}" '
-                     f'stroke-width="2" stroke-dasharray="3 3"/>')
-    # facing-direction nub: drawn BEFORE the disc so the disc overdraws its base, leaving a
-    # clean nub poking out the top (0deg = up). Lives inside the rotated <g>, so it swings with
+        parts.append(f'<circle cx="{x}" cy="{y}" r="{r+3}" fill="none" stroke="{edge}" '
+                     f'stroke-width="1.6" stroke-dasharray="3 3"/>')
+    # facing-direction nub: drawn BEFORE the disc so the disc overdraws its base, leaving a small
+    # nub poking out the top (0deg = up). Lives inside the rotated <g>, so it swings with
     # o.rotation and agrees with the rotate handle. Keeps rotation visible on a plain player.
-    wr = r * 0.32
-    parts.append(f'<polygon points="{x},{y-r-r*0.5} {x-wr},{y-r*0.6} {x+wr},{y-r*0.6}" '
-                 f'fill="{edge}"/>')
-    # dark separation ring under the disc (contrast on light grass) + the team disc
-    parts.append(f'<circle cx="{x}" cy="{y}" r="{r+1.2}" fill="#0d0f13" fill-opacity="0.55"/>')
+    wr = r * 0.28
+    parts.append(f'<polygon points="{x},{y-r-r*0.36} {x-wr},{y-r*0.5} {x+wr},{y-r*0.5}" '
+                 f'fill="{fill}"/>')
+    # clean flat disc: solid fill + one thin dark ring
     parts.append(f'<circle cx="{x}" cy="{y}" r="{r}" fill="{fill}" stroke="{edge}" '
-                 f'stroke-width="2.4"/>')
-    # subtle top sheen (jersey highlight)
-    parts.append(f'<ellipse cx="{x}" cy="{y-r*0.42}" rx="{r*0.62}" ry="{r*0.34}" '
-                 f'fill="#ffffff" fill-opacity="0.16"/>')
+                 f'stroke-width="2"/>')
     num = p.get("number", "")
     if num not in ("", None):
         parts.append(f'<text x="{x}" y="{y+r*0.34}" text-anchor="middle" '
@@ -181,8 +203,8 @@ def _player(o: TacticalObject, colors: dict[str, str]) -> str:
         # outlined label (paint-order stroke) so the name stays legible over players/lines
         parts.append(f'<text x="{x}" y="{y+r+14}" text-anchor="middle" '
                      f'font-size="{_v.NAME_SIZE:.0f}" font-weight="600" fill="{_c(colors,"text")}" '
-                     f'font-family="Inter,Arial" paint-order="stroke" stroke="#0c0e12" '
-                     f'stroke-width="3" stroke-linejoin="round">{_esc(name)}</text>')
+                     f'font-family="Inter,Arial" paint-order="stroke" stroke="{_c(colors,"bg")}" '
+                     f'stroke-width="2.5" stroke-linejoin="round">{_esc(name)}</text>')
     return "".join(parts)
 
 
@@ -494,11 +516,12 @@ def board_pitch_svg(board: Board, *, colors: dict[str, str] | None = None,
                 f'orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="{_c(colors,"line")}"/></marker></defs>')
         pitch = _pitch_svg(board, colors, grid)
         inner = f'{defs}{pitch}<g id="tb-pieces"></g>'
+        win = area_window_display(board, vertical)       # None => full view (byte-identical below)
         if vertical:
-            view = f'0 0 {_H} {_W}'
+            view = f'0 0 {_H} {_W}' if win is None else f'{win[0]} {win[1]} {win[2]} {win[3]}'
             content = f'<g id="tb-plane" transform="translate({_H} 0) rotate(90)">{inner}</g>'
         else:
-            view = f'0 0 {_W} {_PLANE_H}'
+            view = f'0 0 {_W} {_PLANE_H}' if win is None else f'{win[0]} {win[1]} {win[2]} {win[3]}'
             content = f'<g id="tb-plane">{inner}</g>'
         return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
                 f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '
@@ -526,12 +549,13 @@ def board_svg(board: Board, frame_index: int = 0, *, colors: dict[str, str] | No
                        if not (o.props or {}).get("hidden"))
         extra = "".join(overlays or [])
         inner = f'{defs}{pitch}{extra}{objs}'
+        win = area_window_display(board, vertical)       # None => full view (byte-identical below)
         if vertical:
             # rotate the whole board 90deg for a vertical pitch
-            view = f'0 0 {_H} {_W}'
+            view = f'0 0 {_H} {_W}' if win is None else f'{win[0]} {win[1]} {win[2]} {win[3]}'
             content = f'<g transform="translate({_H} 0) rotate(90)">{inner}</g>'
         else:
-            view = f'0 0 {_W} {_PLANE_H}'
+            view = f'0 0 {_W} {_PLANE_H}' if win is None else f'{win[0]} {win[1]} {win[2]} {win[3]}'
             content = inner
         return (f'<svg class="tb-board-svg" viewBox="{view}" width="100%" '
                 f'xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet" '

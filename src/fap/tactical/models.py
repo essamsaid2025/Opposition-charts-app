@@ -148,20 +148,30 @@ def nearest_player(x: float, y: float, players: "list[TacticalObject]") -> "Tact
     return best
 
 
+#: view "area" presets — which slice of the pitch is FRAMED (the viewBox crop), independent of the
+#: pitch STYLE (``kind``). Coordinates stay 0-100 over the FULL pitch; the area only zooms the view
+#: so a set-piece scene fills the frame with no wasted space (Tacticalista-style). "full" is the
+#: default and renders byte-identically to before.
+PITCH_AREAS: tuple[str, ...] = ("full", "att_half", "def_half", "att_third", "def_third")
+
+
 @dataclass
 class PitchSpec:
     kind: str = "full"                 # full|half|thirds|blank|futsal|custom
     orientation: str = "horizontal"    # horizontal|vertical
+    area: str = "full"                 # full|att_half|def_half|att_third|def_third (viewBox crop)
     length: float = 105.0              # custom metres (informational)
     width: float = 68.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "orientation": self.orientation,
+        return {"kind": self.kind, "orientation": self.orientation, "area": self.area,
                 "length": self.length, "width": self.width}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "PitchSpec":
+        area = str(d.get("area", "full")) or "full"        # old boards had no area -> "full"
         return cls(kind=str(d.get("kind", "full")), orientation=str(d.get("orientation", "horizontal")),
+                   area=area if area in PITCH_AREAS else "full",
                    length=float(d.get("length", 105.0)), width=float(d.get("width", 68.0)))
 
 

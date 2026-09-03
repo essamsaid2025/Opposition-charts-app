@@ -58,7 +58,8 @@ def _both_teams() -> list[TacticalObject]:
 
 
 def _scenario_setpiece() -> Board:
-    b = new_board("Set Piece - Attacking Corner", pitch_kind="half")
+    b = new_board("Set Piece - Attacking Corner", pitch_kind="full")
+    b.pitch.area = "att_third"                       # frame the attacking third + box (no wasted space)
     fr = b.frames[0]; fr.name = "Corner"
     fr.objects.append(_ball(96, 4))
     box = [(80, 30, 9), (82, 45, 10), (84, 55, 4), (80, 62, 5), (88, 40, 11)]

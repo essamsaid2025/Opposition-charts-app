@@ -1058,7 +1058,7 @@
   function toolType(name){ if(name==="home"||name==="away") return "player"; if(name==="spotlight") return "circle"; return name; }
   function hasDefaults(name){ return name!=="select" && name!=="ball" && name!=="cone" && name!=="goal" && name!=="mannequin"; }
   function defaultsFor(name){                             // starting props for a tool's sticky defaults
-    if (name==="home"||name==="away") return { team:(name==="away"?"away":"home"), number:0, name:"", color:"", goalkeeper:false, captain:false };
+    if (name==="home"||name==="away") return { team:(name==="away"?"away":"home"), number:"", name:"", color:"", goalkeeper:false, captain:false };
     if (name==="circle") return { color:"#2f7bd6", filled:false, opacity:0.28, stroke_width:2.5 };
     if (name==="spotlight") return { spotlight:true, shape:"ellipse", filled:true, color:"#ffd23f", opacity:0.32, stroke_width:5, w:9, h:5 };
     if (name==="shape"||name==="zone"||name==="highlight") return { color:"#2f7bd6", filled:true, opacity:0.28, stroke_width:2 };
@@ -1307,8 +1307,18 @@
   function sendIntent(payload){ flushSyncNow(); emitToPython(payload); }   // undo/redo/action see the latest model
   function mirrorGeom(m){ ["x2","y2","curvature","w","h"].forEach(function(k){ if(m.props && m.props[k]!=null) m[k]=m.props[k]; }); }
   function newOid(){ return "obj_" + Math.random().toString(36).slice(2, 12); }
+  // Next free shirt number for a team (max existing + 1), so consecutively dropped players get
+  // 1,2,3… instead of all sharing "0". Scans the LIVE model, so it also counts pieces added earlier
+  // in the same batch (they are pushed before the next one is numbered).
+  function nextNumber(team){
+    var mx=0;
+    for(var i=0;i<objects.length;i++){ var o=objects[i]; if(o.type!=='player') continue;
+      var p=o.props||{}; var t=(p.team==='away')?'away':'home'; if(t!==team) continue;
+      var n=parseInt(p.number,10); if(!isNaN(n) && n>mx) mx=n; }
+    return mx+1;
+  }
   function baseProps(type){
-    if(type==="player") return {number:0, team:"home", color:"", name:"", goalkeeper:false, captain:false};
+    if(type==="player") return {number:"", team:"home", color:"", name:"", goalkeeper:false, captain:false};
     if(type==="circle") return {w:14,h:14,color:"",opacity:0.28,shape:"ellipse",filled:false,stroke_width:2.5};
     if(type==="zone"||type==="shape"||type==="highlight") return {w:20,h:16,color:"",opacity:0.28,shape:"rect",filled:true,stroke_width:2};
     if(VECTOR[type]) return {x2:62,y2:50,curvature:0,variant:"",label:""};
@@ -1339,16 +1349,16 @@
   }
   function pieceSVG(o){
     var p=o.props||{}, c=pxy(o), x=c.x, y=c.y, sc=o.scale||1, LN=(cfg.colors.line||'#14181f');
-    if(o.type==='player'){
-      var fill=teamColor(o), r=18*sc, s='';
-      s+='<ellipse cx="'+x+'" cy="'+(y+r*0.85)+'" rx="'+(r*0.9)+'" ry="'+(r*0.32)+'" fill="#000" fill-opacity="0.16"/>';
-      if(p.goalkeeper) s+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+3.5)+'" fill="none" stroke="'+LN+'" stroke-width="2" stroke-dasharray="3 3"/>';
-      s+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+1.2)+'" fill="#0d0f13" fill-opacity="0.5"/>';
-      s+='<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="'+fill+'" stroke="'+LN+'" stroke-width="2.2"/>';
+    if(o.type==='player'){                                 // clean flat marker (lockstep with render.py _player)
+      var fill=teamColor(o), r=18*sc, s='', halo=(cfg.colors.grass||'#fff');
+      if(p.goalkeeper) s+='<circle cx="'+x+'" cy="'+y+'" r="'+(r+3)+'" fill="none" stroke="'+LN+'" stroke-width="1.6" stroke-dasharray="3 3"/>';
+      var wr=r*0.28;
+      s+='<polygon points="'+x+','+(y-r-r*0.36)+' '+(x-wr)+','+(y-r*0.5)+' '+(x+wr)+','+(y-r*0.5)+'" fill="'+fill+'"/>';
+      s+='<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="'+fill+'" stroke="'+LN+'" stroke-width="2"/>';
       var num=(p.number!=null&&p.number!=='')?p.number:'';
-      if(num!=='') s+='<text x="'+x+'" y="'+(y+r*0.34)+'" text-anchor="middle" font-size="'+(r*0.9).toFixed(0)+'" font-weight="800" fill="'+inkFor(fill)+'" font-family="Inter,Arial">'+escH(num)+'</text>';
+      if(num!=='') s+='<text x="'+x+'" y="'+(y+r*0.34)+'" text-anchor="middle" font-size="'+(r*0.92).toFixed(0)+'" font-weight="800" fill="'+inkFor(fill)+'" font-family="Inter,Arial">'+escH(num)+'</text>';
       if(p.captain) s+='<text x="'+(x+r*0.95)+'" y="'+(y-r*0.7)+'" font-size="'+(r*0.8).toFixed(0)+'" font-weight="800" fill="#c8a24a">C</text>';
-      if(p.name) s+='<text x="'+x+'" y="'+(y+r+14)+'" text-anchor="middle" font-size="13" font-weight="600" fill="'+(cfg.colors.text||LN)+'" font-family="Inter,Arial" paint-order="stroke" stroke="#fff" stroke-width="3" stroke-linejoin="round">'+escH(p.name)+'</text>';
+      if(p.name) s+='<text x="'+x+'" y="'+(y+r+14)+'" text-anchor="middle" font-size="12" font-weight="600" fill="'+(cfg.colors.text||LN)+'" font-family="Inter,Arial" paint-order="stroke" stroke="'+halo+'" stroke-width="2.5" stroke-linejoin="round">'+escH(p.name)+'</text>';
       return s;
     }
     if(o.type==='ball'){ var rb=8*sc; return '<circle cx="'+x+'" cy="'+y+'" r="'+rb+'" fill="#fff" stroke="#111318" stroke-width="1.4"/><circle cx="'+x+'" cy="'+y+'" r="'+(rb*0.42)+'" fill="#111318"/>'; }
@@ -1416,6 +1426,10 @@
         var o={ id:newOid(), type:cmd.type, x:(cmd.x!=null?cmd.x:50), y:(cmd.y!=null?cmd.y:50),
                 rotation:cmd.rotation||0, scale:(cmd.scale!=null?cmd.scale:1), z:objects.length,
                 props:Object.assign({}, baseProps(cmd.type), cmd.props||{}) };
+        if(o.type==='player'){                             // auto-number: fill a blank/0 with the next free shirt #
+          var pn=o.props.number;
+          if(pn===''||pn==null||pn===0||pn==='0') o.props.number = nextNumber((o.props.team==='away')?'away':'home');
+        }
         mirrorGeom(o); objects.push(o); addedId=o.id;
       } else if(op==="update_object"){
         var m=metaOf(cmd.id); if(m){ if(cmd.x!=null)m.x=cmd.x; if(cmd.y!=null)m.y=cmd.y; if(cmd.rotation!=null)m.rotation=cmd.rotation;
