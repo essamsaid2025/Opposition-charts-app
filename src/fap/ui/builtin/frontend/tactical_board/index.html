@@ -182,6 +182,8 @@
       <button class="tool" data-tool="circle" title="Circle">$ic:circle$</button>
       <button class="tool" data-tool="shape" title="Rectangle">$ic:square$</button>
       <button class="tool" data-tool="zone" title="Zone">$ic:zone$</button>
+      <button class="tool" data-tool="lane" title="Passing lane / channel">$ic:lane$</button>
+      <button class="tool" data-tool="shadow" title="Cover shadow (pressing)">$ic:shadow$</button>
       <button class="tool" data-tool="text" title="Text">$ic:text$</button>
     </nav>
     <div id="stagewrap">
@@ -1042,12 +1044,14 @@
     chevR:'<svg '+TS+'><path d="M9 6l6 6-6 6"/></svg>',
     team:'<svg '+TS+'><circle cx="9" cy="9" r="2.5"/><circle cx="16" cy="10" r="2"/><path d="M4 18c0-2.5 2.2-4 5-4s5 1.5 5 4"/></svg>',
     goal:'<svg '+TS+'><path d="M5 7v11M19 7v11M5 7h14"/><path d="M5 11h14M8 7v11M12 7v11M16 7v11" stroke-width="0.9"/></svg>',
-    mannequin:'<svg '+TS+'><circle cx="12" cy="7" r="2.4"/><rect x="9.6" y="10" width="4.8" height="9" rx="2"/></svg>'
+    mannequin:'<svg '+TS+'><circle cx="12" cy="7" r="2.4"/><rect x="9.6" y="10" width="4.8" height="9" rx="2"/></svg>',
+    shadow:'<svg '+TF+'><path d="M12 4L20 20H4z" fill-opacity="0.4"/></svg>',
+    lane:'<svg '+TS+'><path d="M9 4v16M15 4v16"/></svg>'
   };
   function escH(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   var POINT={ home:1, away:1, ball:1, cone:1, text:1, goal:1, mannequin:1 };
-  var DRAWT={ arrow:1, curved_arrow:1, dashed_arrow:1, line:1, circle:1, shape:1, zone:1, spotlight:1 };
-  function labelFor(t){ return {home:'Home player',away:'Away player',ball:'Ball',cone:'Cone',goal:'Goal',mannequin:'Mannequin',arrow:'Arrow',curved_arrow:'Curved arrow',dashed_arrow:'Dashed arrow',line:'Line',circle:'Circle',shape:'Rectangle',zone:'Zone',text:'Text'}[t]||t; }
+  var DRAWT={ arrow:1, curved_arrow:1, dashed_arrow:1, line:1, circle:1, shape:1, zone:1, spotlight:1, lane:1, shadow:1 };
+  function labelFor(t){ return {home:'Home player',away:'Away player',ball:'Ball',cone:'Cone',goal:'Goal',mannequin:'Mannequin',arrow:'Arrow',curved_arrow:'Curved arrow',dashed_arrow:'Dashed arrow',line:'Line',circle:'Circle',shape:'Rectangle',zone:'Zone',lane:'Passing lane',shadow:'Cover shadow',text:'Text'}[t]||t; }
 
   function placeAt(e){                                    // click-to-place a point object
     var loc = toPlane(e.clientX, e.clientY); if (!loc) return;
@@ -1055,12 +1059,14 @@
     emit({ ts: nextTs(), commands: [{ op: "add_object", type: t.type, x: p.x, y: p.y,
                                       props: Object.assign({}, t.props || {}) }] });
   }
-  function toolType(name){ if(name==="home"||name==="away") return "player"; if(name==="spotlight") return "circle"; return name; }
+  function toolType(name){ if(name==="home"||name==="away") return "player"; if(name==="spotlight") return "circle"; if(name==="lane") return "zone"; if(name==="shadow") return "shape"; return name; }
   function hasDefaults(name){ return name!=="select" && name!=="ball" && name!=="cone" && name!=="goal" && name!=="mannequin"; }
   function defaultsFor(name){                             // starting props for a tool's sticky defaults
     if (name==="home"||name==="away") return { team:(name==="away"?"away":"home"), number:"", name:"", color:"", goalkeeper:false, captain:false };
     if (name==="circle") return { color:"#2f7bd6", filled:false, opacity:0.28, stroke_width:2.5 };
     if (name==="spotlight") return { spotlight:true, shape:"ellipse", filled:true, color:"#ffd23f", opacity:0.32, stroke_width:5, w:9, h:5 };
+    if (name==="lane") return { color:"#2f6fd6", filled:true, opacity:0.16, stroke_width:0, shape:"rect" };   // passing channel — translucent corridor
+    if (name==="shadow") return { color:"#14181f", filled:true, opacity:0.22, stroke_width:0, shape:"triangle" };  // cover shadow — pressing block
     if (name==="shape"||name==="zone"||name==="highlight") return { color:"#2f7bd6", filled:true, opacity:0.28, stroke_width:2 };
     if (VECTOR[name]) return { variant:"", curvature:0, label:"" };
     if (name==="text") return { text:"T", size:14, color:"#111318" };
@@ -1100,7 +1106,14 @@
     var vs=['','pass','run','movement','pressing','defensive','dribble','shot'];
     var opts=vs.map(function(v){ return '<option value="'+v+'" '+(p.variant===v?'selected':'')+'>'+(v||'plain')+'</option>'; }).join('');
     var h='<div class="fn"><div class="lbl">'+labelFor(o.type)+'</div></div>'
-      +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Style</div><select data-k="variant">'+opts+'</select></div>';
+      +'<div class="sec"><div class="lbl" style="margin-bottom:6px">Style</div><select data-k="variant">'+opts+'</select></div>'
+      +'<div class="sec"><div class="row between"><span>Dashed</span><button class="toggle '+(p.dashed?'on':'')+'" data-toggle="dashed"></button></div></div>';
+    if(o.type!=='line'){                                  // arrow-head shape (mirrors geometry.ARROWHEAD_KINDS)
+      var heads=[['filled_triangle','Triangle'],['outline_triangle','Outline triangle'],['circle','Hollow circle'],['dot','Dot'],['chevron','Chevron'],['bar','Bar'],['none','None']];
+      var hd=(p.arrowhead||'filled_triangle');
+      var hopts=heads.map(function(a){ return '<option value="'+a[0]+'" '+(hd===a[0]?'selected':'')+'>'+a[1]+'</option>'; }).join('');
+      h+='<div class="sec"><div class="lbl" style="margin-bottom:6px">Arrow head</div><select data-k="arrowhead">'+hopts+'</select></div>';
+    }
     if(o.type==='curved_arrow'){ var kv=Math.round((p.curvature||0)*100);
       h+='<div class="sec"><div class="lbl" style="margin-bottom:6px">Curve</div><div class="row"><input type="range" min="-100" max="100" value="'+kv+'" data-krange="curvature" data-scale="0.01"><span class="val">'+kv+'</span></div></div>'; }
     h+='<div class="sec"><div class="lbl" style="margin-bottom:6px">Label</div><input type="text" data-k="label" value="'+escH(p.label)+'" placeholder="optional"></div>';
@@ -1329,22 +1342,38 @@
   function pxy(o){ return { x:o.x/100*PLANE_W, y:o.y/100*PLANE_H }; }
   function inkFor(hex){ try{ var h=String(hex).replace('#',''); var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16); return (0.299*r+0.587*g+0.114*b)>150?'#111318':'#ffffff'; }catch(e){ return '#fff'; } }
   function teamColor(o){ var p=o.props||{}; return p.color || (p.team==='away'?(cfg.colors.away||'#2f6fd6'):(cfg.colors.home||'#e23b3b')); }
-  function arrowHead(tip, from, col, sw, hs){
-    sw=(sw!=null?sw:3); hs=(hs!=null?hs:1);
+  function arrowHead(tip, from, col, sw, hs, kind){        // kind mirrors geometry.ARROWHEAD_KINDS
+    sw=(sw!=null?sw:3); hs=(hs!=null?hs:1); kind=kind||'filled_triangle';
+    if(kind==='none') return '';
     var ang=Math.atan2(tip.y-from.y, tip.x-from.x), L=(10+sw)*hs;   // sw3,hs1 => 13 (unchanged for existing arrows)
+    if(kind==='circle'||kind==='dot'){
+      var r=(3.5+sw*0.8)*hs;
+      return (kind==='dot')
+        ? '<circle cx="'+tip.x+'" cy="'+tip.y+'" r="'+r+'" fill="'+col+'"/>'
+        : '<circle cx="'+tip.x+'" cy="'+tip.y+'" r="'+r+'" fill="#fff" stroke="'+col+'" stroke-width="'+Math.max(1.6,sw*0.6)+'"/>';
+    }
+    if(kind==='bar'){
+      var b=(7+sw)*hs, px=Math.cos(ang+Math.PI/2), py=Math.sin(ang+Math.PI/2);
+      return '<line x1="'+(tip.x-px*b/2)+'" y1="'+(tip.y-py*b/2)+'" x2="'+(tip.x+px*b/2)+'" y2="'+(tip.y+py*b/2)+'" stroke="'+col+'" stroke-width="'+(sw+0.6)+'" stroke-linecap="round"/>';
+    }
     var x1=tip.x-L*Math.cos(ang-0.42), y1=tip.y-L*Math.sin(ang-0.42);
     var x2=tip.x-L*Math.cos(ang+0.42), y2=tip.y-L*Math.sin(ang+0.42);
-    return '<path d="M'+tip.x+' '+tip.y+' L'+x1+' '+y1+' L'+x2+' '+y2+' Z" fill="'+col+'"/>';
+    if(kind==='chevron')
+      return '<path d="M'+x1+' '+y1+' L'+tip.x+' '+tip.y+' L'+x2+' '+y2+'" fill="none" stroke="'+col+'" stroke-width="'+(sw+0.6)+'" stroke-linecap="round" stroke-linejoin="round"/>';
+    if(kind==='outline_triangle')
+      return '<path d="M'+tip.x+' '+tip.y+' L'+x1+' '+y1+' L'+x2+' '+y2+' Z" fill="none" stroke="'+col+'" stroke-width="'+Math.max(1.6,sw*0.6)+'" stroke-linejoin="round"/>';
+    return '<path d="M'+tip.x+' '+tip.y+' L'+x1+' '+y1+' L'+x2+' '+y2+' Z" fill="'+col+'"/>';   // filled_triangle (default)
   }
   function vectorSVG(o){
     var p=o.props||{}, s=pxy(o), e=pxy({x:(p.x2!=null?p.x2:o.x+12), y:(p.y2!=null?p.y2:o.y)});
     // honour per-object colour + stroke width (telestration white press arrows) — absent props
     // fall back to the classic line-colour / 3px look, so existing boards are unchanged.
     var col=(p.color||cfg.colors.line||'#14181f'), sw=(p.stroke_width!=null?p.stroke_width:3);
-    var dash=(o.type==='dashed_arrow')?' stroke-dasharray="9 7"':'', path, from=s;
+    // a "dashed" prop dashes ANY vector (incl. curved), on top of the classic dashed_arrow type
+    var dash=(o.type==='dashed_arrow'||p.dashed)?' stroke-dasharray="9 7"':'', path, from=s;
     if(o.type==='curved_arrow'){ var k=(p.curvature!=null?p.curvature:0.3), cp=curveControlPoint(s,e,k); path='M '+s.x+' '+s.y+' Q '+cp.x+' '+cp.y+' '+e.x+' '+e.y; from=cp; }
     else path='M '+s.x+' '+s.y+' L '+e.x+' '+e.y;
-    var head=(o.type!=='line')?arrowHead(e, from, col, sw, (p.arrowhead_size!=null?p.arrowhead_size:1)):'';
+    var head=(o.type!=='line')?arrowHead(e, from, col, sw, (p.arrowhead_size!=null?p.arrowhead_size:1), p.arrowhead):'';
     return '<path d="'+path+'" fill="none" stroke="'+col+'" stroke-width="'+sw+'"'+dash+' stroke-linecap="round"/>'+head;
   }
   function pieceSVG(o){

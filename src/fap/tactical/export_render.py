@@ -285,7 +285,7 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         else:
             col = p.get("color") or _c(colors, "line")
             width = float(p.get("stroke_width", 4))
-            ls = "--" if t == "dashed_arrow" else "-"
+            ls = "--" if (t == "dashed_arrow" or p.get("dashed")) else "-"   # "dashed" prop → any vector
             wave = ""
         size = float(p.get("arrowhead_size", 1.0))
         hsw = float(p.get("arrowhead_stroke_width", 1.5))
@@ -314,9 +314,9 @@ def _draw_object(ax, o: TacticalObject, colors: dict[str, str], frame: Frame) ->
         from fap.tactical import geometry as _geo
         x2, y2 = _px(p.get("x2", o.x + 12), p.get("y2", o.y))
         spec = _geo.variant_spec(p.get("variant"))
-        if spec is None:                                    # legacy arrow — pixel-identical to before
+        if spec is None:                                    # legacy arrow (pixel-identical without a "dashed" prop)
             col = p.get("color") or _c(colors, "line")
-            style = "--" if t == "dashed_arrow" else "-"
+            style = "--" if (t == "dashed_arrow" or p.get("dashed")) else "-"
             if t == "line":
                 ax.plot([x, x2], [y, y2], color=col, linewidth=4, linestyle=style, zorder=z)
             else:

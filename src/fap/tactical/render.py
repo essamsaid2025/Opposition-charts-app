@@ -329,7 +329,8 @@ def _vector_custom(o: TacticalObject, colors: dict[str, str], head_kind: str) ->
     else:
         col = o.props.get("color") or _c(colors, "line")
         width = float(o.props.get("stroke_width", 4))
-        dash = 'stroke-dasharray="10 8"' if o.type == "dashed_arrow" else ""
+        # a "dashed" prop makes ANY vector (incl. curved) dashed — not just the dashed_arrow type
+        dash = 'stroke-dasharray="10 8"' if (o.type == "dashed_arrow" or o.props.get("dashed")) else ""
         wave = ""
     size = float(o.props.get("arrowhead_size", 1.0))
     hsw = float(o.props.get("arrowhead_stroke_width", 1.5))
@@ -363,9 +364,9 @@ def _vector(o: TacticalObject, colors: dict[str, str], marker: str) -> str:
         return _vector_custom(o, colors, str(o.props.get("arrowhead")))
     x1, y1 = _px(o.x, o.y); x2, y2 = _px(o.props.get("x2", o.x + 12), o.props.get("y2", o.y))
     spec = _geo.variant_spec(o.props.get("variant"))
-    if spec is None:                                        # legacy arrow — byte-identical to before
+    if spec is None:                                        # legacy arrow (byte-identical without a "dashed" prop)
         col = o.props.get("color") or _c(colors, "line")
-        dash = 'stroke-dasharray="10 8"' if o.type == "dashed_arrow" else ""
+        dash = 'stroke-dasharray="10 8"' if (o.type == "dashed_arrow" or o.props.get("dashed")) else ""
         head = f'marker-end="url(#{marker})"' if o.type != "line" else ""
         if o.type == "curved_arrow":
             cx, cy = curve_control_point(x1, y1, x2, y2, float(o.props.get("curvature", 0.3)))
